@@ -1,0 +1,17 @@
+{
+  "name": "Стенограф — фотодневник ремонта",
+  "short_name": "Стенограф",
+  "description": "Фиксируйте каждую стену на каждом этапе ремонта: схема квартиры, фотоистория, слайдер «до/после».",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf6ef",
+  "theme_color": "#20323c",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },
+    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}
