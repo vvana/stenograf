@@ -136,8 +136,11 @@ window.addEventListener('hashchange', render);
 
 function nav(hash) { location.hash = hash; }
 
+let viewCleanup = null; // экран может оставить функцию уборки (остановить камеру и т.п.)
+
 async function render() {
   freeURLs();
+  if (viewCleanup) { try { viewCleanup(); } catch {} viewCleanup = null; }
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   try {
     if (parts.length === 0) return await viewProjects();
@@ -147,6 +150,9 @@ async function render() {
       if (parts[2] === 'more') return await viewMore(pid);
       if (parts[2] === 'w' && parts[3]) return await viewWall(pid, parts[3]);
       if (parts[2] === 'cmp' && parts[3]) return await viewCompare(pid, parts[3]);
+      if (parts[2] === 'report') return await viewReport(pid);
+      if (parts[2] === 'calc') return await viewCalc(pid);
+      if (parts[2] === 'ghost' && parts[3] && parts[4]) return await viewGhost(pid, parts[3], parts[4]);
       return await viewPlan(pid);
     }
     return await viewProjects();
@@ -224,8 +230,12 @@ const planState = { edit: false, selected: null };
 async function viewPlan(pid) {
   const { project, rooms, photos } = await loadProjectData(pid);
   if (!project) return nav('');
-  const counts = {};
-  photos.forEach(p => { counts[p.wallKey] = (counts[p.wallKey] || 0) + 1; });
+  const counts = {}, points = {};
+  photos.forEach(p => {
+    counts[p.wallKey] = (counts[p.wallKey] || 0) + 1;
+    const n = (p.marks || []).filter(m => m.type === 'point' && (m.layer || 'main') === 'main').length;
+    if (n) points[p.wallKey] = (points[p.wallKey] || 0) + n;
+  });
 
   app.innerHTML = `
     ${header(project.name, '#/',
@@ -235,6 +245,7 @@ async function viewPlan(pid) {
         <button class="btn small-btn" id="add-room">+ Комната</button>
         <span id="room-tools" class="hidden">
           <input id="room-name" class="inp" placeholder="Название комнаты">
+          <input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="h, м" title="Высота потолка, м">
           <button class="btn small-btn danger" id="del-room">Удалить</button>
         </span>
         <span class="mut small" id="editor-hint">Тапните комнату, чтобы выбрать. Тяните за угол — размер.</span>
@@ -265,7 +276,7 @@ async function viewPlan(pid) {
       render();
     };
   }
-  setupPlan(pid, rooms, counts);
+  setupPlan(pid, rooms, counts, points);
 }
 
 function bottomNav(pid, active) {
@@ -298,7 +309,7 @@ function badgePos(r, side) {
   }
 }
 
-function setupPlan(pid, rooms, counts) {
+function setupPlan(pid, rooms, counts, points = {}) {
   const box = $('#plan-box');
   if (!box) return;
 
@@ -347,6 +358,14 @@ function setupPlan(pid, rooms, counts) {
             s += `<g class="badge" data-wall="${key}">
               <circle cx="${bx}" cy="${by}" r="0.32"/>
               <text x="${bx}" y="${by}">${cnt}</text></g>`;
+            if (points[key]) {
+              // вторая метка — точки для мастеров (розетки, выводы) на этой стене
+              const horiz = side === 'n' || side === 's';
+              const [px2, py2] = horiz ? [bx + 0.8, by] : [bx, by + 0.8];
+              s += `<g class="badge pts" data-wall="${key}">
+                <circle cx="${px2}" cy="${py2}" r="0.32"/>
+                <text x="${px2}" y="${py2}">⚡${points[key]}</text></g>`;
+            }
           }
         }
       }
@@ -357,8 +376,9 @@ function setupPlan(pid, rooms, counts) {
         chips.forEach(([sf, name, ico], i) => {
           const key = `${r.id}:${sf}`;
           const cnt = counts[key] || 0;
+          const ptsMark = points[key] ? ' ⚡' : '';
           if (compact) {
-            const label = cnt ? `${ico}${cnt}` : ico;
+            const label = (cnt ? `${ico}${cnt}` : ico) + ptsMark;
             const cw2 = cnt ? 1.0 : 0.7;
             const chx = cx + (i === 0 ? -0.6 : 0.6);
             s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
@@ -366,7 +386,7 @@ function setupPlan(pid, rooms, counts) {
               <text x="${chx}" y="${cy + 0.5}">${label}</text>
               <rect class="surf-hit" x="${chx - 0.55}" y="${cy + 0.05}" width="1.1" height="0.9"/></g>`;
           } else {
-            const label = cnt ? `${name} · ${cnt}` : name;
+            const label = (cnt ? `${name} · ${cnt}` : name) + ptsMark;
             const cw2 = Math.min(2.4, r.w - 0.8);
             const chy = cy + (i === 0 ? 0.1 : 0.85);
             s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
@@ -458,6 +478,14 @@ function setupPlan(pid, rooms, counts) {
       clearTimeout(inp._t);
       inp._t = setTimeout(() => dbPut('rooms', room), 400);
       draw();
+    };
+    const ceilInp = $('#room-ceil');
+    ceilInp.value = room.ceil || '';
+    ceilInp.oninput = () => {
+      const v = parseFloat(ceilInp.value);
+      if (v > 0) room.ceil = v; else delete room.ceil;
+      clearTimeout(ceilInp._t);
+      ceilInp._t = setTimeout(() => dbPut('rooms', room), 400);
     };
     $('#del-room').onclick = async () => {
       const photos = (await dbAll('photos', 'projectId', pid)).filter(p => p.wallKey.startsWith(room.id + ':'));
@@ -569,6 +597,18 @@ async function viewWall(pid, wallKey) {
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ⇆ Сравнить «до / после»</button>` : `
         <p class="mut small center">Добавьте фото минимум на двух этапах — появится сравнение «до/после».</p>`}
+      ${SIDES.includes(side) ? `
+        <div class="card" style="margin-top:12px">
+          <div class="stage-photos-head">
+            <b>Проёмы на стене</b>
+            <button class="btn small-btn" id="add-opening">+ Проём</button>
+          </div>
+          <div id="openings" class="openings">
+            ${((room.openings || {})[side] || []).map((o, i) => `
+              <span class="chip st0">${o.kind === 'door' ? '🚪 дверь' : '🪟 окно'} ${String(o.w).replace('.', ',')}×${String(o.h).replace('.', ',')} м
+                <button class="chip-x" data-del-opening="${i}" title="Убрать">✕</button></span>`).join('') || '<span class="mut small">Нет проёмов — стена глухая</span>'}
+          </div>
+        </div>` : ''}
       <div class="cards">
         ${stages.map(s => {
           const list = byStage[s.id] || [];
@@ -605,6 +645,28 @@ async function viewWall(pid, wallKey) {
     room.labels[side] = name.trim();
     await dbPut('rooms', room); render();
   };
+
+  const addOp = $('#add-opening');
+  if (addOp) {
+    addOp.onclick = async () => {
+      const t = prompt('Размер проёма: ширина и высота в метрах через пробел.\nДверь обычно 0,8 2,0; окно 1,4 1,4', '0,8 2,0');
+      if (t === null) return;
+      const nums = String(t).replace(/,/g, '.').match(/\d+(\.\d+)?/g);
+      if (!nums || nums.length < 2) return toast('Нужно два числа: ширина и высота');
+      const w = parseFloat(nums[0]), h = parseFloat(nums[1]);
+      if (!(w > 0 && h > 0)) return toast('Размеры должны быть больше нуля');
+      const kind = confirm('Это дверь? («Отмена» — окно)') ? 'door' : 'window';
+      room.openings = room.openings || {};
+      (room.openings[side] = room.openings[side] || []).push({ kind, w, h });
+      await dbPut('rooms', room); render();
+    };
+    app.querySelectorAll('[data-del-opening]').forEach(b => {
+      b.onclick = async () => {
+        room.openings[side].splice(+b.dataset.delOpening, 1);
+        await dbPut('rooms', room); render();
+      };
+    });
+  }
 
   const cam = $('#cam'), gal = $('#gal');
   let pendingStage = null;
@@ -769,6 +831,8 @@ async function viewMore(pid) {
           <b>${esc(project.name)}</b>
           <div class="mut small">${rooms.length} комн. · ${photos.length} фото</div>
         </div>
+        <button class="btn primary wide" data-nav="#/p/${pid}/report">📋 Задание для мастеров</button>
+        <button class="btn wide" data-nav="#/p/${pid}/calc">🧮 Площади и материалы</button>
         <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>

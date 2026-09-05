@@ -308,6 +308,74 @@ body {
 .cmp-tag.left { left: 10px; }
 .cmp-tag.right { right: 10px; }
 
+/* ---------- проёмы, план: метки точек ---------- */
+.openings { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-x { font: inherit; background: none; border: none; color: inherit; opacity: .6; padding: 0 0 0 4px; cursor: pointer; }
+#room-ceil.num { width: 74px; flex: 0 0 auto; }
+#plan .badge.pts circle { fill: #2a8fbf; }
+#plan .badge.pts text { font-size: 0.3px; }
+
+/* ---------- отчёт для мастеров ---------- */
+.report-head h2 { font-size: 20px; margin-bottom: 2px; }
+.report-actions { display: flex; gap: 8px; margin: 12px 0; }
+.report-actions .btn { flex: 1; }
+.report-item { margin-top: 18px; }
+.report-item h3 { font-size: 16px; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 2px solid var(--acc); }
+.report-fig { margin: 0 0 14px; }
+.report-img-box {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  min-height: 120px; display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.report-img-box img { display: block; width: 100%; height: auto; }
+.report-fig figcaption { padding: 4px 2px; }
+.report-list { list-style: none; padding: 4px 2px 0; }
+.report-list li { padding: 3px 0; font-size: 14px; }
+
+/* ---------- калькулятор ---------- */
+.calc-table-wrap { overflow-x: auto; }
+.calc-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.calc-table th, .calc-table td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.calc-table th:first-child, .calc-table td:first-child { text-align: left; }
+.calc-table tfoot th { border-bottom: none; }
+.calc-form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.calc-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--mut); }
+.calc-form .inp { color: var(--ink); font-size: 15px; }
+.mat-list { list-style: none; padding: 0; margin-top: 8px; }
+.mat-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.mat-list li:last-child { border-bottom: none; }
+.mat-list li > div { flex-basis: 100%; }
+
+/* ---------- призрачная камера ---------- */
+.ghost { position: fixed; inset: 0; background: #000; color: #fff; overflow: hidden; }
+.ghost video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ghost img {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  max-width: 100%; max-height: 100%; pointer-events: none;
+}
+.ghost-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; gap: 8px; font-size: 13px;
+  padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
+  background: linear-gradient(rgba(0,0,0,.7), transparent);
+}
+.ghost-bottom {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0,0,0,.75));
+}
+.ghost-bottom label { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.ghost-bottom input[type=range] { flex: 1; accent-color: var(--acc); }
+
+@media print {
+  body { background: #fff; color: #000; }
+  .topbar, .bottomnav, .no-print, #toast { display: none !important; }
+  #app { padding-bottom: 0; }
+  .report-item { break-inside: avoid; }
+  .report-fig { break-inside: avoid; }
+  .report-img-box { border: none; }
+}
+
 /* ---------- toast ---------- */
 #toast {
   position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom));

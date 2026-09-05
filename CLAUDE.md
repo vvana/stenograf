@@ -18,7 +18,11 @@ PWA-фотодневник ремонта: несколько объектов (
 - `projects {id, name, created}`
 - `rooms {id, projectId, name, x, y, w, h, labels{side→имя}, created}` — координаты в метрах
 - `stages {id, projectId, name, ord, status}` — status: 0 не начато / 1 в работе / 2 готово
-- `photos {id, projectId, wallKey, stageId, blob, note, created}`
+- `photos {id, projectId, wallKey, stageId, blob, note, created, calib?, marks?}`
+  - `calib`: `{type:'quad', pts:[4×[x,y]], w, h}` (углы стены по часовой от верхнего левого, метры) или `{type:'ruler', a, b, len}`; координаты точек нормированы 0..1 к натуральному размеру фото
+  - `marks[]`: `{id, type:'dim'|'text'|'path'|'point', layer:'main'|'draft', ...}`; `point.kind` из `MARK_KINDS` (socket, switch, light, tv, water, sewer, heat, other)
+- `rooms` дополнительно: `ceil` (высота потолка, м; по умолчанию 2.7), `openings {side: [{kind:'door'|'window', w, h}]}`
+- `projects.calc` — настройки калькулятора материалов
 - **wallKey** = `roomId:side`, где side ∈ `n|e|s|w` (стены, экранные «верхняя/правая/нижняя/левая») или `c` (потолок) / `f` (пол). У комнаты 6 поверхностей.
 
 ## Название и бренд
@@ -48,7 +52,9 @@ PWA-фотодневник ремонта: несколько объектов (
 ## Состояние и ближайшие шаги
 
 - [x] MVP: объекты, редактор схемы, фото по этапам, потолок/пол, слайдер, бэкап, офлайн
-- [x] Деплой: GitHub Pages, https://vvana.github.io/stenograf/ (репо vvana/stenograf)
+- [x] Деплой: GitHub Pages, https://vvana.github.io/stenograf/ (репо vvana/stenograf; на 2026-09-05 репозиторий ещё приватный — пользователь должен сделать public и включить Pages)
+- [x] Дорожная карта п. 1–6 реализована (2026-09-05): галерея+EXIF, калибровка и измерения (`annot.js`), слои разметки и точки, отчёт «Задание для мастеров», проёмы/потолок + калькулятор материалов, «призрачная камера» (`extras.js`)
+- [ ] Обкатать разметку и отчёт на реальных фото; собрать замечания по точности и удобству тапов
 - [ ] Проверить установку и камеру на реальном телефоне пользователя
 - [ ] Обратная связь после обкатки на реальном ремонте
 - [ ] Финальное имя + проверка товарного знака перед выходом в сторы

@@ -81,8 +81,9 @@ function makeMeasurer(photo, natW, natH) {
 
 function fmtLen(m) {
   if (!isFinite(m)) return '?';
-  if (Math.abs(m) >= 1) return (Math.round(m * 100) / 100).toString().replace('.', ',') + ' м';
-  return Math.round(m * 100) + ' см';
+  const cm = Math.round(m * 100);
+  if (Math.abs(cm) >= 100) return (cm / 100).toString().replace('.', ',') + ' м';
+  return cm + ' см';
 }
 
 /* ---------- разметка → примитивы (не зависят от способа отрисовки) ---------- */
