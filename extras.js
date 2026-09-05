@@ -235,7 +235,7 @@ async function viewGhost(pid, wallKey, photoId) {
   const photo = await dbGet('photos', photoId);
   if (!photo) return nav(`#/p/${pid}/w/${encodeURIComponent(wallKey)}`);
   app.innerHTML = `
-    <div class="ghost">
+    <div class="ghostcam">
       <video id="gh-video" autoplay playsinline muted></video>
       <img id="gh-img" alt="">
       <div class="ghost-top">
