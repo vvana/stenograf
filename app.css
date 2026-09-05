@@ -142,8 +142,29 @@ body {
   stroke: none;
 }
 #plan .room.sel { fill: color-mix(in srgb, var(--acc) 20%, var(--card)); }
-#plan .wall { stroke: var(--ink); stroke-width: 0.12; stroke-linecap: square; pointer-events: none; }
+#plan .wall-outline { fill: none; stroke: var(--ink); stroke-width: 0.12; stroke-linejoin: round; pointer-events: none; }
 #plan .wall-hit { stroke: transparent; stroke-width: 0.7; cursor: pointer; }
+#plan .wall-hit.edit.sel { stroke: color-mix(in srgb, var(--acc) 45%, transparent); stroke-width: 0.3; }
+#plan .wall-num {
+  font-size: 0.26px; font-weight: 700; fill: var(--mut);
+  text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
+}
+#plan .wall-len {
+  font-size: 0.3px; font-weight: 700; fill: var(--acc);
+  text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
+  paint-order: stroke; stroke: var(--card); stroke-width: 0.08px;
+}
+#plan .handle.v { fill: var(--card); stroke: var(--acc); stroke-width: 0.1; cursor: grab; }
+#plan .handle.v.sel { fill: var(--acc); }
+#plan .handle.add { cursor: pointer; }
+#plan .handle.add circle { fill: var(--card); stroke: var(--mut); stroke-width: 0.06; }
+#plan .handle.add text {
+  font-size: 0.34px; font-weight: 700; fill: var(--mut);
+  text-anchor: middle; dominant-baseline: central; pointer-events: none;
+}
+.editor-bar .tools { display: flex; gap: 8px; flex: 1; align-items: center; flex-wrap: wrap; }
+.editor-bar .tools label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--mut); white-space: nowrap; }
+.editor-bar .inp.num { width: 76px; flex: 0 0 auto; }
 #plan .room-label {
   font-size: 0.42px; fill: var(--mut); text-anchor: middle; dominant-baseline: central;
   pointer-events: none; user-select: none;

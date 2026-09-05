@@ -1,7 +1,7 @@
 /* Стенограф — отчёт для мастеров, калькулятор материалов, «призрачная камера» */
 'use strict';
 
-const ALL_SIDES = ['n', 'e', 's', 'w', 'c', 'f'];
+const roomSurfaces = r => [...(r.wallIds || []), 'c', 'f'];
 const DEFAULT_CEIL = 2.7;
 const roomCeil = r => (r.ceil > 0 ? r.ceil : DEFAULT_CEIL);
 
@@ -13,7 +13,7 @@ async function viewReport(pid) {
   const hasMarks = p => (p.marks || []).some(m => (m.layer || 'main') === 'main');
   const items = [];
   for (const r of rooms) {
-    for (const side of ALL_SIDES) {
+    for (const side of roomSurfaces(r)) {
       const key = `${r.id}:${side}`;
       const list = photos.filter(p => p.wallKey === key && hasMarks(p)).sort((a, b) => a.created - b.created);
       if (list.length) items.push({ room: r, side, key, list });
@@ -107,7 +107,7 @@ function sideTitle(room, side) {
   if (custom) return custom;
   if (side === 'c') return 'потолок';
   if (side === 'f') return 'пол';
-  return `${SIDE_NAMES[side]} стена`;
+  return wallBaseName(room, side);
 }
 function stageName(stages, id) { const s = stages.find(x => x.id === id); return s ? s.name : 'Этап'; }
 function slug(s) { return String(s).toLowerCase().replace(/[^a-zа-яё0-9]+/gi, '-').replace(/^-|-$/g, '') || 'x'; }
@@ -131,11 +131,13 @@ const CALC_DEFAULTS = { wall: 'paint', floor: 'laminate', ceil: 'paint', plaster
 
 function roomAreas(r) {
   const ceil = roomCeil(r);
-  const perimeter = 2 * (r.w + r.h);
+  const perimeter = roomEdges(r).reduce((s, e) => s + e.len, 0);
   const gross = perimeter * ceil;
+  const area = roomArea(r);
   let openings = 0, doorsW = 0;
-  for (const side of ['n', 'e', 's', 'w']) {
-    for (const o of (r.openings && r.openings[side]) || []) {
+  for (const side of Object.keys(r.openings || {})) {
+    if (!isWallId(r, side)) continue;
+    for (const o of r.openings[side] || []) {
       openings += o.w * o.h;
       if (o.kind === 'door') doorsW += o.w;
     }
@@ -143,7 +145,7 @@ function roomAreas(r) {
   return {
     ceil, perimeter, gross, openings,
     walls: Math.max(0, gross - openings),
-    floor: r.w * r.h, ceiling: r.w * r.h,
+    floor: area, ceiling: area,
     plinth: Math.max(0, perimeter - doorsW),
   };
 }
@@ -190,7 +192,7 @@ async function viewCalc(pid) {
         <div class="calc-table-wrap"><table class="calc-table">
           <thead><tr><th>Комната</th><th>Стены, м²</th><th>Пол, м²</th><th>Потолок</th></tr></thead>
           <tbody>
-            ${areas.map(({ r, a }) => `<tr><td>${esc(r.name)}<div class="mut small">${f(r.w)}×${f(r.h)}, h ${f(a.ceil, 2)}${a.openings ? `, проёмы −${f(a.openings)} м²` : ''}</div></td>
+            ${areas.map(({ r, a }) => `<tr><td>${esc(r.name)}<div class="mut small">${r.pts.length} угл., периметр ${f(a.perimeter)} м, h ${f(a.ceil, 2)}${a.openings ? `, проёмы −${f(a.openings)} м²` : ''}</div></td>
               <td>${f(a.walls)}</td><td>${f(a.floor)}</td><td>${f(a.ceiling)}</td></tr>`).join('')}
           </tbody>
           <tfoot><tr><th>Итого</th><th>${f(tot.walls)}</th><th>${f(tot.floor)}</th><th>${f(tot.ceiling)}</th></tr></tfoot>

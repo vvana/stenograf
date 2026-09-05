@@ -16,7 +16,7 @@ PWA-фотодневник ремонта: несколько объектов (
 ## Модель данных (IndexedDB `stenograf`, v1)
 
 - `projects {id, name, created}`
-- `rooms {id, projectId, name, x, y, w, h, labels{side→имя}, created}` — координаты в метрах
+- `rooms {id, projectId, name, pts:[[x,y,r?],…], wallIds:[…], labels{wallId→имя}, created}` — многоугольник в метрах, до 10 вершин (`MAX_CORNERS`); третий элемент вершины — радиус скругления угла (м). `wallIds[i]` — стабильный id стены от `pts[i]` к `pts[i+1]`; у мигрированных прямоугольников это `n/e/s/w` (старый формат `x,y,w,h` конвертируется в `normalizeRoom` при загрузке). Удаление вершины сливает две стены: фото и проёмы переезжают на оставшуюся. Редактор: углы по умолчанию 90° (подтяжка при перетаскивании), угол и длину стены можно ввести числом (`setCornerAngle`, `setWallLength`).
 - `stages {id, projectId, name, ord, status}` — status: 0 не начато / 1 в работе / 2 готово
 - `photos {id, projectId, wallKey, stageId, blob, note, created, calib?, marks?}`
   - `calib`: `{type:'quad', pts:[4×[x,y]], w, h}` (углы стены по часовой от верхнего левого, метры) или `{type:'ruler', a, b, len}`; координаты точек нормированы 0..1 к натуральному размеру фото

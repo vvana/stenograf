@@ -45,7 +45,13 @@ function wallLabel(room, side) {
   if (custom) return custom;
   if (side === 'c') return `${room.name} — потолок`;
   if (side === 'f') return `${room.name} — пол`;
-  return `${room.name} — ${SIDE_NAMES[side]} стена`;
+  return `${room.name} — ${wallBaseName(room, side)}`;
+}
+// «верхняя стена» для стандартных 4 сторон, «стена 3» для произвольных многоугольников
+function wallBaseName(room, side) {
+  if (SIDE_NAMES[side]) return `${SIDE_NAMES[side]} стена`;
+  const i = (room.wallIds || []).indexOf(side);
+  return i >= 0 ? `стена ${i + 1}` : 'стена';
 }
 
 function parseWallKey(key) {
@@ -62,6 +68,10 @@ async function loadProjectData(pid) {
   ]);
   stages.sort((a, b) => a.ord - b.ord);
   rooms.sort((a, b) => (a.created || 0) - (b.created || 0));
+  for (const r of rooms) {
+    normalizeRoom(r);
+    if (r._migrated) { delete r._migrated; await dbPut('rooms', r); }
+  }
   return { project, rooms, stages, photos };
 }
 
@@ -225,7 +235,137 @@ async function viewProjects() {
 
 /* ---------- экран: план квартиры ---------- */
 
-const planState = { edit: false, selected: null };
+const MAX_CORNERS = 10;
+const planState = { edit: false, selected: null, sel: null }; // sel: {type:'vertex'|'wall', i}
+
+/* --- геометрия комнаты-многоугольника ---
+   room.pts = [[x, y, r?], ...] в метрах по часовой/против — как нарисовал пользователь; r — радиус скругления угла (м)
+   room.wallIds[i] — стабильный id стены от pts[i] к pts[i+1]; wallKey = roomId:wallId */
+
+function normalizeRoom(r) {
+  if (!Array.isArray(r.pts) && r.w != null) {
+    // миграция старых прямоугольных комнат; id стен n/e/s/w сохраняются — фото не отвязываются
+    r.pts = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
+    r.wallIds = ['n', 'e', 's', 'w'];
+    delete r.x; delete r.y; delete r.w; delete r.h;
+    r._migrated = true;
+  }
+  if (!Array.isArray(r.pts) || r.pts.length < 3) {
+    r.pts = [[1, 1], [5, 1], [5, 4.5], [1, 4.5]];
+    r.wallIds = ['n', 'e', 's', 'w'];
+    r._migrated = true;
+  }
+  if (!Array.isArray(r.wallIds) || r.wallIds.length !== r.pts.length) {
+    r.wallIds = r.pts.map((_, i) => (r.wallIds && r.wallIds[i]) || newWallId());
+    r._migrated = true;
+  }
+  return r;
+}
+function newWallId() { return 'k' + uid().replace(/-/g, '').slice(0, 6); }
+
+function roomBBox(r) {
+  const xs = r.pts.map(p => p[0]), ys = r.pts.map(p => p[1]);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+function polyArea(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s / 2;
+}
+function roomArea(r) { return Math.abs(polyArea(r.pts)); }
+function pointInPoly(p, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
+}
+function roomCenter(r) {
+  const pts = r.pts, A = polyArea(pts);
+  const bb = roomBBox(r), bc = [bb.x + bb.w / 2, bb.y + bb.h / 2];
+  if (Math.abs(A) < 1e-9) return bc;
+  let cx = 0, cy = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const f = a[0] * b[1] - b[0] * a[1];
+    cx += (a[0] + b[0]) * f; cy += (a[1] + b[1]) * f;
+  }
+  const c = [cx / (6 * A), cy / (6 * A)];
+  if (pointInPoly(c, pts)) return c;
+  return pointInPoly(bc, pts) ? bc : c;
+}
+function roomEdges(r) {
+  const n = r.pts.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = r.pts[i], b = r.pts[(i + 1) % n];
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1e-9;
+    let nx = -dy / len, ny = dx / len;
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    if (!pointInPoly([mid[0] + nx * 0.05, mid[1] + ny * 0.05], r.pts)) { nx = -nx; ny = -ny; }
+    out.push({ i, id: r.wallIds[i], a, b, len, mid, nx, ny, ux: dx / len, uy: dy / len });
+  }
+  return out;
+}
+function roomEdge(r, wallId) { return roomEdges(r).find(e => e.id === wallId) || null; }
+function isWallId(r, id) { return (r.wallIds || []).includes(id); }
+function isStandardRoom(r) { return r.pts.length === 4 && r.wallIds.every(id => SIDE_NAMES[id]); }
+
+// внутренний угол в вершине i, градусы
+function cornerAngle(r, i) {
+  const n = r.pts.length, P = r.pts[(i - 1 + n) % n], V = r.pts[i], N = r.pts[(i + 1) % n];
+  const a1 = Math.atan2(P[1] - V[1], P[0] - V[0]), a2 = Math.atan2(N[1] - V[1], N[0] - V[0]);
+  let d = Math.abs(a1 - a2);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  const bx = Math.cos(a1) + Math.cos(a2), by = Math.sin(a1) + Math.sin(a2);
+  const bl = Math.hypot(bx, by) || 1e-9;
+  const deg = d * 180 / Math.PI;
+  return pointInPoly([V[0] + bx / bl * 0.05, V[1] + by / bl * 0.05], r.pts) ? deg : 360 - deg;
+}
+// задать угол в вершине i: поворачиваем следующую вершину вокруг неё, длина стены сохраняется
+function setCornerAngle(r, i, deg) {
+  const n = r.pts.length, P = r.pts[(i - 1 + n) % n], V = r.pts[i], N = r.pts[(i + 1) % n];
+  const len = Math.hypot(N[0] - V[0], N[1] - V[1]);
+  const aP = Math.atan2(P[1] - V[1], P[0] - V[0]);
+  const rad = deg * Math.PI / 180;
+  const cand = [aP + rad, aP - rad].map(a => [cm(V[0] + Math.cos(a) * len), cm(V[1] + Math.sin(a) * len), ...N.slice(2)]);
+  // из двух зеркальных вариантов берём тот, при котором внутренний угол действительно равен заданному
+  const idx = (i + 1) % n;
+  const err = cand.map(c => { r.pts[idx] = c; return Math.abs(cornerAngle(r, i) - deg); });
+  r.pts[idx] = err[0] <= err[1] ? cand[0] : cand[1];
+}
+// задать длину стены i: сдвигаем её конечную вершину вдоль стены
+function setWallLength(r, i, len) {
+  const n = r.pts.length, A = r.pts[i], B = r.pts[(i + 1) % n];
+  const d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1e-9;
+  r.pts[(i + 1) % n] = [cm(A[0] + (B[0] - A[0]) / d * len), cm(A[1] + (B[1] - A[1]) / d * len), ...B.slice(2)];
+}
+const cm = v => Math.round(v * 100) / 100;
+
+// контур комнаты со скруглёнными углами (радиус хранится третьим числом вершины)
+function roomPath(r) {
+  const pts = r.pts, n = pts.length;
+  let d = '';
+  for (let i = 0; i < n; i++) {
+    const V = pts[i], rad = V[2] || 0;
+    if (rad > 0) {
+      const P = pts[(i - 1 + n) % n], N = pts[(i + 1) % n];
+      const dP = [P[0] - V[0], P[1] - V[1]], dN = [N[0] - V[0], N[1] - V[1]];
+      const lP = Math.hypot(dP[0], dP[1]) || 1e-9, lN = Math.hypot(dN[0], dN[1]) || 1e-9;
+      let ang = cornerAngle(r, i); if (ang > 180) ang = 360 - ang;
+      const t = Math.min(rad / Math.tan(ang / 2 * Math.PI / 180), lP / 2, lN / 2);
+      const A = [V[0] + dP[0] / lP * t, V[1] + dP[1] / lP * t], B = [V[0] + dN[0] / lN * t, V[1] + dN[1] / lN * t];
+      d += `${i ? 'L' : 'M'}${A[0]} ${A[1]} Q${V[0]} ${V[1]} ${B[0]} ${B[1]} `;
+    } else {
+      d += `${i ? 'L' : 'M'}${V[0]} ${V[1]} `;
+    }
+  }
+  return d + 'Z';
+}
 
 async function viewPlan(pid) {
   const { project, rooms, photos } = await loadProjectData(pid);
@@ -243,12 +383,21 @@ async function viewPlan(pid) {
     <div class="plan-wrap">
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <button class="btn small-btn" id="add-room">+ Комната</button>
-        <span id="room-tools" class="hidden">
+        <span id="room-tools" class="tools hidden">
           <input id="room-name" class="inp" placeholder="Название комнаты">
           <input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="h, м" title="Высота потолка, м">
           <button class="btn small-btn danger" id="del-room">Удалить</button>
         </span>
-        <span class="mut small" id="editor-hint">Тапните комнату, чтобы выбрать. Тяните за угол — размер.</span>
+        <span id="vertex-tools" class="tools hidden">
+          <label>Угол° <input id="v-angle" class="inp num" type="number" step="1" min="1" max="359"></label>
+          <label>R, см <input id="v-radius" class="inp num" type="number" step="1" min="0" max="200"></label>
+          <button class="btn small-btn danger" id="del-vertex">Убрать угол</button>
+        </span>
+        <span id="wall-tools" class="tools hidden">
+          <label>Длина, м <input id="w-len" class="inp num" type="number" step="0.01" min="0.1" max="50"></label>
+          <button class="btn small-btn" id="add-vertex">+ Угол на стене</button>
+        </span>
+        <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
       </div>
       <div id="plan-box" class="plan-box"></div>
       ${rooms.length === 0 && !planState.edit ? `
@@ -257,22 +406,23 @@ async function viewPlan(pid) {
           <p><b>Схемы пока нет.</b></p>
           <p class="mut">Нажмите ✎ сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
         </div>` : `<p class="mut small center pad-h">${planState.edit
-          ? 'Режим редактора: перетаскивайте комнаты, меняйте размер за угол.'
+          ? 'Режим редактора: комната — многоугольник до 10 углов. По умолчанию углы 90°, любой можно изменить.'
           : 'Тапните по стене или по плашке «Потолок»/«Пол» внутри комнаты. Цифра — сколько фото уже есть.'}</p>`}
     </div>
     ${bottomNav(pid, 'plan')}`;
 
-  $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; render(); };
+  $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; render(); };
   if (planState.edit) {
     $('#add-room').onclick = async () => {
       const n = rooms.length;
+      const x = 1 + (n % 3) * 4.6, y = 1 + Math.floor(n / 3) * 4.2;
       const room = {
         id: uid(), projectId: pid, name: 'Комната ' + (n + 1),
-        x: 1 + (n % 3) * 4.6, y: 1 + Math.floor(n / 3) * 4.2,
-        w: 4, h: 3.5, labels: {}, created: Date.now(),
+        pts: [[x, y], [x + 4, y], [x + 4, y + 3.5], [x, y + 3.5]],
+        wallIds: ['n', 'e', 's', 'w'], labels: {}, created: Date.now(),
       };
       await dbPut('rooms', room);
-      planState.selected = room.id;
+      planState.selected = room.id; planState.sel = null;
       render();
     };
   }
@@ -290,88 +440,69 @@ function bottomNav(pid, active) {
   </nav>`;
 }
 
-function roomSideCoords(r, side) {
-  switch (side) {
-    case 'n': return [r.x, r.y, r.x + r.w, r.y];
-    case 'e': return [r.x + r.w, r.y, r.x + r.w, r.y + r.h];
-    case 's': return [r.x, r.y + r.h, r.x + r.w, r.y + r.h];
-    case 'w': return [r.x, r.y, r.x, r.y + r.h];
-  }
-}
-
-function badgePos(r, side) {
-  const off = 0.45;
-  switch (side) {
-    case 'n': return [r.x + r.w / 2, r.y + off];
-    case 'e': return [r.x + r.w - off, r.y + r.h / 2];
-    case 's': return [r.x + r.w / 2, r.y + r.h - off];
-    case 'w': return [r.x + off, r.y + r.h / 2];
-  }
-}
-
 function setupPlan(pid, rooms, counts, points = {}) {
   const box = $('#plan-box');
   if (!box) return;
 
-  // стабильный viewBox на время сессии редактирования
   let minX = 0, minY = 0, maxX = 8, maxY = 8;
   if (rooms.length) {
-    minX = Math.min(...rooms.map(r => r.x)) - 1;
-    minY = Math.min(...rooms.map(r => r.y)) - 1;
-    maxX = Math.max(...rooms.map(r => r.x + r.w)) + 1;
-    maxY = Math.max(...rooms.map(r => r.y + r.h)) + 1;
+    const bbs = rooms.map(roomBBox);
+    minX = Math.min(...bbs.map(b => b.x)) - 1;
+    minY = Math.min(...bbs.map(b => b.y)) - 1;
+    maxX = Math.max(...bbs.map(b => b.x + b.w)) + 1;
+    maxY = Math.max(...bbs.map(b => b.y + b.h)) + 1;
   }
   if (planState.edit) { maxX += 2; maxY += 2; }
   const vb = { x: minX, y: minY, w: Math.max(maxX - minX, 6), h: Math.max(maxY - minY, 6) };
 
-  box.innerHTML = `<svg id="plan" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}"
-      preserveAspectRatio="xMidYMid meet"></svg>`;
+  box.innerHTML = `<svg id="plan" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" preserveAspectRatio="xMidYMid meet"></svg>`;
   const svg = $('#plan');
+  const selRoom = () => rooms.find(r => r.id === planState.selected);
 
   function draw() {
     let s = '';
     if (planState.edit) {
-      // сетка 1 м
       s += '<g class="grid">';
-      for (let gx = Math.ceil(vb.x); gx <= vb.x + vb.w; gx++)
-        s += `<line x1="${gx}" y1="${vb.y}" x2="${gx}" y2="${vb.y + vb.h}"/>`;
-      for (let gy = Math.ceil(vb.y); gy <= vb.y + vb.h; gy++)
-        s += `<line x1="${vb.x}" y1="${gy}" x2="${vb.x + vb.w}" y2="${gy}"/>`;
+      for (let gx = Math.ceil(vb.x); gx <= vb.x + vb.w; gx++) s += `<line x1="${gx}" y1="${vb.y}" x2="${gx}" y2="${vb.y + vb.h}"/>`;
+      for (let gy = Math.ceil(vb.y); gy <= vb.y + vb.h; gy++) s += `<line x1="${vb.x}" y1="${gy}" x2="${vb.x + vb.w}" y2="${gy}"/>`;
       s += '</g>';
     }
     for (const r of rooms) {
       const sel = planState.selected === r.id;
-      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      const [cx, cy] = roomCenter(r);
+      const bb = roomBBox(r);
+      const path = roomPath(r);
+      const edges = roomEdges(r);
+      const showNums = !isStandardRoom(r);
       s += `<g>
-        <rect class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}"
-          x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="0.06"/>
+        <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
+        <path class="wall-outline" d="${path}"/>
         <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}</text>`;
-      for (const side of SIDES) {
-        const [x1, y1, x2, y2] = roomSideCoords(r, side);
-        const key = `${r.id}:${side}`;
+      for (const e of edges) {
+        const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
-        s += `<line class="wall" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
         if (!planState.edit) {
-          s += `<line class="wall-hit" data-wall="${key}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+          s += `<line class="wall-hit" data-wall="${key}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
+          if (showNums) {
+            s += `<text class="wall-num" x="${e.mid[0] + e.nx * 0.22}" y="${e.mid[1] + e.ny * 0.22}">${e.i + 1}</text>`;
+          }
           if (cnt > 0) {
-            const [bx, by] = badgePos(r, side);
-            s += `<g class="badge" data-wall="${key}">
-              <circle cx="${bx}" cy="${by}" r="0.32"/>
-              <text x="${bx}" y="${by}">${cnt}</text></g>`;
+            const off = showNums ? 0.6 : 0.45;
+            const bx = e.mid[0] + e.nx * off, by = e.mid[1] + e.ny * off;
+            s += `<g class="badge" data-wall="${key}"><circle cx="${bx}" cy="${by}" r="0.32"/><text x="${bx}" y="${by}">${cnt}</text></g>`;
             if (points[key]) {
-              // вторая метка — точки для мастеров (розетки, выводы) на этой стене
-              const horiz = side === 'n' || side === 's';
-              const [px2, py2] = horiz ? [bx + 0.8, by] : [bx, by + 0.8];
-              s += `<g class="badge pts" data-wall="${key}">
-                <circle cx="${px2}" cy="${py2}" r="0.32"/>
-                <text x="${px2}" y="${py2}">⚡${points[key]}</text></g>`;
+              const px2 = bx + e.ux * 0.8, py2 = by + e.uy * 0.8;
+              s += `<g class="badge pts" data-wall="${key}"><circle cx="${px2}" cy="${py2}" r="0.32"/><text x="${px2}" y="${py2}">⚡${points[key]}</text></g>`;
             }
           }
+        } else if (sel) {
+          const ws = planState.sel && planState.sel.type === 'wall' && planState.sel.i === e.i;
+          s += `<line class="wall-hit edit ${ws ? 'sel' : ''}" data-edge="${e.i}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
+          if (ws) s += `<text class="wall-len" x="${e.mid[0] + e.nx * 0.3}" y="${e.mid[1] + e.ny * 0.3}">${e.len.toFixed(2).replace('.', ',')} м</text>`;
         }
       }
       if (!planState.edit) {
-        // плашки «Потолок» и «Пол»: в маленьких комнатах — компактные значки ⬆/⬇
-        const compact = r.w < 3 || r.h < 2.8;
+        const compact = bb.w < 3 || bb.h < 2.8;
         const chips = [['c', 'Потолок', '⬆'], ['f', 'Пол', '⬇']];
         chips.forEach(([sf, name, ico], i) => {
           const key = `${r.id}:${sf}`;
@@ -387,7 +518,7 @@ function setupPlan(pid, rooms, counts, points = {}) {
               <rect class="surf-hit" x="${chx - 0.55}" y="${cy + 0.05}" width="1.1" height="0.9"/></g>`;
           } else {
             const label = (cnt ? `${name} · ${cnt}` : name) + ptsMark;
-            const cw2 = Math.min(2.4, r.w - 0.8);
+            const cw2 = Math.min(2.4, bb.w - 0.8);
             const chy = cy + (i === 0 ? 0.1 : 0.85);
             s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
               <rect x="${cx - cw2 / 2}" y="${chy - 0.3}" width="${cw2}" height="0.6" rx="0.3"/>
@@ -396,8 +527,19 @@ function setupPlan(pid, rooms, counts, points = {}) {
         });
       }
       if (planState.edit && sel) {
-        s += `<circle class="handle" data-drag="resize" data-room="${r.id}"
-          cx="${r.x + r.w}" cy="${r.y + r.h}" r="0.38"/>`;
+        if (r.pts.length < MAX_CORNERS) {
+          for (const e of edges) {
+            s += `<g class="handle add" data-add="${e.i}"><circle cx="${e.mid[0]}" cy="${e.mid[1]}" r="0.24"/><text x="${e.mid[0]}" y="${e.mid[1]}">+</text></g>`;
+          }
+        }
+        r.pts.forEach((p, i) => {
+          const vs = planState.sel && planState.sel.type === 'vertex' && planState.sel.i === i;
+          s += `<circle class="handle v ${vs ? 'sel' : ''}" data-drag="vertex" data-i="${i}" cx="${p[0]}" cy="${p[1]}" r="0.3"/>`;
+          if (vs) {
+            const a = Math.round(cornerAngle(r, i));
+            s += `<text class="wall-len" x="${p[0] + 0.4}" y="${p[1] - 0.4}">${a}°</text>`;
+          }
+        });
       }
       s += '</g>';
     }
@@ -406,37 +548,45 @@ function setupPlan(pid, rooms, counts, points = {}) {
   draw();
 
   function toWorld(e) {
-    const pt = new DOMPoint(e.clientX, e.clientY);
-    return pt.matrixTransform(svg.getScreenCTM().inverse());
+    return new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
   }
   const snap = v => Math.round(v * 10) / 10;
 
   let drag = null;
 
   svg.addEventListener('pointerdown', e => {
-    const wallEl = e.target.closest('[data-wall]');
-    if (wallEl && !planState.edit) {
-      drag = { kind: 'tap-wall', key: wallEl.dataset.wall, sx: e.clientX, sy: e.clientY, moved: false };
-      return;
-    }
-    if (!planState.edit) return;
-    const t = e.target.closest('[data-drag]');
-    if (!t) {
-      if (planState.selected !== null) { planState.selected = null; updateTools(); draw(); }
+    if (!planState.edit) {
+      const wallEl = e.target.closest('[data-wall]');
+      if (wallEl) drag = { kind: 'tap-wall', key: wallEl.dataset.wall, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     e.preventDefault();
-    const room = rooms.find(r => r.id === t.dataset.room);
-    if (!room) return;
-    if (planState.selected !== room.id) { planState.selected = room.id; updateTools(); }
-    drag = { kind: t.dataset.drag, room, start: toWorld(e), orig: { ...room }, moved: false };
+    const addEl = e.target.closest('[data-add]');
+    const edgeEl = e.target.closest('[data-edge]');
+    const t = e.target.closest('[data-drag]');
+    const room = selRoom();
+    if (addEl && room) { drag = { kind: 'tap-add', i: +addEl.dataset.add, sx: e.clientX, sy: e.clientY, moved: false }; return; }
+    if (edgeEl && room) { drag = { kind: 'tap-edge', i: +edgeEl.dataset.edge, sx: e.clientX, sy: e.clientY, moved: false }; return; }
+    if (!t) {
+      if (planState.selected !== null || planState.sel) { planState.selected = null; planState.sel = null; updateTools(); draw(); }
+      return;
+    }
+    if (t.dataset.drag === 'vertex') {
+      const i = +t.dataset.i;
+      drag = { kind: 'vertex', room, i, start: toWorld(e), orig: room.pts[i].slice(), moved: false };
+    } else {
+      const rm = rooms.find(r => r.id === t.dataset.room);
+      if (!rm) return;
+      if (planState.selected !== rm.id) { planState.selected = rm.id; planState.sel = null; updateTools(); }
+      drag = { kind: 'move', room: rm, start: toWorld(e), orig: rm.pts.map(p => p.slice()), moved: false };
+    }
     try { svg.setPointerCapture(e.pointerId); } catch {}
     draw();
   });
 
   svg.addEventListener('pointermove', e => {
     if (!drag) return;
-    if (drag.kind === 'tap-wall') {
+    if (drag.kind.startsWith('tap')) {
       if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 8) drag.moved = true;
       return;
     }
@@ -444,11 +594,16 @@ function setupPlan(pid, rooms, counts, points = {}) {
     const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
     if (Math.abs(dx) + Math.abs(dy) > 0.05) drag.moved = true;
     if (drag.kind === 'move') {
-      drag.room.x = snap(drag.orig.x + dx);
-      drag.room.y = snap(drag.orig.y + dy);
+      const sx = snap(dx), sy = snap(dy);
+      drag.room.pts = drag.orig.map(o => [cm(o[0] + sx), cm(o[1] + sy), ...o.slice(2)]);
     } else {
-      drag.room.w = Math.max(1, snap(drag.orig.w + dx));
-      drag.room.h = Math.max(1, snap(drag.orig.h + dy));
+      const r = drag.room, n = r.pts.length;
+      let x = snap(drag.orig[0] + dx), y = snap(drag.orig[1] + dy);
+      // подтяжка к прямому углу: выравниваем по соседним вершинам
+      const P = r.pts[(drag.i - 1 + n) % n], N = r.pts[(drag.i + 1) % n];
+      if (Math.abs(x - P[0]) < 0.2) x = P[0]; else if (Math.abs(x - N[0]) < 0.2) x = N[0];
+      if (Math.abs(y - P[1]) < 0.2) y = P[1]; else if (Math.abs(y - N[1]) < 0.2) y = N[1];
+      r.pts[drag.i] = [x, y, ...drag.orig.slice(2)];
     }
     draw();
   });
@@ -456,48 +611,112 @@ function setupPlan(pid, rooms, counts, points = {}) {
   svg.addEventListener('pointerup', async e => {
     if (!drag) return;
     const d = drag; drag = null;
-    if (d.kind === 'tap-wall') {
-      if (!d.moved) nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`);
-      return;
-    }
-    if (d.moved) await dbPut('rooms', d.room);
+    if (d.kind === 'tap-wall') { if (!d.moved) nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`); return; }
+    const room = selRoom();
+    if (d.kind === 'tap-add') { if (!d.moved && room) await insertVertex(room, d.i); return; }
+    if (d.kind === 'tap-edge') { if (!d.moved) { planState.sel = { type: 'wall', i: d.i }; updateTools(); draw(); } return; }
+    if (d.kind === 'vertex' && !d.moved) { planState.sel = { type: 'vertex', i: d.i }; updateTools(); draw(); return; }
+    if (d.moved) { await dbPut('rooms', d.room); updateTools(); }
   });
   svg.addEventListener('pointercancel', () => { drag = null; });
 
+  async function insertVertex(room, i) {
+    if (room.pts.length >= MAX_CORNERS) return toast(`Максимум ${MAX_CORNERS} углов`);
+    const e = roomEdges(room)[i];
+    room.pts.splice(i + 1, 0, [cm(e.mid[0]), cm(e.mid[1])]);
+    room.wallIds.splice(i + 1, 0, newWallId());
+    planState.sel = { type: 'vertex', i: i + 1 };
+    await dbPut('rooms', room);
+    updateTools(); draw();
+  }
+
+  async function deleteVertex(room, i) {
+    if (room.pts.length <= 3) return toast('У комнаты должно остаться хотя бы 3 угла');
+    const n = room.pts.length;
+    const keep = room.wallIds[(i - 1 + n) % n], drop = room.wallIds[i];
+    // стена «drop» сливается со стеной «keep»: фото и проёмы переезжают, ничего не теряется
+    const photos = (await dbAll('photos', 'wallKey', `${room.id}:${drop}`));
+    for (const p of photos) { p.wallKey = `${room.id}:${keep}`; await dbPut('photos', p); }
+    if (room.openings && room.openings[drop]) {
+      room.openings[keep] = [...(room.openings[keep] || []), ...room.openings[drop]];
+      delete room.openings[drop];
+    }
+    if (room.labels) delete room.labels[drop];
+    room.pts.splice(i, 1);
+    room.wallIds.splice(i, 1);
+    planState.sel = null;
+    await dbPut('rooms', room);
+    if (photos.length) toast(`${photos.length} фото перенесены на соседнюю стену`);
+    updateTools(); draw();
+  }
+
   function updateTools() {
-    const tools = $('#room-tools'), hint = $('#editor-hint');
-    if (!tools) return;
-    const room = rooms.find(r => r.id === planState.selected);
-    tools.classList.toggle('hidden', !room);
-    if (hint) hint.classList.toggle('hidden', !!room);
+    const roomTools = $('#room-tools'), vTools = $('#vertex-tools'), wTools = $('#wall-tools'), hint = $('#editor-hint');
+    if (!roomTools) return;
+    const room = selRoom();
+    const sel = room ? planState.sel : null;
+    roomTools.classList.toggle('hidden', !room || !!sel);
+    vTools.classList.toggle('hidden', !(sel && sel.type === 'vertex'));
+    wTools.classList.toggle('hidden', !(sel && sel.type === 'wall'));
+    hint.classList.toggle('hidden', !!room);
     if (!room) return;
-    const inp = $('#room-name');
-    inp.value = room.name;
-    inp.oninput = () => {
-      room.name = inp.value;
-      clearTimeout(inp._t);
-      inp._t = setTimeout(() => dbPut('rooms', room), 400);
-      draw();
-    };
-    const ceilInp = $('#room-ceil');
-    ceilInp.value = room.ceil || '';
-    ceilInp.oninput = () => {
-      const v = parseFloat(ceilInp.value);
-      if (v > 0) room.ceil = v; else delete room.ceil;
-      clearTimeout(ceilInp._t);
-      ceilInp._t = setTimeout(() => dbPut('rooms', room), 400);
-    };
-    $('#del-room').onclick = async () => {
-      const photos = (await dbAll('photos', 'projectId', pid)).filter(p => p.wallKey.startsWith(room.id + ':'));
-      const msg = photos.length
-        ? `Удалить комнату «${room.name}»? Вместе с ней удалятся ${photos.length} фото её стен!`
-        : `Удалить комнату «${room.name}»?`;
-      if (!confirm(msg)) return;
-      for (const p of photos) await dbDel('photos', p.id);
-      await dbDel('rooms', room.id);
-      planState.selected = null;
-      render();
-    };
+
+    if (!sel) {
+      const inp = $('#room-name');
+      inp.value = room.name;
+      inp.oninput = () => {
+        room.name = inp.value;
+        clearTimeout(inp._t); inp._t = setTimeout(() => dbPut('rooms', room), 400);
+        draw();
+      };
+      const ceilInp = $('#room-ceil');
+      ceilInp.value = room.ceil || '';
+      ceilInp.oninput = () => {
+        const v = parseFloat(ceilInp.value);
+        if (v > 0) room.ceil = v; else delete room.ceil;
+        clearTimeout(ceilInp._t); ceilInp._t = setTimeout(() => dbPut('rooms', room), 400);
+      };
+      $('#del-room').onclick = async () => {
+        const photos = (await dbAll('photos', 'projectId', pid)).filter(p => p.wallKey.startsWith(room.id + ':'));
+        const msg = photos.length
+          ? `Удалить комнату «${room.name}»? Вместе с ней удалятся ${photos.length} фото её стен!`
+          : `Удалить комнату «${room.name}»?`;
+        if (!confirm(msg)) return;
+        for (const p of photos) await dbDel('photos', p.id);
+        await dbDel('rooms', room.id);
+        planState.selected = null; planState.sel = null;
+        render();
+      };
+    } else if (sel.type === 'vertex') {
+      const i = sel.i;
+      const ang = $('#v-angle'), rad = $('#v-radius');
+      ang.value = Math.round(cornerAngle(room, i));
+      rad.value = Math.round((room.pts[i][2] || 0) * 100);
+      ang.onchange = async () => {
+        const v = parseFloat(ang.value);
+        if (!(v > 0 && v < 360)) return;
+        setCornerAngle(room, i, v);
+        await dbPut('rooms', room); draw();
+      };
+      rad.onchange = async () => {
+        const v = parseFloat(rad.value);
+        const p = room.pts[i];
+        room.pts[i] = v > 0 ? [p[0], p[1], v / 100] : [p[0], p[1]];
+        await dbPut('rooms', room); draw();
+      };
+      $('#del-vertex').onclick = () => deleteVertex(room, i);
+    } else if (sel.type === 'wall') {
+      const i = sel.i;
+      const len = $('#w-len');
+      len.value = roomEdges(room)[i].len.toFixed(2);
+      len.onchange = async () => {
+        const v = parseFloat(String(len.value).replace(',', '.'));
+        if (!(v > 0)) return;
+        setWallLength(room, i, v);
+        await dbPut('rooms', room); draw();
+      };
+      $('#add-vertex').onclick = () => insertVertex(room, i);
+    }
   }
   if (planState.edit) updateTools();
 }
@@ -597,7 +816,7 @@ async function viewWall(pid, wallKey) {
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ⇆ Сравнить «до / после»</button>` : `
         <p class="mut small center">Добавьте фото минимум на двух этапах — появится сравнение «до/после».</p>`}
-      ${SIDES.includes(side) ? `
+      ${isWallId(room, side) ? `
         <div class="card" style="margin-top:12px">
           <div class="stage-photos-head">
             <b>Проёмы на стене</b>
@@ -719,8 +938,9 @@ async function viewWall(pid, wallKey) {
 // ожидаемые размеры поверхности из схемы: ширина × высота (для калибровки по 4 углам)
 function wallSizeOf(room, side) {
   const ceil = room.ceil || 2.7;
-  if (side === 'c' || side === 'f') return { w: room.w, h: room.h };
-  return { w: (side === 'n' || side === 's') ? room.w : room.h, h: ceil };
+  if (side === 'c' || side === 'f') { const bb = roomBBox(room); return { w: cm(bb.w), h: cm(bb.h) }; }
+  const e = roomEdge(room, side);
+  return { w: e ? cm(e.len) : null, h: ceil };
 }
 
 /* ---------- экран: сравнение «до/после» ---------- */
