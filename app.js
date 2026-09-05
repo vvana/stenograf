@@ -581,7 +581,14 @@ async function viewWall(pid, wallKey) {
               </span>
             </div>
             ${list.length ? `<div class="thumbs">
-              ${list.map(p => `<img class="thumb" src="${newURL(p.blob)}" data-view="${p.id}" alt="">`).join('')}
+              ${list.map(p => {
+                const n = (p.marks || []).length;
+                return `<div class="thumb-wrap" data-view="${p.id}">
+                  <img class="thumb" src="${newURL(p.blob)}" alt="">
+                  ${p.calib ? '<span class="thumb-badge calib">📏</span>' : ''}
+                  ${n ? `<span class="thumb-badge">${n}</span>` : ''}
+                </div>`;
+              }).join('')}
             </div>` : `<div class="mut small">Нет фото</div>`}
           </div>`;
         }).join('')}
@@ -632,43 +639,26 @@ async function viewWall(pid, wallKey) {
   cam.onchange = () => { const f = [...cam.files]; cam.value = ''; importFiles(f, true); };
   gal.onchange = () => { const f = [...gal.files]; gal.value = ''; importFiles(f, false); };
 
-  app.querySelectorAll('[data-view]').forEach(img => {
-    img.onclick = () => openViewer(wallPhotos.find(p => p.id === img.dataset.view), stages);
+  app.querySelectorAll('[data-view]').forEach(el => {
+    el.onclick = () => {
+      const photo = wallPhotos.find(p => p.id === el.dataset.view);
+      if (!photo) return;
+      openPhotoEditor(photo, {
+        stages,
+        wallTitle: wallLabel(room, side),
+        wallSize: wallSizeOf(room, side),
+        onClose: render,
+        onGhost: p => nav(`#/p/${pid}/ghost/${encodeURIComponent(wallKey)}/${p.id}`),
+      });
+    };
   });
 }
 
-function openViewer(photo, stages) {
-  if (!photo) return;
-  const v = $('#viewer');
-  const stage = stages.find(s => s.id === photo.stageId);
-  v.classList.remove('hidden');
-  v.innerHTML = `
-    <div class="viewer-top">
-      <div>
-        <b>${esc(stage ? stage.name : 'Этап')}</b>
-        <div class="mut small">${fmtDate(photo.created)}</div>
-      </div>
-      <button class="iconbtn light" id="v-close">✕</button>
-    </div>
-    <img src="${newURL(photo.blob)}" alt="">
-    <div class="viewer-bottom">
-      <div class="viewer-note" id="v-note">${photo.note ? esc(photo.note) : '<span class="mut">+ добавить заметку</span>'}</div>
-      <button class="btn danger" id="v-del">Удалить фото</button>
-    </div>`;
-  $('#v-close').onclick = () => { v.classList.add('hidden'); v.innerHTML = ''; };
-  $('#v-note').onclick = async () => {
-    const note = prompt('Заметка к фото:', photo.note || '');
-    if (note === null) return;
-    photo.note = note.trim();
-    await dbPut('photos', photo);
-    render();
-  };
-  $('#v-del').onclick = async () => {
-    if (!confirm('Удалить это фото безвозвратно?')) return;
-    await dbDel('photos', photo.id);
-    v.classList.add('hidden');
-    render();
-  };
+// ожидаемые размеры поверхности из схемы: ширина × высота (для калибровки по 4 углам)
+function wallSizeOf(room, side) {
+  const ceil = room.ceil || 2.7;
+  if (side === 'c' || side === 'f') return { w: room.w, h: room.h };
+  return { w: (side === 'n' || side === 's') ? room.w : room.h, h: ceil };
 }
 
 /* ---------- экран: сравнение «до/после» ---------- */
@@ -869,6 +859,13 @@ function importBackup() {
 /* ---------- запуск ---------- */
 
 if ('serviceWorker' in navigator) {
+  // если страницу уже обслуживал SW и он сменился на новый — перезагружаемся один раз,
+  // чтобы подхватить свежие файлы, а не те, что отдал старый воркер
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloading) { reloading = true; location.reload(); }
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });
