@@ -183,6 +183,7 @@ body {
 
 /* ---------- стена: фото по этапам ---------- */
 .stage-photos-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.btn-pair { display: flex; gap: 6px; flex-shrink: 0; }
 .thumbs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
 .thumb {
   width: 84px; height: 84px; object-fit: cover; flex: 0 0 auto;

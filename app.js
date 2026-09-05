@@ -84,6 +84,52 @@ async function compressImage(file, maxDim = 1600, quality = 0.85) {
   return blob || file;
 }
 
+/* ---------- EXIF: дата съёмки из JPEG ---------- */
+
+async function readExifDate(file) {
+  try {
+    const dv = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (dv.byteLength < 4 || dv.getUint16(0) !== 0xFFD8) return null;
+    let off = 2;
+    while (off + 4 <= dv.byteLength) {
+      if (dv.getUint8(off) !== 0xFF) break;
+      const marker = dv.getUint8(off + 1), len = dv.getUint16(off + 2);
+      if (marker === 0xE1 && dv.getUint32(off + 4) === 0x45786966) { // "Exif"
+        const tiff = off + 10;
+        const little = dv.getUint16(tiff) === 0x4949;
+        const g16 = p => dv.getUint16(p, little), g32 = p => dv.getUint32(p, little);
+        const readTag = (ifd, want) => {
+          const n = g16(ifd);
+          for (let i = 0; i < n; i++) {
+            const e = ifd + 2 + i * 12;
+            if (g16(e) !== want) continue;
+            const type = g16(e + 2), cnt = g32(e + 4);
+            if (type === 4) return g32(e + 8);
+            if (type === 3) return g16(e + 8);
+            if (type === 2) {
+              const p = cnt > 4 ? tiff + g32(e + 8) : e + 8;
+              let s = '';
+              for (let k = 0; k < cnt - 1 && p + k < dv.byteLength; k++) s += String.fromCharCode(dv.getUint8(p + k));
+              return s;
+            }
+            return null;
+          }
+          return null;
+        };
+        const ifd0 = tiff + g32(tiff + 4);
+        const exifIfd = readTag(ifd0, 0x8769);
+        let str = exifIfd ? readTag(tiff + exifIfd, 0x9003) : null; // DateTimeOriginal
+        if (!str) str = readTag(ifd0, 0x0132);                       // DateTime
+        const m = typeof str === 'string' && /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(str);
+        return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null;
+      }
+      if (marker === 0xDA) break; // начало данных изображения
+      off += 2 + len;
+    }
+  } catch { /* не JPEG или битый EXIF */ }
+  return null;
+}
+
 /* ---------- роутер ---------- */
 
 window.addEventListener('hashchange', render);
@@ -529,7 +575,10 @@ async function viewWall(pid, wallKey) {
           return `<div class="card stage-photos">
             <div class="stage-photos-head">
               <b>${esc(s.name)}</b>
-              <button class="btn small-btn" data-shoot="${s.id}">📷 Фото</button>
+              <span class="btn-pair">
+                <button class="btn small-btn" data-shoot="${s.id}">📷 Снять</button>
+                <button class="btn small-btn" data-pick="${s.id}">🖼 Галерея</button>
+              </span>
             </div>
             ${list.length ? `<div class="thumbs">
               ${list.map(p => `<img class="thumb" src="${newURL(p.blob)}" data-view="${p.id}" alt="">`).join('')}
@@ -539,6 +588,7 @@ async function viewWall(pid, wallKey) {
       </div>
     </div>
     <input type="file" id="cam" accept="image/*" capture="environment" class="hidden-input">
+    <input type="file" id="gal" accept="image/*" multiple class="hidden-input">
     <div id="viewer" class="viewer hidden"></div>`;
 
   $('#rename-wall').onclick = async () => {
@@ -549,24 +599,38 @@ async function viewWall(pid, wallKey) {
     await dbPut('rooms', room); render();
   };
 
-  const cam = $('#cam');
+  const cam = $('#cam'), gal = $('#gal');
   let pendingStage = null;
   app.querySelectorAll('[data-shoot]').forEach(b => {
     b.onclick = () => { pendingStage = b.dataset.shoot; cam.click(); };
   });
-  cam.onchange = async () => {
-    const file = cam.files && cam.files[0];
-    cam.value = '';
-    if (!file || !pendingStage) return;
-    toast('Сохраняю фото…');
-    const blob = await compressImage(file);
-    await dbPut('photos', {
-      id: uid(), projectId: pid, wallKey, stageId: pendingStage,
-      blob, note: '', created: Date.now(),
-    });
-    toast('Фото добавлено');
+  app.querySelectorAll('[data-pick]').forEach(b => {
+    b.onclick = () => { pendingStage = b.dataset.pick; gal.click(); };
+  });
+  const importFiles = async (files, fromCamera) => {
+    if (!files.length || !pendingStage) return;
+    toast(files.length > 1 ? `Сохраняю ${files.length} фото…` : 'Сохраняю фото…');
+    let ok = 0;
+    for (const file of files) {
+      try {
+        // для снимков из галереи берём реальную дату съёмки из EXIF
+        const shot = fromCamera ? null : await readExifDate(file);
+        const blob = await compressImage(file);
+        await dbPut('photos', {
+          id: uid(), projectId: pid, wallKey, stageId: pendingStage,
+          blob, note: '', created: shot || file.lastModified || Date.now(),
+        });
+        ok++;
+      } catch (err) {
+        console.error(err);
+        toast(`Не удалось открыть ${file.name}`);
+      }
+    }
+    if (ok) toast(ok > 1 ? `Добавлено ${ok} фото` : 'Фото добавлено');
     render();
   };
+  cam.onchange = () => { const f = [...cam.files]; cam.value = ''; importFiles(f, true); };
+  gal.onchange = () => { const f = [...gal.files]; gal.value = ''; importFiles(f, false); };
 
   app.querySelectorAll('[data-view]').forEach(img => {
     img.onclick = () => openViewer(wallPhotos.find(p => p.id === img.dataset.view), stages);
