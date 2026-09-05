@@ -236,7 +236,8 @@ async function viewProjects() {
 /* ---------- экран: план квартиры ---------- */
 
 const MAX_CORNERS = 10;
-const planState = { edit: false, selected: null, sel: null }; // sel: {type:'vertex'|'wall', i}
+// sel: {type:'vertex'|'wall', i}; mode: null | 'trace' (обводка комнаты) | 'scale' (масштаб подложки) | 'underlay' (сдвиг подложки)
+const planState = { edit: false, selected: null, sel: null, mode: null, tmp: [], underlayHidden: false };
 
 /* --- геометрия комнаты-многоугольника ---
    room.pts = [[x, y, r?], ...] в метрах по часовой/против — как нарисовал пользователь; r — радиус скругления угла (м)
@@ -382,7 +383,17 @@ async function viewPlan(pid) {
       `<button class="iconbtn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">✎</button>`)}
     <div class="plan-wrap">
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
-        <button class="btn small-btn" id="add-room">+ Комната</button>
+        <span id="create-tools" class="tools">
+          <button class="btn small-btn" id="add-room">+ Комната</button>
+          <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">✏ Обвести</button>
+          <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">📏 По обмеру</button>
+          <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">🗺 Подложка</button>
+        </span>
+        <span id="mode-tools" class="tools hidden">
+          <span id="mode-text" class="small"></span>
+          <button class="btn small-btn primary" id="mode-done">Готово</button>
+          <button class="btn small-btn" id="mode-cancel">Отмена</button>
+        </span>
         <span id="room-tools" class="tools hidden">
           <input id="room-name" class="inp" placeholder="Название комнаты">
           <input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="h, м" title="Высота потолка, м">
@@ -400,6 +411,8 @@ async function viewPlan(pid) {
         <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
       </div>
       <div id="plan-box" class="plan-box"></div>
+      <div id="plan-sheet" class="plan-sheet hidden"></div>
+      <input type="file" id="underlay-file" accept="image/*" class="hidden-input">
       ${rooms.length === 0 && !planState.edit ? `
         <div class="empty">
           <div class="empty-ico">📐</div>
@@ -414,19 +427,51 @@ async function viewPlan(pid) {
   $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; render(); };
   if (planState.edit) {
     $('#add-room').onclick = async () => {
-      const n = rooms.length;
-      const x = 1 + (n % 3) * 4.6, y = 1 + Math.floor(n / 3) * 4.2;
-      const room = {
-        id: uid(), projectId: pid, name: 'Комната ' + (n + 1),
-        pts: [[x, y], [x + 4, y], [x + 4, y + 3.5], [x, y + 3.5]],
-        wallIds: ['n', 'e', 's', 'w'], labels: {}, created: Date.now(),
-      };
-      await dbPut('rooms', room);
-      planState.selected = room.id; planState.sel = null;
-      render();
+      const t = prompt('Размеры комнаты, м: ширина и глубина через пробел (например 4,2 3,1). Пусто — 4 × 3,5', '');
+      if (t === null) return;
+      const nums = String(t).replace(/,/g, '.').match(/\d+(\.\d+)?/g) || [];
+      const w = parseFloat(nums[0]) > 0 ? parseFloat(nums[0]) : 4;
+      const h = parseFloat(nums[1]) > 0 ? parseFloat(nums[1]) : 3.5;
+      const [x, y] = freeSpot(rooms, w, h);
+      await createRoom(pid, rooms, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], null);
     };
   }
-  setupPlan(pid, rooms, counts, points);
+  setupPlan(pid, rooms, counts, points, project);
+}
+
+// свободное место под новую комнату: справа от уже нарисованных
+function freeSpot(rooms, w, h) {
+  if (!rooms.length) return [1, 1];
+  const bbs = rooms.map(roomBBox);
+  const right = Math.max(...bbs.map(b => b.x + b.w));
+  const top = Math.min(...bbs.map(b => b.y));
+  return [cm(right + 0.6), cm(top)];
+}
+
+// 4 угла, все стены горизонтальны/вертикальны → стандартный прямоугольник n/e/s/w (обход по часовой с верхнего левого)
+function standardizeRect(pts) {
+  if (pts.length !== 4) return null;
+  const axis = pts.every((p, i) => { const q = pts[(i + 1) % 4]; return Math.abs(p[0] - q[0]) < 0.05 || Math.abs(p[1] - q[1]) < 0.05; });
+  if (!axis) return null;
+  let arr = pts.map(p => p.slice());
+  if (polyArea(arr) < 0) arr.reverse();           // по часовой на экране (y вниз) — положительная площадь
+  let k = 0;
+  for (let i = 1; i < 4; i++) if (arr[i][0] + arr[i][1] < arr[k][0] + arr[k][1]) k = i;
+  return [...arr.slice(k), ...arr.slice(0, k)];
+}
+
+async function createRoom(pid, rooms, pts, name) {
+  const std = standardizeRect(pts);
+  const room = {
+    id: uid(), projectId: pid, name: name || ('Комната ' + (rooms.length + 1)),
+    pts: (std || pts).map(p => [cm(p[0]), cm(p[1]), ...p.slice(2)]),
+    wallIds: std ? ['n', 'e', 's', 'w'] : pts.map(() => newWallId()),
+    labels: {}, created: Date.now(),
+  };
+  await dbPut('rooms', room);
+  planState.selected = room.id; planState.sel = null; planState.mode = null; planState.tmp = [];
+  render();
+  return room;
 }
 
 function bottomNav(pid, active) {
@@ -440,9 +485,11 @@ function bottomNav(pid, active) {
   </nav>`;
 }
 
-function setupPlan(pid, rooms, counts, points = {}) {
+function setupPlan(pid, rooms, counts, points = {}, project = null) {
   const box = $('#plan-box');
   if (!box) return;
+  const plan = project && project.plan && project.plan.blob ? project.plan : null;
+  const planURL = plan ? newURL(plan.blob) : null;
 
   let minX = 0, minY = 0, maxX = 8, maxY = 8;
   if (rooms.length) {
@@ -451,6 +498,11 @@ function setupPlan(pid, rooms, counts, points = {}) {
     minY = Math.min(...bbs.map(b => b.y)) - 1;
     maxX = Math.max(...bbs.map(b => b.x + b.w)) + 1;
     maxY = Math.max(...bbs.map(b => b.y + b.h)) + 1;
+  }
+  if (plan && planState.edit && !planState.underlayHidden) {
+    // в редакторе подложка должна быть видна целиком
+    minX = Math.min(minX, plan.ox - 0.5); minY = Math.min(minY, plan.oy - 0.5);
+    maxX = Math.max(maxX, plan.ox + plan.w * plan.k + 0.5); maxY = Math.max(maxY, plan.oy + plan.h * plan.k + 0.5);
   }
   if (planState.edit) { maxX += 2; maxY += 2; }
   const vb = { x: minX, y: minY, w: Math.max(maxX - minX, 6), h: Math.max(maxY - minY, 6) };
@@ -461,6 +513,9 @@ function setupPlan(pid, rooms, counts, points = {}) {
 
   function draw() {
     let s = '';
+    if (planURL && !planState.underlayHidden) {
+      s += `<image class="underlay ${planState.edit ? 'edit' : ''}" href="${planURL}" x="${plan.ox}" y="${plan.oy}" width="${plan.w * plan.k}" height="${plan.h * plan.k}" preserveAspectRatio="none"/>`;
+    }
     if (planState.edit) {
       s += '<g class="grid">';
       for (let gx = Math.ceil(vb.x); gx <= vb.x + vb.w; gx++) s += `<line x1="${gx}" y1="${vb.y}" x2="${gx}" y2="${vb.y + vb.h}"/>`;
@@ -543,6 +598,16 @@ function setupPlan(pid, rooms, counts, points = {}) {
       }
       s += '</g>';
     }
+    // временные точки режимов: обводка комнаты / масштаб подложки
+    const tmp = planState.tmp;
+    if (planState.mode === 'trace' && tmp.length) {
+      s += `<polyline class="trace-line" points="${tmp.map(p => p.join(',')).join(' ')}"/>`;
+      tmp.forEach((p, i) => { s += `<circle class="handle v ${i === 0 ? 'first' : ''}" cx="${p[0]}" cy="${p[1]}" r="${i === 0 ? 0.36 : 0.26}"/>`; });
+    }
+    if (planState.mode === 'scale') {
+      tmp.forEach((p, i) => { s += `<g class="handle scale"><circle cx="${p[0]}" cy="${p[1]}" r="0.3"/><text x="${p[0]}" y="${p[1]}">${i + 1}</text></g>`; });
+      if (tmp.length === 2) s += `<line class="trace-line" x1="${tmp[0][0]}" y1="${tmp[0][1]}" x2="${tmp[1][0]}" y2="${tmp[1][1]}"/>`;
+    }
     svg.innerHTML = s;
   }
   draw();
@@ -561,6 +626,15 @@ function setupPlan(pid, rooms, counts, points = {}) {
       return;
     }
     e.preventDefault();
+    if (planState.mode === 'trace' || planState.mode === 'scale') {
+      drag = { kind: 'tap-mode', sx: e.clientX, sy: e.clientY, moved: false, world: toWorld(e) };
+      return;
+    }
+    if (planState.mode === 'underlay' && plan) {
+      drag = { kind: 'underlay', start: toWorld(e), orig: { ox: plan.ox, oy: plan.oy }, moved: false };
+      try { svg.setPointerCapture(e.pointerId); } catch {}
+      return;
+    }
     const addEl = e.target.closest('[data-add]');
     const edgeEl = e.target.closest('[data-edge]');
     const t = e.target.closest('[data-drag]');
@@ -593,7 +667,9 @@ function setupPlan(pid, rooms, counts, points = {}) {
     const p = toWorld(e);
     const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
     if (Math.abs(dx) + Math.abs(dy) > 0.05) drag.moved = true;
-    if (drag.kind === 'move') {
+    if (drag.kind === 'underlay') {
+      plan.ox = cm(drag.orig.ox + dx); plan.oy = cm(drag.orig.oy + dy);
+    } else if (drag.kind === 'move') {
       const sx = snap(dx), sy = snap(dy);
       drag.room.pts = drag.orig.map(o => [cm(o[0] + sx), cm(o[1] + sy), ...o.slice(2)]);
     } else {
@@ -612,6 +688,8 @@ function setupPlan(pid, rooms, counts, points = {}) {
     if (!drag) return;
     const d = drag; drag = null;
     if (d.kind === 'tap-wall') { if (!d.moved) nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`); return; }
+    if (d.kind === 'tap-mode') { if (!d.moved) await modeTap(d.world); return; }
+    if (d.kind === 'underlay') { if (d.moved) await dbPut('projects', project); return; }
     const room = selRoom();
     if (d.kind === 'tap-add') { if (!d.moved && room) await insertVertex(room, d.i); return; }
     if (d.kind === 'tap-edge') { if (!d.moved) { planState.sel = { type: 'wall', i: d.i }; updateTools(); draw(); } return; }
@@ -650,9 +728,71 @@ function setupPlan(pid, rooms, counts, points = {}) {
     updateTools(); draw();
   }
 
+  /* --- режимы: обводка, масштаб подложки, сдвиг подложки --- */
+  const MODE_TEXT = {
+    trace: () => planState.tmp.length
+      ? `Углов: ${planState.tmp.length}. Тапните следующий угол; тап по первому или «Готово» — замкнуть.`
+      : 'Тапайте углы комнаты по порядку (по подложке или по сетке).',
+    scale: () => planState.tmp.length ? 'Тапните второй конец известного отрезка' : 'Тапните первый конец стены с известной длиной',
+    underlay: () => 'Тяните подложку пальцем, чтобы совместить с сеткой. «Готово» — закончить.',
+  };
+  function setMode(m) {
+    planState.mode = m; planState.tmp = [];
+    if (m) { planState.selected = null; planState.sel = null; }
+    updateTools(); draw();
+  }
+  async function modeTap(w) {
+    const tmp = planState.tmp;
+    if (planState.mode === 'scale') {
+      tmp.push([w.x, w.y]); draw(); updateTools();
+      if (tmp.length < 2) return;
+      const d = Math.hypot(tmp[1][0] - tmp[0][0], tmp[1][1] - tmp[0][1]);
+      const t = prompt('Реальная длина этого отрезка, м:', '');
+      const L = parseFloat(String(t || '').replace(',', '.'));
+      if (L > 0 && d > 0.01) {
+        const ratio = L / d;
+        plan.k *= ratio;
+        plan.ox = cm(tmp[0][0] - (tmp[0][0] - plan.ox) * ratio);
+        plan.oy = cm(tmp[0][1] - (tmp[0][1] - plan.oy) * ratio);
+        await dbPut('projects', project);
+        toast('Масштаб подложки задан');
+      }
+      planState.mode = null; planState.tmp = [];
+      render();
+      return;
+    }
+    if (planState.mode === 'trace') {
+      let p = [Math.round(w.x * 20) / 20, Math.round(w.y * 20) / 20];
+      if (tmp.length >= 3 && Math.hypot(p[0] - tmp[0][0], p[1] - tmp[0][1]) < 0.35) return finishTrace();
+      if (tmp.length >= MAX_CORNERS) return toast(`Максимум ${MAX_CORNERS} углов — нажмите «Готово»`);
+      const P = tmp[tmp.length - 1];
+      if (P) { // лёгкая подтяжка к прямым углам
+        if (Math.abs(p[0] - P[0]) < 0.12) p[0] = P[0];
+        if (Math.abs(p[1] - P[1]) < 0.12) p[1] = P[1];
+      }
+      tmp.push(p); draw(); updateTools();
+    }
+  }
+  async function finishTrace() {
+    const tmp = planState.tmp;
+    if (tmp.length < 3) return toast('Нужно хотя бы 3 угла');
+    const name = prompt('Название комнаты:', 'Комната ' + (rooms.length + 1));
+    if (name === null) return;
+    await createRoom(pid, rooms, tmp.map(p => p.slice()), name.trim() || null);
+  }
+
   function updateTools() {
     const roomTools = $('#room-tools'), vTools = $('#vertex-tools'), wTools = $('#wall-tools'), hint = $('#editor-hint');
     if (!roomTools) return;
+    const mode = planState.mode;
+    $('#mode-tools').classList.toggle('hidden', !mode);
+    $('#create-tools').classList.toggle('hidden', !!mode);
+    if (mode) {
+      $('#mode-text').textContent = MODE_TEXT[mode]();
+      $('#mode-done').classList.toggle('hidden', mode === 'scale');
+      roomTools.classList.add('hidden'); vTools.classList.add('hidden'); wTools.classList.add('hidden'); hint.classList.add('hidden');
+      return;
+    }
     const room = selRoom();
     const sel = room ? planState.sel : null;
     roomTools.classList.toggle('hidden', !room || !!sel);
@@ -718,7 +858,121 @@ function setupPlan(pid, rooms, counts, points = {}) {
       $('#add-vertex').onclick = () => insertVertex(room, i);
     }
   }
-  if (planState.edit) updateTools();
+
+  /* --- листы: подложка и мастер обмера --- */
+  const sheet = $('#plan-sheet');
+  function showSheet(html, wire) {
+    sheet.innerHTML = html + '<button class="btn ghost wide" id="ps-cancel">Отмена</button>';
+    sheet.classList.remove('hidden');
+    sheet.querySelector('#ps-cancel').onclick = hideSheet;
+    if (wire) wire(sheet);
+  }
+  function hideSheet() { sheet.classList.add('hidden'); sheet.innerHTML = ''; }
+
+  function underlaySheet() {
+    showSheet(`
+      <div class="sh-title">Подложка: план БТИ, скан, фото плана</div>
+      <p class="mut small">${plan ? `Загружена, масштаб ${(plan.w * plan.k).toFixed(1).replace('.', ',')} м по ширине.` : 'Загрузите план — и обводите комнаты по нему тапами.'}</p>
+      <button class="btn wide" id="ps-load">🖼 ${plan ? 'Заменить план' : 'Загрузить план'}</button>
+      ${plan ? `
+        <button class="btn primary wide" id="ps-scale">📏 Задать масштаб (2 точки + длина)</button>
+        <button class="btn wide" id="ps-move">✥ Подвинуть подложку</button>
+        <button class="btn wide" id="ps-toggle">${planState.underlayHidden ? '👁 Показать' : '🙈 Скрыть'}</button>
+        <button class="btn danger wide" id="ps-del">Удалить подложку</button>` : ''}`, s => {
+      s.querySelector('#ps-load').onclick = () => { hideSheet(); $('#underlay-file').click(); };
+      const q = id => s.querySelector(id);
+      if (q('#ps-scale')) q('#ps-scale').onclick = () => { hideSheet(); setMode('scale'); };
+      if (q('#ps-move')) q('#ps-move').onclick = () => { hideSheet(); setMode('underlay'); };
+      if (q('#ps-toggle')) q('#ps-toggle').onclick = () => { planState.underlayHidden = !planState.underlayHidden; hideSheet(); render(); };
+      if (q('#ps-del')) q('#ps-del').onclick = async () => {
+        if (!confirm('Удалить подложку? Комнаты останутся.')) return;
+        delete project.plan; await dbPut('projects', project); hideSheet(); render();
+      };
+    });
+  }
+  $('#underlay-file').onchange = async () => {
+    const file = $('#underlay-file').files && $('#underlay-file').files[0];
+    $('#underlay-file').value = '';
+    if (!file) return;
+    toast('Загружаю план…');
+    try {
+      const blob = await compressImage(file, 2000, 0.85);
+      const bmp = await createImageBitmap(blob);
+      const w = bmp.width, h = bmp.height; bmp.close();
+      project.plan = { blob, w, h, k: 12 / w, ox: 0, oy: 0 }; // стартовый масштаб: 12 м по ширине
+      planState.underlayHidden = false;
+      await dbPut('projects', project);
+      toast('План загружен. Теперь задайте масштаб по известной стене');
+      planState.mode = 'scale'; planState.tmp = [];
+      render();
+    } catch (err) {
+      console.error(err); toast('Не удалось открыть изображение');
+    }
+  };
+
+  function wizardSheet() {
+    const walls = [];
+    const rowsHTML = () => walls.length
+      ? `<ol class="wz-list">${walls.map((w, i) => `<li>Стена ${i + 1}: <b>${String(w.len).replace('.', ',')} м</b>, угол к следующей ${w.ang}°</li>`).join('')}</ol>`
+      : '<p class="mut small">Идите вдоль стен по часовой стрелке. Угол — внутренний, между этой стеной и следующей (90 — прямой, 270 — внутренний выступ). Последняя стена замкнётся сама.</p>';
+    showSheet(`
+      <div class="sh-title">Комната по обмеру</div>
+      <div id="wz-rows">${rowsHTML()}</div>
+      <div class="wz-inputs">
+        <label>Длина, м <input id="wz-len" class="inp" type="number" step="0.01" min="0.1" inputmode="decimal"></label>
+        <label>Угол, ° <input id="wz-ang" class="inp" type="number" step="1" min="1" max="359" value="90" inputmode="numeric"></label>
+      </div>
+      <button class="btn wide" id="wz-add">+ Добавить стену</button>
+      <button class="btn primary wide" id="wz-close">Замкнуть контур и создать комнату</button>`, s => {
+      const lenI = s.querySelector('#wz-len'), angI = s.querySelector('#wz-ang');
+      lenI.focus();
+      s.querySelector('#wz-add').onclick = () => {
+        const len = parseFloat(String(lenI.value).replace(',', '.')), ang = parseFloat(angI.value);
+        if (!(len > 0)) return toast('Введите длину стены');
+        if (!(ang > 0 && ang < 360)) return toast('Угол от 1 до 359°');
+        if (walls.length >= MAX_CORNERS - 1) return toast(`Максимум ${MAX_CORNERS} углов`);
+        walls.push({ len, ang });
+        s.querySelector('#wz-rows').innerHTML = rowsHTML();
+        lenI.value = ''; angI.value = '90'; lenI.focus();
+      };
+      s.querySelector('#wz-close').onclick = async () => {
+        // незакрытый ввод в полях тоже считаем стеной
+        const len = parseFloat(String(lenI.value).replace(',', '.')), ang = parseFloat(angI.value);
+        if (len > 0 && ang > 0 && ang < 360 && walls.length < MAX_CORNERS - 1) walls.push({ len, ang });
+        if (walls.length < 2) return toast('Нужно хотя бы две стены');
+        const [x0, y0] = freeSpot(rooms, 1, 1);
+        const pts = [[x0, y0]];
+        let x = x0, y = y0, th = 0;
+        for (const w of walls) {
+          x += Math.cos(th) * w.len; y += Math.sin(th) * w.len;
+          pts.push([cm(x), cm(y)]);
+          th += (180 - w.ang) * Math.PI / 180; // поворот по часовой на экране
+        }
+        // замыкающая стена идёт от конца последней введённой стены к началу;
+        // если пользователь ввёл и её — конец совпал с началом, дубликат убираем
+        const last = pts[pts.length - 1];
+        if (Math.hypot(last[0] - x0, last[1] - y0) < 0.05) pts.pop();
+        if (pts.length < 3) return toast('Нужно хотя бы две стены');
+        const name = prompt('Название комнаты:', 'Комната ' + (rooms.length + 1));
+        if (name === null) return;
+        hideSheet();
+        await createRoom(pid, rooms, pts, name.trim() || null);
+      };
+    });
+  }
+
+  if (planState.edit) {
+    $('#trace-room').onclick = () => setMode('trace');
+    $('#wizard-room').onclick = wizardSheet;
+    $('#underlay-menu').onclick = underlaySheet;
+    $('#mode-done').onclick = async () => {
+      if (planState.mode === 'trace') return finishTrace();
+      if (planState.mode === 'underlay') { await dbPut('projects', project); }
+      planState.mode = null; planState.tmp = []; render();
+    };
+    $('#mode-cancel').onclick = () => { planState.mode = null; planState.tmp = []; render(); };
+    updateTools();
+  }
 }
 
 /* ---------- экран: этапы ---------- */
@@ -1100,7 +1354,14 @@ async function exportBackup() {
     const { blob, ...meta } = p;
     photosOut.push({ ...meta, data: await blobToDataURL(blob) });
   }
-  const payload = { app: 'stenograf', version: 1, exported: Date.now(), projects, rooms, stages, photos: photosOut };
+  const projectsOut = [];
+  for (const p of projects) {
+    if (p.plan && p.plan.blob) {
+      const { blob, ...planMeta } = p.plan;
+      projectsOut.push({ ...p, plan: { ...planMeta, data: await blobToDataURL(blob) } });
+    } else projectsOut.push(p);
+  }
+  const payload = { app: 'stenograf', version: 1, exported: Date.now(), projects: projectsOut, rooms, stages, photos: photosOut };
   const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1123,7 +1384,13 @@ function importBackup() {
       if (data.app !== 'stenograf' || !Array.isArray(data.projects)) throw new Error('Это не файл копии Стенографа');
       if (!confirm(`Импортировать копию от ${fmtDate(data.exported || Date.now())}? Объекты: ${data.projects.length}, фото: ${(data.photos || []).length}. Существующие записи с теми же id будут перезаписаны.`)) return;
       toast('Импортирую…');
-      for (const p of data.projects || []) await dbPut('projects', p);
+      for (const p of data.projects || []) {
+        if (p.plan && p.plan.data) {
+          const { data: planData, ...planMeta } = p.plan;
+          p.plan = { ...planMeta, blob: await (await fetch(planData)).blob() };
+        }
+        await dbPut('projects', p);
+      }
       for (const r of data.rooms || []) await dbPut('rooms', r);
       for (const s of data.stages || []) await dbPut('stages', s);
       for (const ph of data.photos || []) {
