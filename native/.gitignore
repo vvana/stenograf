@@ -1,4 +1,4 @@
 node_modules/
-www/
-ios/
+/www/
+/ios/
 package-lock.json
