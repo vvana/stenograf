@@ -37,11 +37,9 @@ jobs:
 
       - name: Generate iOS project
         working-directory: native
-        run: |
-          npx cap add ios
-          npx cap sync ios
+        run: npx cap add ios --skip-deps || npx cap add ios || true
 
-      - name: Configure Info.plist and deployment target
+      - name: Configure Info.plist and deployment target (before pod install)
         working-directory: native/ios/App
         run: |
           PLIST=App/Info.plist
@@ -50,7 +48,11 @@ jobs:
           /usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations~ipad" "$PLIST" || true
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' App.xcodeproj/project.pbxproj
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '17.0'/" Podfile
-          pod install --repo-update
+          grep -n "platform :ios" Podfile
+
+      - name: Sync plugins and install pods
+        working-directory: native
+        run: npx cap sync ios
 
       - name: Build (no code signing)
         working-directory: native/ios/App
