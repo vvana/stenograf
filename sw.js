@@ -10,6 +10,7 @@ const ASSETS = [
   './annot.js',
   './extras.js',
   './tour.js',
+  './native.js',
   './vendor/three.module.min.js',
   './vendor/Reflector.js',
   './app.js',

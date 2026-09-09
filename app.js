@@ -393,7 +393,8 @@ async function viewPlan(pid) {
 
   app.innerHTML = `
     ${header(project.name, '#/',
-      `<button class="iconbtn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">✎</button>`)}
+      `<button class="iconbtn hidden" id="lidar-walk" title="Обход этапа: автосъёмка стен лидаром">🚶</button>
+       <button class="iconbtn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">✎</button>`)}
     <div class="plan-wrap">
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <span id="create-tools" class="tools">
@@ -401,6 +402,7 @@ async function viewPlan(pid) {
           <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">✏ Обвести</button>
           <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">📏 По обмеру</button>
           <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">🗺 Подложка</button>
+          <button class="btn small-btn primary hidden" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)">📡 Обмер лидаром</button>
         </span>
         <span id="mode-tools" class="tools hidden">
           <span id="mode-text" class="small"></span>
@@ -546,7 +548,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       s += `<g>
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
-        <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}</text>`;
+        <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}${r.measured === 'lidar' ? ' 📡' : ''}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
@@ -981,6 +983,44 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         hideSheet();
         await createRoom(pid, rooms, pts, name.trim() || null);
       };
+    });
+  }
+
+  // лидар (только нативная iOS-версия на iPhone Pro)
+  lidarAvailable().then(ok => {
+    if (!ok) return;
+    const walkBtn = $('#lidar-walk'), measBtn = $('#lidar-measure');
+    if (walkBtn) {
+      walkBtn.classList.remove('hidden');
+      walkBtn.onclick = () => walkSheet();
+    }
+    if (measBtn) {
+      measBtn.classList.remove('hidden');
+      measBtn.onclick = async () => {
+        const room = selRoom();
+        if (room && !confirm(`Переобмерить «${room.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
+        try { await lidarMeasure(pid, rooms, room || null); render(); }
+        catch (err) { alert('Обмер не удался: ' + err.message); }
+      };
+    }
+  });
+  async function walkSheet() {
+    const stagesList = await dbAll('stages', 'projectId', pid);
+    stagesList.sort((a, b) => a.ord - b.ord);
+    let roomSel = rooms.length === 1 ? rooms[0] : null;
+    const step2 = () => showSheet(`<div class="sh-title">Обход этапа: ${esc(roomSel.name)}</div>
+      <p class="mut small">Выберите этап — кадры стен снимутся сами и лягут на этот этап уже откалиброванными.</p>
+      ${stagesList.map(s => `<button class="btn wide" data-stage="${s.id}">${esc(s.name)}</button>`).join('')}`, sh => {
+      sh.querySelectorAll('[data-stage]').forEach(b => b.onclick = async () => {
+        hideSheet();
+        try { await lidarWalk(pid, roomSel, b.dataset.stage); render(); }
+        catch (err) { alert('Обход не удался: ' + err.message); }
+      });
+    });
+    if (roomSel) return step2();
+    showSheet(`<div class="sh-title">Обход этапа: какая комната?</div>
+      ${rooms.map(r => `<button class="btn wide" data-room="${r.id}">${esc(r.name)}</button>`).join('')}`, sh => {
+      sh.querySelectorAll('[data-room]').forEach(b => b.onclick = () => { roomSel = rooms.find(r => r.id === b.dataset.room); step2(); });
     });
   }
 

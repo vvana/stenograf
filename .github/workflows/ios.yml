@@ -1,0 +1,84 @@
+name: iOS build (unsigned ipa)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - '.github/workflows/ios.yml'
+      - '*.js'
+      - '*.css'
+      - '*.html'
+      - 'vendor/**'
+      - 'manifest.webmanifest'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app && xcodebuild -version
+
+      - name: Install Capacitor
+        working-directory: native
+        run: npm install --no-audit --no-fund
+
+      - name: Prepare web assets
+        working-directory: native
+        run: npm run www
+
+      - name: Generate iOS project
+        working-directory: native
+        run: |
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Configure Info.plist and deployment target
+        working-directory: native/ios/App
+        run: |
+          PLIST=App/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Камера нужна для фото стен и обмера комнат лидаром'" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :UIRequiresFullScreen bool true" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Delete :UISupportedInterfaceOrientations~ipad" "$PLIST" || true
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g' App.xcodeproj/project.pbxproj
+          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '17.0'/" Podfile
+          pod install --repo-update
+
+      - name: Build (no code signing)
+        working-directory: native/ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee xcodebuild.log | grep -E "error:|warning: .*Swift|BUILD|Compiling" || true
+          test -d build/Build/Products/Release-iphoneos/App.app
+
+      - name: Package ipa
+        working-directory: native/ios/App
+        run: |
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qr Stenograf-unsigned.ipa Payload
+          ls -la Stenograf-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Stenograf-unsigned-ipa
+          path: native/ios/App/Stenograf-unsigned.ipa
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: native/ios/App/xcodebuild.log
+          if-no-files-found: ignore

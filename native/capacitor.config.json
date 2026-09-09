@@ -1,0 +1,13 @@
+{
+  "appId": "ru.stenograf.app",
+  "appName": "Стенограф",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "automatic",
+    "backgroundColor": "#faf6ef",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "server": {
+    "iosScheme": "capacitor"
+  }
+}

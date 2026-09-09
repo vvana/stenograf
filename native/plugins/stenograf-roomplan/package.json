@@ -1,0 +1,11 @@
+{
+  "name": "stenograf-roomplan",
+  "version": "0.1.0",
+  "description": "Apple RoomPlan bridge for Stenograf",
+  "main": "dist/plugin.js",
+  "license": "MIT",
+  "files": ["dist", "ios", "StenografRoomplan.podspec"],
+  "capacitor": {
+    "ios": { "src": "ios" }
+  }
+}

@@ -45,6 +45,20 @@ python -m http.server 8787 --directory .
 
 Открыть http://localhost:8787. Для PWA-функций (установка, офлайн) нужен HTTPS или localhost.
 
+## Нативная iOS-версия (лидар)
+
+Папка `native/` — обёртка Capacitor и Swift-плагин `stenograf-roomplan` (Apple RoomPlan): «📡 Обмер лидаром» в редакторе схемы (комната строится из скана, двери/окна становятся проёмами, id стен и фото сохраняются при переобмере) и «🚶 Обход этапа» на схеме (кадры стен снимаются сами при обходе и ложатся на стены уже откалиброванными). Нужен iPhone Pro (12 Pro и новее) с iOS 17+.
+
+**Сборка без Mac** — GitHub Actions (`.github/workflows/ios.yml`, macOS-раннер) собирает неподписанный `Stenograf-unsigned.ipa` при каждом пуше в `main` (или вручную: Actions → iOS build → Run workflow). Артефакт лежит в результатах запуска.
+
+**Установка на свой iPhone без платного аккаунта** — [Sideloadly](https://sideloadly.io) на Windows:
+1. Установить Sideloadly и iTunes/Apple Devices (драйверы USB), подключить iPhone кабелем.
+2. Перетащить `.ipa` в Sideloadly, войти своим Apple ID (бесплатный), нажать Start.
+3. На iPhone: Настройки → Основные → VPN и управление устройством → доверить профиль.
+4. Подпись живёт 7 дней; Sideloadly умеет обновлять её автоматически по Wi-Fi.
+
+Данные PWA переносятся в нативную версию через «Резервная копия» → «Импорт».
+
 ## Деплой
 
 GitHub Pages: Settings → Pages → Deploy from a branch → `main` / root. Обновление — просто `git push`, клиенты подтянут новую версию при следующем открытии (SW network-first).

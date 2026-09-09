@@ -1,0 +1,17 @@
+{
+  "name": "stenograf-native",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Capacitor-обёртка Стенографа (iOS, RoomPlan)",
+  "scripts": {
+    "www": "node scripts/www.js"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.1.0",
+    "@capacitor/ios": "^6.1.0",
+    "stenograf-roomplan": "file:plugins/stenograf-roomplan"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.0"
+  }
+}
