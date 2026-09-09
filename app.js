@@ -45,6 +45,7 @@ function wallLabel(room, side) {
   if (custom) return custom;
   if (side === 'c') return `${room.name} — потолок`;
   if (side === 'f') return `${room.name} — пол`;
+  if (side === 'p') return `${room.name} — панорама 360°`;
   return `${room.name} — ${wallBaseName(room, side)}`;
 }
 // «верхняя стена» для стандартных 4 сторон, «стена 3» для произвольных многоугольников
@@ -174,6 +175,7 @@ async function render() {
       if (parts[2] === 'report') return await viewReport(pid);
       if (parts[2] === 'calc') return await viewCalc(pid);
       if (parts[2] === 'ghost' && parts[3] && parts[4]) return await viewGhost(pid, parts[3], parts[4]);
+      if (parts[2] === 'tour') return await viewTour(pid, parts[3] || null);
       return await viewPlan(pid);
     }
     return await viewProjects();
@@ -492,6 +494,7 @@ function bottomNav(pid, active) {
   return `<nav class="bottomnav">
     ${item('plan', `#/p/${pid}`, '📐', 'Схема')}
     ${item('stages', `#/p/${pid}/stages`, '☑', 'Этапы')}
+    ${item('tour', `#/p/${pid}/tour`, '🏠', '3D-тур')}
     ${item('more', `#/p/${pid}/more`, '⋯', 'Ещё')}
   </nav>`;
 }
@@ -568,27 +571,36 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         }
       }
       if (!planState.edit) {
-        const compact = bb.w < 3 || bb.h < 2.8;
-        const chips = [['c', 'Потолок', '⬆'], ['f', 'Пол', '⬇']];
+        const compact = bb.w < 3.2 || bb.h < 2.8;
+        const chips = [['c', 'Потолок', '⬆'], ['f', 'Пол', '⬇'], ['p', 'Панорама', '🌐']];
         chips.forEach(([sf, name, ico], i) => {
           const key = `${r.id}:${sf}`;
           const cnt = counts[key] || 0;
           const ptsMark = points[key] ? ' ⚡' : '';
           if (compact) {
             const label = (cnt ? `${ico}${cnt}` : ico) + ptsMark;
-            const cw2 = cnt ? 1.0 : 0.7;
-            const chx = cx + (i === 0 ? -0.6 : 0.6);
+            const cw2 = cnt ? 0.95 : 0.7;
+            const chx = cx + (i - 1) * 0.85;
             s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
               <rect x="${chx - cw2 / 2}" y="${cy + 0.2}" width="${cw2}" height="0.6" rx="0.3"/>
               <text x="${chx}" y="${cy + 0.5}">${label}</text>
-              <rect class="surf-hit" x="${chx - 0.55}" y="${cy + 0.05}" width="1.1" height="0.9"/></g>`;
+              <rect class="surf-hit" x="${chx - 0.42}" y="${cy + 0.05}" width="0.84" height="0.9"/></g>`;
+          } else if (sf === 'p') {
+            // панорама — круглая кнопка справа от плашки «Пол»
+            const cw = Math.min(2.4, bb.w - 0.8);
+            const chx = cx + cw / 2 - 0.3, chy = cy + 0.85;
+            s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
+              <rect x="${chx - 0.3}" y="${chy - 0.3}" width="0.6" height="0.6" rx="0.3"/>
+              <text x="${chx}" y="${chy}">${ico}${cnt ? cnt : ''}</text>
+              <rect class="surf-hit" x="${chx - 0.45}" y="${chy - 0.45}" width="0.9" height="0.9"/></g>`;
           } else {
             const label = (cnt ? `${name} · ${cnt}` : name) + ptsMark;
-            const cw2 = Math.min(2.4, bb.w - 0.8);
+            const cw = Math.min(2.4, bb.w - 0.8);
             const chy = cy + (i === 0 ? 0.1 : 0.85);
+            const cw2 = i === 0 ? cw : cw - 0.75, chx = i === 0 ? cx : cx - 0.375;
             s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
-              <rect x="${cx - cw2 / 2}" y="${chy - 0.3}" width="${cw2}" height="0.6" rx="0.3"/>
-              <text x="${cx}" y="${chy}">${esc(label)}</text></g>`;
+              <rect x="${chx - cw2 / 2}" y="${chy - 0.3}" width="${cw2}" height="0.6" rx="0.3"/>
+              <text x="${chx}" y="${chy}">${esc(label)}</text></g>`;
           }
         });
       }
@@ -1077,7 +1089,9 @@ async function viewWall(pid, wallKey) {
     ${header(wallLabel(room, side), `#/p/${pid}`,
       `<button class="iconbtn" id="rename-wall" title="Переименовать стену">✎</button>`)}
     <div class="pad">
-      ${stagesWithPhotos.length >= 2 ? `
+      ${side === 'p' ? `
+        <p class="mut small">Снимите комнату из центра штатной камерой в режиме «Панорама» (или 360°-камерой) и добавьте снимок через «Галерея» на нужный этап. Смотреть — в 3D-туре.</p>
+        <button class="btn primary wide" id="open-pano" ${wallPhotos.length ? '' : 'disabled'}>🌐 Открыть панораму в туре</button>` : stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ⇆ Сравнить «до / после»</button>` : `
         <p class="mut small center">Добавьте фото минимум на двух этапах — появится сравнение «до/после».</p>`}
@@ -1129,6 +1143,9 @@ async function viewWall(pid, wallKey) {
     room.labels[side] = name.trim();
     await dbPut('rooms', room); render();
   };
+
+  const openPano = $('#open-pano');
+  if (openPano) openPano.onclick = () => { tourState.mode = 'pano'; nav(`#/p/${pid}/tour/${roomId}`); };
 
   const addOp = $('#add-opening');
   if (addOp) {
@@ -1204,6 +1221,7 @@ async function viewWall(pid, wallKey) {
 // ожидаемые размеры поверхности из схемы: ширина × высота (для калибровки по 4 углам)
 function wallSizeOf(room, side) {
   const ceil = room.ceil || 2.7;
+  if (side === 'p') return { w: null, h: null };
   if (side === 'c' || side === 'f') { const bb = roomBBox(room); return { w: cm(bb.w), h: cm(bb.h) }; }
   const e = roomEdge(room, side);
   return { w: e ? cm(e.len) : null, h: ceil };

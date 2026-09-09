@@ -20,6 +20,12 @@
   <script src="db.js"></script>
   <script src="annot.js"></script>
   <script src="extras.js"></script>
+  <script src="tour.js"></script>
   <script src="app.js"></script>
+  <script type="module">
+    import * as THREE from './vendor/three.module.min.js';
+    window.THREE = THREE;
+    window.dispatchEvent(new Event('three-ready'));
+  </script>
 </body>
 </html>

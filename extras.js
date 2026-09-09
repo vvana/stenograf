@@ -1,7 +1,7 @@
 /* Стенограф — отчёт для мастеров, калькулятор материалов, «призрачная камера» */
 'use strict';
 
-const roomSurfaces = r => [...(r.wallIds || []), 'c', 'f'];
+const roomSurfaces = r => [...(r.wallIds || []), 'c', 'f', 'p'];
 const DEFAULT_CEIL = 2.7;
 const roomCeil = r => (r.ceil > 0 ? r.ceil : DEFAULT_CEIL);
 
@@ -117,6 +117,7 @@ function sideTitle(room, side) {
   if (custom) return custom;
   if (side === 'c') return 'потолок';
   if (side === 'f') return 'пол';
+  if (side === 'p') return 'панорама 360°';
   return wallBaseName(room, side);
 }
 function stageName(stages, id) { const s = stages.find(x => x.id === id); return s ? s.name : 'Этап'; }

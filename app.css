@@ -421,6 +421,27 @@ body {
   .report-img-box { border: none; }
 }
 
+/* ---------- 3D-тур ---------- */
+.tour { position: relative; height: calc(100vh - 58px - 64px - env(safe-area-inset-bottom) - env(safe-area-inset-top)); min-height: 360px; overflow: hidden; background: var(--bg); }
+.tour canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.tour-top { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.tour-top .inp { pointer-events: auto; max-width: 320px; box-shadow: var(--shadow); }
+.tour-modes { display: flex; gap: 6px; pointer-events: auto; }
+.tour-modes button {
+  font: 600 13px system-ui, sans-serif; padding: 8px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; box-shadow: var(--shadow);
+}
+.tour-modes button.active { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
+.tour-bottom { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: flex-end; gap: 8px; pointer-events: none; }
+.tour-hint { flex: 1; font-size: 12px; color: var(--ink); background: color-mix(in srgb, var(--card) 85%, transparent); border-radius: 10px; padding: 8px 10px; }
+.tour-plan { width: 120px; height: 100px; background: color-mix(in srgb, var(--card) 90%, transparent); border-radius: 10px; padding: 4px; pointer-events: auto; }
+.tour-plan svg { width: 100%; height: 100%; }
+.tour-plan .tp-room { fill: color-mix(in srgb, var(--acc) 10%, var(--card)); stroke: var(--ink); stroke-width: 0.08; cursor: pointer; }
+.tour-plan .tp-room.sel { fill: color-mix(in srgb, var(--acc) 45%, var(--card)); }
+.tour-plan .tp-label { font-size: 0.5px; fill: var(--mut); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.tour-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 30px; color: var(--mut); }
+.nav-item { min-width: 0; }
+
 /* ---------- toast ---------- */
 #toast {
   position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom));
