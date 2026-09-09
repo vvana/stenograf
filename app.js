@@ -54,6 +54,17 @@ function wallBaseName(room, side) {
   return i >= 0 ? `стена ${i + 1}` : 'стена';
 }
 
+// имя/роль для подписи фото и пометок (хранится на устройстве)
+function userName(ask = false) {
+  let n = '';
+  try { n = localStorage.getItem('stenograf.user') || ''; } catch {}
+  if (!n && ask) {
+    const t = prompt('Как вас подписывать на фото и пометках? Например «Сергей, электрик»', '');
+    if (t && t.trim()) { n = t.trim(); try { localStorage.setItem('stenograf.user', n); } catch {} }
+  }
+  return n;
+}
+
 function parseWallKey(key) {
   const i = key.lastIndexOf(':');
   return { roomId: key.slice(0, i), side: key.slice(i + 1) };
@@ -1151,6 +1162,7 @@ async function viewWall(pid, wallKey) {
   });
   const importFiles = async (files, fromCamera) => {
     if (!files.length || !pendingStage) return;
+    const by = userName(true);
     toast(files.length > 1 ? `Сохраняю ${files.length} фото…` : 'Сохраняю фото…');
     let ok = 0;
     for (const file of files) {
@@ -1160,7 +1172,7 @@ async function viewWall(pid, wallKey) {
         const blob = await compressImage(file);
         await dbPut('photos', {
           id: uid(), projectId: pid, wallKey, stageId: pendingStage,
-          blob, note: '', created: shot || file.lastModified || Date.now(),
+          blob, note: '', created: shot || file.lastModified || Date.now(), by,
         });
         ok++;
       } catch (err) {
@@ -1307,6 +1319,14 @@ async function viewMore(pid) {
         </div>
         <button class="btn primary wide" data-nav="#/p/${pid}/report">📋 Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">🧮 Площади и материалы</button>
+        <div class="card">
+          <b>Команда объекта</b>
+          <p class="mut small">Пока без сервера: обмен файлами. Владелец отправляет схему, рабочие снимают и отправляют фото обратно — при импорте всё сливается без дублей.</p>
+          <button class="btn wide" id="share-plan">📤 Отправить схему коллегам (без фото)</button>
+          <button class="btn wide" id="share-project">📤 Отправить объект с фото</button>
+          <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
+          <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
+        </div>
         <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
@@ -1322,6 +1342,15 @@ async function viewMore(pid) {
     await dbPut('projects', project); render();
   };
   $('#export-all2').onclick = exportBackup;
+  $('#share-plan').onclick = () => exportProject(pid, false);
+  $('#share-project').onclick = () => exportProject(pid, true);
+  $('#import-here').onclick = importBackup;
+  $('#set-name').onclick = () => {
+    const t = prompt('Ваше имя и роль (подпись на фото и пометках):', userName());
+    if (t === null) return;
+    try { localStorage.setItem('stenograf.user', t.trim()); } catch {}
+    render();
+  };
   $('#del-project').onclick = async () => {
     if (!confirm(`Удалить объект «${project.name}» со всеми схемами и ${photos.length} фото? Это необратимо.`)) return;
     if (!confirm('Точно удалить? Восстановить будет нельзя.')) return;
@@ -1344,11 +1373,8 @@ function blobToDataURL(blob) {
   });
 }
 
-async function exportBackup() {
-  toast('Готовлю копию…');
-  const [projects, rooms, stages, photos] = await Promise.all([
-    dbAll('projects'), dbAll('rooms'), dbAll('stages'), dbAll('photos'),
-  ]);
+// файл обмена: kind = 'backup' (всё), 'plan' (схема объекта без фото), 'photos' (объект с фото от участника)
+async function buildExport(kind, projects, rooms, stages, photos) {
   const photosOut = [];
   for (const p of photos) {
     const { blob, ...meta } = p;
@@ -1361,15 +1387,41 @@ async function exportBackup() {
       projectsOut.push({ ...p, plan: { ...planMeta, data: await blobToDataURL(blob) } });
     } else projectsOut.push(p);
   }
-  const payload = { app: 'stenograf', version: 1, exported: Date.now(), projects: projectsOut, rooms, stages, photos: photosOut };
-  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  const payload = { app: 'stenograf', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms, stages, photos: photosOut };
+  return new Blob([JSON.stringify(payload)], { type: 'application/json' });
+}
+
+// отдать файл: через системное «Поделиться» (телефон) или скачиванием (ПК)
+async function deliverFile(blob, name, title) {
+  const file = new File([blob], name, { type: blob.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title }); return; } catch (err) { if (err && err.name === 'AbortError') return; }
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  const d = new Date();
-  a.download = `stenograf-backup-${d.toISOString().slice(0, 10)}.json`;
+  a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-  toast('Копия сохранена в загрузки');
+  toast('Файл сохранён в загрузки');
+}
+
+async function exportBackup() {
+  toast('Готовлю копию…');
+  const [projects, rooms, stages, photos] = await Promise.all([
+    dbAll('projects'), dbAll('rooms'), dbAll('stages'), dbAll('photos'),
+  ]);
+  const blob = await buildExport('backup', projects, rooms, stages, photos);
+  await deliverFile(blob, `stenograf-backup-${new Date().toISOString().slice(0, 10)}.json`, 'Резервная копия Стенографа');
+}
+
+async function exportProject(pid, withPhotos) {
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  if (!project) return;
+  toast(withPhotos ? 'Готовлю объект с фото…' : 'Готовлю схему…');
+  const blob = await buildExport(withPhotos ? 'photos' : 'plan', [project], rooms, stages, withPhotos ? photos : []);
+  const base = slug(project.name);
+  await deliverFile(blob, `${base}-${withPhotos ? 'photos' : 'plan'}.json`,
+    withPhotos ? `${project.name} — фото` : `${project.name} — схема`);
 }
 
 function importBackup() {
@@ -1380,31 +1432,56 @@ function importBackup() {
     const file = inp.files && inp.files[0];
     if (!file) return;
     try {
-      const data = JSON.parse(await file.text());
-      if (data.app !== 'stenograf' || !Array.isArray(data.projects)) throw new Error('Это не файл копии Стенографа');
-      if (!confirm(`Импортировать копию от ${fmtDate(data.exported || Date.now())}? Объекты: ${data.projects.length}, фото: ${(data.photos || []).length}. Существующие записи с теми же id будут перезаписаны.`)) return;
-      toast('Импортирую…');
-      for (const p of data.projects || []) {
-        if (p.plan && p.plan.data) {
-          const { data: planData, ...planMeta } = p.plan;
-          p.plan = { ...planMeta, blob: await (await fetch(planData)).blob() };
-        }
-        await dbPut('projects', p);
-      }
-      for (const r of data.rooms || []) await dbPut('rooms', r);
-      for (const s of data.stages || []) await dbPut('stages', s);
-      for (const ph of data.photos || []) {
-        const { data: dataUrl, ...meta } = ph;
-        const blob = await (await fetch(dataUrl)).blob();
-        await dbPut('photos', { ...meta, blob });
-      }
-      toast('Импорт завершён');
-      render();
+      await importData(JSON.parse(await file.text()));
     } catch (err) {
       alert('Не удалось импортировать: ' + err.message);
     }
   };
   inp.click();
+}
+
+// слияние данных из файла обмена в локальную базу (см. buildExport про kind)
+async function importData(data) {
+      if (data.app !== 'stenograf' || !Array.isArray(data.projects)) throw new Error('Это не файл Стенографа');
+      const kind = data.kind || 'backup';
+      const KIND_TEXT = { backup: 'резервную копию', plan: 'схему объекта', photos: 'фото от участника' };
+      const who = data.by ? ` от «${data.by}»` : '';
+      if (!confirm(`Импортировать ${KIND_TEXT[kind] || 'файл'}${who} (${fmtDate(data.exported || Date.now())})?\nОбъекты: ${data.projects.length}, фото: ${(data.photos || []).length}.\n${kind === 'photos' ? 'Новые фото и пометки добавятся, ваши данные не тронутся.' : 'Схема и этапы обновятся, фото не удаляются.'}`)) return;
+      toast('Импортирую…');
+      // 'plan' и 'backup' — авторитетная схема: перезаписываем объект/комнаты/этапы.
+      // 'photos' — от участника: объект/схему добавляем только если у нас их ещё нет.
+      const authoritative = kind !== 'photos';
+      let added = 0, merged = 0;
+      for (const p of data.projects || []) {
+        if (p.plan && p.plan.data) {
+          const { data: planData, ...planMeta } = p.plan;
+          p.plan = { ...planMeta, blob: await (await fetch(planData)).blob() };
+        }
+        if (authoritative || !(await dbGet('projects', p.id))) await dbPut('projects', p);
+      }
+      for (const r of data.rooms || []) if (authoritative || !(await dbGet('rooms', r.id))) await dbPut('rooms', r);
+      for (const s of data.stages || []) if (authoritative || !(await dbGet('stages', s.id))) await dbPut('stages', s);
+      for (const ph of data.photos || []) {
+        const { data: dataUrl, ...meta } = ph;
+        const mine = await dbGet('photos', ph.id);
+        if (!mine) {
+          const blob = await (await fetch(dataUrl)).blob();
+          await dbPut('photos', { ...meta, blob }); added++;
+        } else {
+          // фото уже есть — подливаем только новые пометки и статусы «сделано»
+          const ids = new Set((mine.marks || []).map(m => m.id));
+          let changed = false;
+          for (const m of ph.marks || []) {
+            if (!ids.has(m.id)) { (mine.marks = mine.marks || []).push(m); changed = true; }
+            else { const mm = mine.marks.find(x => x.id === m.id); if (m.done && !mm.done) { Object.assign(mm, { done: true, doneBy: m.doneBy, doneAt: m.doneAt }); changed = true; } }
+          }
+          if (!mine.calib && ph.calib) { mine.calib = ph.calib; changed = true; }
+          if (changed) { await dbPut('photos', mine); merged++; }
+        }
+      }
+      toast(`Импорт завершён: новых фото ${added}, дополнено ${merged}`);
+      render();
+      return { added, merged };
 }
 
 /* ---------- запуск ---------- */

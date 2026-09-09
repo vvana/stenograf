@@ -12,6 +12,10 @@ const MARK_KINDS = [
   ['other', '📍', 'Другое'],
 ];
 const kindOf = k => MARK_KINDS.find(x => x[0] === k) || MARK_KINDS[MARK_KINDS.length - 1];
+// специальность по типу точки — для фильтра «задание электрику / сантехнику»
+const TRADES = [['electric', '⚡ Электрика'], ['plumb', '🚰 Сантехника'], ['other', '📍 Прочее']];
+const tradeOf = kind => ({ socket: 'electric', switch: 'electric', light: 'electric', tv: 'electric', water: 'plumb', sewer: 'plumb', heat: 'plumb' })[kind] || 'other';
+const tradeName = t => (TRADES.find(x => x[0] === t) || TRADES[2])[1];
 
 const LAYERS = [
   ['main', 'Разметка'],
@@ -90,7 +94,7 @@ function fmtLen(m) {
 
 function pointLabel(m, measurer) {
   const k = kindOf(m.kind);
-  let label = k[2];
+  let label = (m.done ? '✓ ' : '') + k[2];
   if (m.note) label += ': ' + m.note;
   if (measurer && measurer.wall) {
     const w = measurer.wall(m.at);
@@ -118,7 +122,7 @@ function markPrimitives(photo, measurer, hidden = new Set()) {
     } else if (m.type === 'path') {
       out.push({ type: 'path', id: m.id, pts: m.pts, cls });
     } else if (m.type === 'point') {
-      out.push({ type: 'point', id: m.id, at: m.at, ico: kindOf(m.kind)[1], label: pointLabel(m, measurer), cls });
+      out.push({ type: 'point', id: m.id, at: m.at, ico: kindOf(m.kind)[1], label: pointLabel(m, measurer), cls: cls + (m.done ? ' done' : '') });
     }
   }
   return out;
@@ -184,9 +188,9 @@ function drawPrimsCanvas(g, prims, W, H) {
     g.fillStyle = '#fff'; g.fillText(text, x + 6 * k, y);
   };
   for (const pr of prims) {
-    g.strokeStyle = colors[pr.cls] || colors.main; g.fillStyle = g.strokeStyle;
+    g.strokeStyle = pr.cls.includes('done') ? '#2e8b57' : (colors[pr.cls] || colors.main); g.fillStyle = g.strokeStyle;
     g.lineWidth = 3 * k; g.lineCap = 'round'; g.lineJoin = 'round';
-    g.setLineDash(pr.cls === 'calib' || pr.cls === 'draft' ? [8 * k, 6 * k] : []);
+    g.setLineDash(pr.cls === 'calib' || pr.cls.startsWith('draft') ? [8 * k, 6 * k] : []);
     if (pr.type === 'line' || pr.type === 'dim') {
       const [a, b] = [P(pr.a), P(pr.b)];
       g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
@@ -249,7 +253,7 @@ function openPhotoEditor(photo, ctx) {
     <div class="ed-top">
       <div class="ed-title">
         <b>${esc(stage ? stage.name : 'Этап')}</b>
-        <div class="mut small">${esc(ctx.wallTitle || '')} · ${fmtDate(photo.created)}</div>
+        <div class="mut small">${esc(ctx.wallTitle || '')} · ${fmtDate(photo.created)}${photo.by ? ' · ' + esc(photo.by) : ''}</div>
       </div>
       <button class="iconbtn light" id="ed-menu">⋯</button>
       <button class="iconbtn light" id="ed-close">✕</button>
@@ -392,11 +396,20 @@ function openPhotoEditor(photo, ctx) {
   function sheetItem(id) {
     const m = photo.marks.find(x => x.id === id); if (!m) return;
     const names = { dim: 'Размер', text: 'Заметка', path: 'Набросок', point: 'Точка' };
+    const meta = [m.by ? `поставил: ${esc(m.by)}` : '', m.done ? `выполнил: ${esc(m.doneBy || '—')} ${m.doneAt ? fmtDate(m.doneAt) : ''}` : ''].filter(Boolean).join(' · ');
     showSheet(`<div class="sh-title">${names[m.type] || 'Пометка'}${m.layer === 'draft' ? ' (черновик)' : ''}</div>
+      ${meta ? `<p class="mut small">${meta}</p>` : ''}
+      ${m.type === 'point' ? `<button class="btn wide ${m.done ? '' : 'primary'}" id="sh-done">${m.done ? '↩ Не сделано' : '✓ Сделано'}</button>` : ''}
       ${m.type === 'text' || m.type === 'point' ? '<button class="btn wide" id="sh-edit">Изменить текст</button>' : ''}
       ${m.type === 'dim' ? '<button class="btn wide" id="sh-val">Ввести длину вручную</button>' : ''}
       <button class="btn wide" id="sh-move">Перенести в ${m.layer === 'draft' ? 'основной слой' : 'черновик'}</button>
       <button class="btn danger wide" id="sh-del">Удалить</button>`, s => {
+      const dn = s.querySelector('#sh-done');
+      if (dn) dn.onclick = () => {
+        if (m.done) { delete m.done; delete m.doneBy; delete m.doneAt; }
+        else { m.done = true; m.doneBy = userName(true); m.doneAt = Date.now(); }
+        hideSheet(); save();
+      };
       const e = s.querySelector('#sh-edit');
       if (e) e.onclick = () => {
         const t = prompt('Текст:', m.type === 'text' ? m.text : (m.note || ''));
@@ -441,7 +454,7 @@ function openPhotoEditor(photo, ctx) {
     const d = down; down = null;
     if (drawing) {
       const pts = drawing; drawing = null;
-      if (pts.length > 2) { photo.marks.push({ id: uid(), type: 'path', layer, pts }); await save(); }
+      if (pts.length > 2) { photo.marks.push({ id: uid(), type: 'path', layer, pts, by: userName() }); await save(); }
       else draw();
       return;
     }
@@ -454,7 +467,7 @@ function openPhotoEditor(photo, ctx) {
     if (tool === 'dim') {
       tmp.push(p);
       if (tmp.length === 2) {
-        const m = { id: uid(), type: 'dim', layer, a: tmp[0], b: tmp[1] };
+        const m = { id: uid(), type: 'dim', layer, a: tmp[0], b: tmp[1], by: userName() };
         if (!measurer) {
           const t = prompt('Нет калибровки. Длина отрезка, см:');
           const n = parseFloat(String(t || '').replace(',', '.'));
@@ -464,12 +477,12 @@ function openPhotoEditor(photo, ctx) {
       }
     } else if (tool === 'text') {
       const t = prompt('Заметка:');
-      if (t && t.trim()) { photo.marks.push({ id: uid(), type: 'text', layer, at: p, text: t.trim() }); await save(); }
+      if (t && t.trim()) { photo.marks.push({ id: uid(), type: 'text', layer, at: p, text: t.trim(), by: userName() }); await save(); }
     } else if (tool === 'point') {
       if (!pendingKind) return sheetKinds();
       const t = prompt(`${kindOf(pendingKind)[2]} — комментарий (можно пусто):`, '');
       if (t === null) return;
-      photo.marks.push({ id: uid(), type: 'point', layer, at: p, kind: pendingKind, note: t.trim() });
+      photo.marks.push({ id: uid(), type: 'point', layer, at: p, kind: pendingKind, note: t.trim(), by: userName() });
       await save();
     } else if (tool === 'calib-ruler') {
       tmp.push(p);

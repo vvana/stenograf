@@ -7,10 +7,14 @@ const roomCeil = r => (r.ceil > 0 ? r.ceil : DEFAULT_CEIL);
 
 /* ---------- отчёт: задание для мастеров ---------- */
 
+let reportTrade = 'all'; // фильтр отчёта по специальности
+
 async function viewReport(pid) {
   const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
-  const hasMarks = p => (p.marks || []).some(m => (m.layer || 'main') === 'main');
+  const isMain = m => (m.layer || 'main') === 'main';
+  const fits = m => reportTrade === 'all' ? true : (m.type === 'point' && tradeOf(m.kind) === reportTrade);
+  const hasMarks = p => (p.marks || []).some(m => isMain(m) && fits(m));
   const items = [];
   for (const r of rooms) {
     for (const side of roomSurfaces(r)) {
@@ -26,13 +30,17 @@ async function viewReport(pid) {
     <div class="pad report" id="report">
       <div class="report-head">
         <h2>${esc(project.name)}</h2>
-        <div class="mut small">Разметка стен и точек · ${today} · Стенограф</div>
+        <div class="mut small">${reportTrade === 'all' ? 'Разметка стен и точек' : 'Задание: ' + tradeName(reportTrade)} · ${today} · Стенограф</div>
+      </div>
+      <div class="trade-filter no-print">
+        <button class="chip ${reportTrade === 'all' ? 'st1' : 'st0'}" data-trade="all">Всё</button>
+        ${TRADES.map(([t, n]) => `<button class="chip ${reportTrade === t ? 'st1' : 'st0'}" data-trade="${t}">${n}</button>`).join('')}
       </div>
       ${items.length === 0 ? `
         <div class="empty">
           <div class="empty-ico">📋</div>
           <p><b>Пока нет разметки.</b></p>
-          <p class="mut">Откройте фото стены, поставьте точки 🔌 (розетки, выключатели, выводы воды) или размеры 📐 — они попадут в отчёт автоматически.</p>
+          <p class="mut">${reportTrade === 'all' ? 'Откройте фото стены, поставьте точки 🔌 (розетки, выключатели, выводы воды) или размеры 📐 — они попадут в отчёт автоматически.' : 'Для этой специальности точек пока нет.'}</p>
         </div>` : `
         <div class="report-actions no-print">
           <button class="btn primary" id="rep-share">📤 Поделиться</button>
@@ -44,18 +52,20 @@ async function viewReport(pid) {
             ${it.list.map(p => `
               <figure class="report-fig" data-photo="${p.id}">
                 <div class="report-img-box"><span class="mut small">Готовлю изображение…</span></div>
-                <figcaption class="mut small">${esc(stageName(stages, p.stageId))} · ${fmtDate(p.created)}${p.note ? ' · ' + esc(p.note) : ''}</figcaption>
+                <figcaption class="mut small">${esc(stageName(stages, p.stageId))} · ${fmtDate(p.created)}${p.by ? ' · ' + esc(p.by) : ''}${p.note ? ' · ' + esc(p.note) : ''}</figcaption>
                 ${pointsTable(p)}
               </figure>`).join('')}
           </section>`).join('')}
         </div>`}
     </div>`;
 
+  app.querySelectorAll('[data-trade]').forEach(b => { b.onclick = () => { reportTrade = b.dataset.trade; render(); }; });
   if (!items.length) return;
 
   // запекаем фото с разметкой
   const baked = [];
   for (const it of items) for (const p of it.list) {
+    if (!app.querySelector('#report')) return; // пользователь ушёл с экрана — прекращаем
     const box = app.querySelector(`[data-photo="${p.id}"] .report-img-box`);
     try {
       const canvas = await bakePhoto(p);
@@ -76,6 +86,7 @@ async function viewReport(pid) {
     }
   }
 
+  if (!app.querySelector('#report')) return;
   $('#rep-print').onclick = () => window.print();
   $('#rep-share').onclick = async () => {
     const files = baked.map(b => new File([b.blob], b.name, { type: 'image/jpeg' }));
@@ -91,12 +102,11 @@ async function viewReport(pid) {
   };
 
   function pointsTable(p) {
-    const pts = (p.marks || []).filter(m => m.type === 'point' && (m.layer || 'main') === 'main');
-    const dims = (p.marks || []).filter(m => m.type === 'dim' && (m.layer || 'main') === 'main');
+    const pts = (p.marks || []).filter(m => m.type === 'point' && isMain(m) && fits(m));
+    const dims = reportTrade === 'all' ? (p.marks || []).filter(m => m.type === 'dim' && isMain(m)) : [];
     if (!pts.length && !dims.length) return '';
-    // измеритель для подписей — по естественному размеру фото, поэтому считаем через bakePhoto позже; здесь — по калибровке без размеров
     return `<ul class="report-list">
-      ${pts.map(m => `<li>${kindOf(m.kind)[1]} <b>${esc(kindOf(m.kind)[2])}</b>${m.note ? ' — ' + esc(m.note) : ''}<span class="mut" data-ptlabel="${m.id}"></span></li>`).join('')}
+      ${pts.map(m => `<li class="${m.done ? 'done' : ''}">${m.done ? '✅' : kindOf(m.kind)[1]} <b>${esc(kindOf(m.kind)[2])}</b>${m.note ? ' — ' + esc(m.note) : ''}<span class="mut" data-ptlabel="${m.id}"></span>${m.done && m.doneBy ? `<span class="mut"> · выполнил ${esc(m.doneBy)}</span>` : ''}</li>`).join('')}
       ${dims.length ? `<li>📐 Размеров на фото: ${dims.length}</li>` : ''}
     </ul>`;
   }
@@ -117,8 +127,8 @@ function reportText(project, items, stages) {
   for (const it of items) {
     lines.push('', `${it.room.name} — ${sideTitle(it.room, it.side)}`);
     for (const p of it.list) {
-      const pts = (p.marks || []).filter(m => m.type === 'point' && (m.layer || 'main') === 'main');
-      for (const m of pts) lines.push(`  • ${kindOf(m.kind)[2]}${m.note ? ': ' + m.note : ''}`);
+      const pts = (p.marks || []).filter(m => m.type === 'point' && (m.layer || 'main') === 'main' && (reportTrade === 'all' || tradeOf(m.kind) === reportTrade));
+      for (const m of pts) lines.push(`  ${m.done ? '✅' : '•'} ${kindOf(m.kind)[2]}${m.note ? ': ' + m.note : ''}`);
     }
   }
   lines.push('', 'Фото с разметкой — во вложении. Сделано в Стенографе.');

@@ -313,6 +313,9 @@ body {
 #ed-svg .mk.calib .ln { stroke: #3ec6ff; stroke-dasharray: 8 6; fill: rgba(62,198,255,.08); }
 #ed-svg .mk.calib .end { fill: #3ec6ff; }
 #ed-svg .mk.tmp .pin { fill: #3ec6ff; }
+#ed-svg .mk.done .pin { fill: #2e8b57; }
+.trade-filter { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 4px; }
+.report-list li.done { opacity: .75; }
 #ed-svg .ln.draw { fill: none; stroke: #ff7a1a; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 #ed-svg .ln.draw.draft { stroke: #ffd400; }
 
