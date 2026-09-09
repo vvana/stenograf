@@ -176,8 +176,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let ax = simd_normalize(xyz(t.columns.0))
         let ay = simd_normalize(xyz(t.columns.1))
         let az = simd_normalize(xyz(t.columns.2))
-        let w = s.dimensions.x, h = s.dimensions.y
-        let p0 = c - ax * (w / 2), p1 = c + ax * (w / 2)
+        let w: Float = s.dimensions.x
+        let h: Float = s.dimensions.y
+        let half: simd_float3 = ax * (w / 2)
+        let p0: simd_float3 = c - half
+        let p1: simd_float3 = c + half
         var d: [String: Any] = [
             "id": s.identifier.uuidString,
             "w": w, "h": h,
@@ -251,10 +254,13 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             let ax = simd_normalize(xyz(t.columns.0)), ay = simd_normalize(xyz(t.columns.1)), n = simd_normalize(xyz(t.columns.2))
             let denom = simd_dot(fwd, n)
             if abs(denom) < 0.35 { continue }               // смотрим слишком вскользь (> ~70°)
-            let dist = simd_dot(c - camPos, n) / denom
+            let toWall: simd_float3 = c - camPos
+            let dist: Float = simd_dot(toWall, n) / denom
             if dist < 0.6 || dist > 7 { continue }
-            let hit = camPos + fwd * dist
-            let lx = simd_dot(hit - c, ax), ly = simd_dot(hit - c, ay)
+            let hit: simd_float3 = camPos + fwd * dist
+            let rel: simd_float3 = hit - c
+            let lx: Float = simd_dot(rel, ax)
+            let ly: Float = simd_dot(rel, ay)
             if abs(lx) > wall.dimensions.x / 2 || abs(ly) > wall.dimensions.y / 2 { continue }
             let frontal = abs(denom)                          // 1 — в лоб
             let centered = 1 - min(1, abs(lx) / max(0.1, wall.dimensions.x / 2))
@@ -267,8 +273,15 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let t = wall.transform
         let c = xyz(t.columns.3)
         let ax = simd_normalize(xyz(t.columns.0)), ay = simd_normalize(xyz(t.columns.1))
-        let w = wall.dimensions.x, h = wall.dimensions.y
-        let corners3 = [c - ax * (w/2) + ay * (h/2), c + ax * (w/2) + ay * (h/2), c + ax * (w/2) - ay * (h/2), c - ax * (w/2) - ay * (h/2)]
+        let w: Float = wall.dimensions.x
+        let h: Float = wall.dimensions.y
+        let hx: simd_float3 = ax * (w / 2)
+        let hy: simd_float3 = ay * (h / 2)
+        let tl: simd_float3 = c - hx + hy
+        let tr: simd_float3 = c + hx + hy
+        let br: simd_float3 = c + hx - hy
+        let bl: simd_float3 = c - hx - hy
+        let corners3: [simd_float3] = [tl, tr, br, bl]
         let view = T.inverse
         let K = cam.intrinsics
         let res = cam.imageResolution
