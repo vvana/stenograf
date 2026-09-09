@@ -11,6 +11,7 @@ const ASSETS = [
   './extras.js',
   './tour.js',
   './vendor/three.module.min.js',
+  './vendor/Reflector.js',
   './app.js',
   './manifest.webmanifest',
   './icon.svg',

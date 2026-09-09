@@ -22,9 +22,12 @@
   <script src="extras.js"></script>
   <script src="tour.js"></script>
   <script src="app.js"></script>
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
   <script type="module">
     import * as THREE from './vendor/three.module.min.js';
+    import { Reflector } from './vendor/Reflector.js';
     window.THREE = THREE;
+    window.THREE_Reflector = Reflector;
     window.dispatchEvent(new Event('three-ready'));
   </script>
 </body>

@@ -127,7 +127,7 @@ async function viewTour(pid, roomId = null) {
   const lineMat = new THREE.LineBasicMaterial({ color: dark ? 0x9a9a9a : 0x555555 });
 
   const surfaces = []; // { key, mesh, w, h }
-  const ceilings = [];
+  const ceilings = [], mirrors = [];
   const roomInfo = {};
   for (const r of rooms) {
     const ceil = roomCeil(r);
@@ -164,6 +164,27 @@ async function viewTour(pid, roomId = null) {
       mesh.rotation.y = Math.atan2(e.nx, e.ny); // нормаль внутрь комнаты; локальная ось X — слева направо для зрителя внутри
       scene.add(mesh);
       surfaces.push({ key: `${r.id}:${e.id}`, mesh, w: e.len, h: ceil, base: greyMat });
+      // проёмы и зеркала: дочерние плоскости на стене (локально: X слева направо, Y снизу вверх от пола)
+      for (const o of ((r.openings || {})[e.id] || [])) {
+        if (!(o.w > 0 && o.h > 0)) continue;
+        const ox = o.x != null ? o.x : (e.len - o.w) / 2;
+        const oy = o.y != null ? o.y : (o.kind === 'door' ? 0 : 1);
+        const w = Math.min(o.w, e.len), h = Math.min(o.h, ceil);
+        const lx = -e.len / 2 + ox + w / 2, ly = -ceil / 2 + oy + h / 2;
+        let child;
+        if (o.kind === 'mirror' && window.THREE_Reflector) {
+          child = new window.THREE_Reflector(new THREE.PlaneGeometry(w, h), { textureWidth: 512, textureHeight: 512, color: 0xb8c4c8, clipBias: 0.003 });
+          mirrors.push(child);
+        } else if (o.kind === 'mirror') {
+          child = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0xb8c4c8 }));
+        } else if (o.kind === 'window') {
+          child = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0x9fc9ea, transparent: true, opacity: 0.75 }));
+        } else {
+          child = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: dark ? 0x5a4636 : 0x7a5a42 }));
+        }
+        child.position.set(lx, ly, 0.012);
+        mesh.add(child);
+      }
     }
     // рёбра: контур пола, потолка и вертикали
     const lp = [];
@@ -326,10 +347,11 @@ async function viewTour(pid, roomId = null) {
   resize(); setMode(tourState.mode); frame();
   applyStage();
 
-  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, pano: panoAvailable, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId });
+  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, pano: panoAvailable, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId });
   viewCleanup = () => {
     alive = false; ro.disconnect(); delete window.__tourDebug;
     texCache.forEach(t => t.dispose());
+    mirrors.forEach(m => m.dispose && m.dispose());
     renderer.dispose();
   };
 }

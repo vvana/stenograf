@@ -149,6 +149,7 @@ function roomAreas(r) {
   for (const side of Object.keys(r.openings || {})) {
     if (!isWallId(r, side)) continue;
     for (const o of r.openings[side] || []) {
+      if (o.kind === 'mirror') continue; // зеркало висит на готовой стене, площадь не вычитаем
       openings += o.w * o.h;
       if (o.kind === 'door') doorsW += o.w;
     }

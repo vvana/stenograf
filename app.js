@@ -1098,14 +1098,15 @@ async function viewWall(pid, wallKey) {
       ${isWallId(room, side) ? `
         <div class="card" style="margin-top:12px">
           <div class="stage-photos-head">
-            <b>Проёмы на стене</b>
-            <button class="btn small-btn" id="add-opening">+ Проём</button>
+            <b>Проёмы и зеркала</b>
+            <button class="btn small-btn" id="add-opening">+ Добавить</button>
           </div>
           <div id="openings" class="openings">
             ${((room.openings || {})[side] || []).map((o, i) => `
-              <span class="chip st0">${o.kind === 'door' ? '🚪 дверь' : '🪟 окно'} ${String(o.w).replace('.', ',')}×${String(o.h).replace('.', ',')} м
+              <span class="chip st0">${OPENING_KINDS[o.kind] ? OPENING_KINDS[o.kind].label : o.kind} ${String(o.w).replace('.', ',')}×${String(o.h).replace('.', ',')} м${o.x != null ? ` · слева ${String(o.x).replace('.', ',')}` : ''}
                 <button class="chip-x" data-del-opening="${i}" title="Убрать">✕</button></span>`).join('') || '<span class="mut small">Нет проёмов — стена глухая</span>'}
           </div>
+          <p class="mut small">Зеркало в 3D-туре отражает комнату по-настоящему — снимать его с отражением не нужно.</p>
         </div>` : ''}
       <div class="cards">
         ${stages.map(s => {
@@ -1150,15 +1151,21 @@ async function viewWall(pid, wallKey) {
   const addOp = $('#add-opening');
   if (addOp) {
     addOp.onclick = async () => {
-      const t = prompt('Размер проёма: ширина и высота в метрах через пробел.\nДверь обычно 0,8 2,0; окно 1,4 1,4', '0,8 2,0');
+      const kt = prompt('Что добавить? д — дверь, о — окно, з — зеркало', 'д');
+      if (kt === null) return;
+      const kind = { 'д': 'door', 'd': 'door', 'о': 'window', 'o': 'window', 'з': 'mirror', 'z': 'mirror', 'm': 'mirror' }[String(kt).trim().toLowerCase()[0]] || 'door';
+      const def = OPENING_KINDS[kind];
+      const t = prompt(`${def.label}: ширина и высота в метрах, затем (необязательно) отступ от левого угла и высота от пола.\nНапример: ${def.example}`, def.example);
       if (t === null) return;
-      const nums = String(t).replace(/,/g, '.').match(/\d+(\.\d+)?/g);
-      if (!nums || nums.length < 2) return toast('Нужно два числа: ширина и высота');
-      const w = parseFloat(nums[0]), h = parseFloat(nums[1]);
+      const nums = (String(t).replace(/,/g, '.').match(/\d+(\.\d+)?/g) || []).map(Number);
+      if (nums.length < 2) return toast('Нужно хотя бы два числа: ширина и высота');
+      const [w, h] = nums;
       if (!(w > 0 && h > 0)) return toast('Размеры должны быть больше нуля');
-      const kind = confirm('Это дверь? («Отмена» — окно)') ? 'door' : 'window';
+      const edge = roomEdge(room, side);
+      const x = nums[2] != null ? nums[2] : cm(Math.max(0, ((edge ? edge.len : w) - w) / 2)); // по умолчанию — по центру стены
+      const y = nums[3] != null ? nums[3] : def.y;
       room.openings = room.openings || {};
-      (room.openings[side] = room.openings[side] || []).push({ kind, w, h });
+      (room.openings[side] = room.openings[side] || []).push({ kind, w, h, x, y });
       await dbPut('rooms', room); render();
     };
     app.querySelectorAll('[data-del-opening]').forEach(b => {
@@ -1217,6 +1224,13 @@ async function viewWall(pid, wallKey) {
     };
   });
 }
+
+// проёмы и зеркала на стене: подпись, высота от пола по умолчанию, пример ввода
+const OPENING_KINDS = {
+  door: { label: '🚪 дверь', y: 0, example: '0,8 2,0' },
+  window: { label: '🪟 окно', y: 0.9, example: '1,4 1,4 0,6 0,9' },
+  mirror: { label: '🪞 зеркало', y: 1.0, example: '1,2 0,8 0,5 1,0' },
+};
 
 // ожидаемые размеры поверхности из схемы: ширина × высота (для калибровки по 4 углам)
 function wallSizeOf(room, side) {
