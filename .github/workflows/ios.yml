@@ -57,11 +57,21 @@ jobs:
       - name: Build (no code signing)
         working-directory: native/ios/App
         run: |
-          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos \
+          set -o pipefail
+          if ! xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build | tee xcodebuild.log | grep -E "error:|warning: .*Swift|BUILD|Compiling" || true
-          test -d build/Build/Products/Release-iphoneos/App.app
+            build > xcodebuild.log 2>&1; then
+            echo "::error::xcodebuild failed"
+            echo "----- errors -----"; grep -nE "error:" xcodebuild.log | head -60 || true
+            echo "----- tail -----"; tail -80 xcodebuild.log
+            exit 1
+          fi
+          grep -E "BUILD SUCCEEDED" xcodebuild.log
+          grep -E "warning:.*swift" xcodebuild.log | head -30 || true
+          APP=build/Build/Products/Release-iphoneos/App.app
+          test -d "$APP" || { echo "::error::App.app not found"; ls -R build/Build/Products | head -50; exit 1; }
+          du -sh "$APP"
 
       - name: Package ipa
         working-directory: native/ios/App
@@ -70,6 +80,8 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/App.app Payload/
           zip -qr Stenograf-unsigned.ipa Payload
           ls -la Stenograf-unsigned.ipa
+          SIZE=$(stat -f%z Stenograf-unsigned.ipa)
+          test "$SIZE" -gt 1000000 || { echo "::error::ipa is suspiciously small ($SIZE bytes)"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -77,8 +89,8 @@ jobs:
           path: native/ios/App/Stenograf-unsigned.ipa
           retention-days: 30
 
-      - name: Upload build log on failure
-        if: failure()
+      - name: Upload build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-log
