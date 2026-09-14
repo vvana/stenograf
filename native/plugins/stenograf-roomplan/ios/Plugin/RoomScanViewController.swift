@@ -306,8 +306,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             var dict = self.buildResult(rooms: finalRooms)
             dict["mirrors"] = self.detectMirrors(rooms: finalRooms)
             if wantMesh {
+                let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
                 let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in
-                    return Self.buildMesh(anchors: anchors, keyFrames: keys)
+                    return buildColoredMesh(meshInput)
                 }.value
                 for (k, v) in mesh { dict[k] = v }
             }
@@ -673,76 +674,6 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         statusLabel.text = "Ключевых кадров: \(keyFrames.count) · комнат: \(capturedRooms.count + 1)"
     }
 
-    /// Сетка всех mesh-якорей с цветом вершин по ближайшему подходящему ключевому кадру → PLY (base64).
-    private static func buildMesh(anchors: [ARMeshAnchor], keyFrames: [KeyFrame]) -> [String: Any] {
-        var positions: [simd_float3] = []
-        var normals: [simd_float3] = []
-        var faces: [UInt32] = []
-        for a in anchors {
-            let g = a.geometry
-            let v = g.vertices, nrm = g.normals, f = g.faces
-            let vbase = v.buffer.contents().advanced(by: v.offset)
-            let nbase = nrm.buffer.contents().advanced(by: nrm.offset)
-            let offset = UInt32(positions.count)
-            let rot = simd_float3x3(simd_float3(a.transform.columns.0.x, a.transform.columns.0.y, a.transform.columns.0.z),
-                                    simd_float3(a.transform.columns.1.x, a.transform.columns.1.y, a.transform.columns.1.z),
-                                    simd_float3(a.transform.columns.2.x, a.transform.columns.2.y, a.transform.columns.2.z))
-            for i in 0..<v.count {
-                let p = vbase.advanced(by: i * v.stride).assumingMemoryBound(to: simd_float3.self).pointee
-                let w4 = a.transform * simd_float4(p.x, p.y, p.z, 1)
-                positions.append(simd_float3(w4.x, w4.y, w4.z))
-                let n = nbase.advanced(by: i * nrm.stride).assumingMemoryBound(to: simd_float3.self).pointee
-                normals.append(simd_normalize(rot * n))
-            }
-            let fbase = f.buffer.contents()
-            let per = f.indexCountPerPrimitive
-            for i in 0..<f.count {
-                for j in 0..<per {
-                    let idx: UInt32
-                    if f.bytesPerIndex == 2 {
-                        idx = UInt32(fbase.advanced(by: (i * per + j) * 2).assumingMemoryBound(to: UInt16.self).pointee)
-                    } else {
-                        idx = fbase.advanced(by: (i * per + j) * 4).assumingMemoryBound(to: UInt32.self).pointee
-                    }
-                    faces.append(idx + offset)
-                }
-            }
-        }
-        var colors = [SIMD3<UInt8>](repeating: SIMD3<UInt8>(170, 165, 158), count: positions.count)
-        if !keyFrames.isEmpty {
-            for i in 0..<positions.count {
-                let p = positions[i]
-                let n = normals[i]
-                var bestScore: Float = -1
-                var bestColor: SIMD3<UInt8>? = nil
-                for kf in keyFrames {
-                    let d: simd_float3 = p - kf.pos
-                    let dist: Float = simd_length(d)
-                    if dist < 0.3 || dist > 5 { continue }
-                    let dir: simd_float3 = d / dist
-                    if simd_dot(dir, kf.fwd) < 0.5 { continue }          // вне поля зрения
-                    let facing: Float = -simd_dot(dir, n)                   // нормаль смотрит на камеру
-                    if facing < 0.15 { continue }
-                    let pc4 = kf.transformInv * simd_float4(p.x, p.y, p.z, 1)
-                    let z: Float = -pc4.z
-                    if z <= 0.05 { continue }
-                    let px = Int(kf.fx * (pc4.x / z) + kf.cx)
-                    let py = Int(kf.cy - kf.fy * (pc4.y / z))
-                    if px < 0 || py < 0 || px >= kf.w || py >= kf.h { continue }
-                    let score: Float = facing * 2 - dist * 0.25
-                    if score > bestScore {
-                        let o = (py * kf.w + px) * 4
-                        bestScore = score
-                        bestColor = SIMD3<UInt8>(kf.rgba[o], kf.rgba[o + 1], kf.rgba[o + 2])
-                    }
-                }
-                if let c = bestColor { colors[i] = c }
-            }
-        }
-        let ply = plyData(positions: positions, colors: colors, faces: faces)
-        return ["mesh": ply.base64EncodedString(), "meshVertices": positions.count, "meshFaces": faces.count / 3, "keyFrames": keyFrames.count]
-    }
-
     private func jpegData(from pixelBuffer: CVPixelBuffer) -> Data? {
         var img = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
         let longest = max(img.extent.width, img.extent.height)
@@ -751,4 +682,82 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let cs = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         return ciContext.jpegRepresentation(of: img, colorSpace: cs, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.85])
     }
+}
+
+/// Вход для построения сетки — копируется в фоновую задачу (Sendable, без ссылок на контроллер).
+struct MeshInput: @unchecked Sendable {
+    let anchors: [ARMeshAnchor]
+    let keyFrames: [KeyFrame]
+}
+
+/// Сетка всех mesh-якорей с цветом вершин по ближайшему подходящему ключевому кадру → PLY (base64).
+func buildColoredMesh(_ input: MeshInput) -> [String: Any] {
+let anchors = input.anchors
+let keyFrames = input.keyFrames
+    var positions: [simd_float3] = []
+    var normals: [simd_float3] = []
+    var faces: [UInt32] = []
+    for a in anchors {
+        let g = a.geometry
+        let v = g.vertices, nrm = g.normals, f = g.faces
+        let vbase = v.buffer.contents().advanced(by: v.offset)
+        let nbase = nrm.buffer.contents().advanced(by: nrm.offset)
+        let offset = UInt32(positions.count)
+        let rot = simd_float3x3(simd_float3(a.transform.columns.0.x, a.transform.columns.0.y, a.transform.columns.0.z),
+                                simd_float3(a.transform.columns.1.x, a.transform.columns.1.y, a.transform.columns.1.z),
+                                simd_float3(a.transform.columns.2.x, a.transform.columns.2.y, a.transform.columns.2.z))
+        for i in 0..<v.count {
+            let p = vbase.advanced(by: i * v.stride).assumingMemoryBound(to: simd_float3.self).pointee
+            let w4 = a.transform * simd_float4(p.x, p.y, p.z, 1)
+            positions.append(simd_float3(w4.x, w4.y, w4.z))
+            let n = nbase.advanced(by: i * nrm.stride).assumingMemoryBound(to: simd_float3.self).pointee
+            normals.append(simd_normalize(rot * n))
+        }
+        let fbase = f.buffer.contents()
+        let per = f.indexCountPerPrimitive
+        for i in 0..<f.count {
+            for j in 0..<per {
+                let idx: UInt32
+                if f.bytesPerIndex == 2 {
+                    idx = UInt32(fbase.advanced(by: (i * per + j) * 2).assumingMemoryBound(to: UInt16.self).pointee)
+                } else {
+                    idx = fbase.advanced(by: (i * per + j) * 4).assumingMemoryBound(to: UInt32.self).pointee
+                }
+                faces.append(idx + offset)
+            }
+        }
+    }
+    var colors = [SIMD3<UInt8>](repeating: SIMD3<UInt8>(170, 165, 158), count: positions.count)
+    if !keyFrames.isEmpty {
+        for i in 0..<positions.count {
+            let p = positions[i]
+            let n = normals[i]
+            var bestScore: Float = -1
+            var bestColor: SIMD3<UInt8>? = nil
+            for kf in keyFrames {
+                let d: simd_float3 = p - kf.pos
+                let dist: Float = simd_length(d)
+                if dist < 0.3 || dist > 5 { continue }
+                let dir: simd_float3 = d / dist
+                if simd_dot(dir, kf.fwd) < 0.5 { continue }          // вне поля зрения
+                let facing: Float = -simd_dot(dir, n)                   // нормаль смотрит на камеру
+                if facing < 0.15 { continue }
+                let pc4 = kf.transformInv * simd_float4(p.x, p.y, p.z, 1)
+                let z: Float = -pc4.z
+                if z <= 0.05 { continue }
+                let px = Int(kf.fx * (pc4.x / z) + kf.cx)
+                let py = Int(kf.cy - kf.fy * (pc4.y / z))
+                if px < 0 || py < 0 || px >= kf.w || py >= kf.h { continue }
+                let score: Float = facing * 2 - dist * 0.25
+                if score > bestScore {
+                    let o = (py * kf.w + px) * 4
+                    bestScore = score
+                    bestColor = SIMD3<UInt8>(kf.rgba[o], kf.rgba[o + 1], kf.rgba[o + 2])
+                }
+            }
+            if let c = bestColor { colors[i] = c }
+        }
+    }
+    let ply = plyData(positions: positions, colors: colors, faces: faces)
+    return ["mesh": ply.base64EncodedString(), "meshVertices": positions.count, "meshFaces": faces.count / 3, "keyFrames": keyFrames.count]
 }

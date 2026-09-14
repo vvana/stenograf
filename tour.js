@@ -317,7 +317,7 @@ async function viewTour(pid, roomId = null) {
   }
 
   /* ---------- камера и управление ---------- */
-  const orbit = { theta: Math.PI * 0.15, phi: 0.62, radius: span * 1.5, target: centerAll.clone() };
+  const orbit = { theta: Math.PI * 0.15, phi: 0.38, radius: span * 1.55, target: centerAll.clone() };
   const look = { yaw: 0, pitch: 0 };
   function placeCamera() {
     if (tourState.mode === 'house' || tourState.mode === 'final') {
@@ -429,7 +429,8 @@ async function viewTour(pid, roomId = null) {
   resize(); setMode(tourState.mode); frame();
   applyStage();
 
-  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, pano: panoAvailable, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId, solidWalls: solidWalls.length, plainFloors: plainFloors.length, photos: tourState.photos, finalLoaded: !!finalMesh, wallPlanesVisible: surfaces.filter(s => !s.key.endsWith(':f') && !s.key.endsWith(':c') && s.mesh.visible).length });
+  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, pano: panoAvailable, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId, solidWalls: solidWalls.length, plainFloors: plainFloors.length, photos: tourState.photos, finalLoaded: !!finalMesh, wallPlanesVisible: surfaces.filter(s => !s.key.endsWith(':f') && !s.key.endsWith(':c') && s.mesh.visible).length, floors: plainFloors.map(f => ({ color: f.material.color.getHexString(), visible: f.visible, y: f.position.y, n: f.geometry.attributes.normal.getY(0) })), floorPlanes: surfaces.filter(s => s.key.endsWith(':f')).map(s => ({ key: s.key, visible: s.mesh.visible, map: !!s.mesh.material.map })) });
+  window.__tourScene = scene;
   viewCleanup = () => {
     alive = false; ro.disconnect(); delete window.__tourDebug;
     texCache.forEach(t => t.dispose());
