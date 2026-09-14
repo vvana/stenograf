@@ -458,6 +458,19 @@ body {
 .tour-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 30px; color: var(--mut); }
 .nav-item { min-width: 0; }
 
+/* ---------- шаблоны, подсказки, печати ---------- */
+.tpl-sheet { z-index: 60; bottom: 0; }
+.tpl-btn { justify-content: flex-start; text-align: left; gap: 12px; }
+.tpl-ico { font-size: 22px; }
+.tpl-txt { display: flex; flex-direction: column; line-height: 1.25; }
+.tpl-txt small { color: var(--mut); font-weight: 400; font-size: 12px; }
+.stage-hint { color: var(--mut); }
+.hint-i { color: var(--acc); cursor: pointer; margin-left: 6px; font-size: 14px; }
+.seal-info code, .seal-table code { font-size: 11px; background: var(--code, rgba(128,128,128,.15)); border-radius: 4px; padding: 1px 4px; }
+.seal-line { color: var(--mut); font-size: 12px; }
+.seal-table { font-size: 12px; }
+.seal-table th, .seal-table td { text-align: left; white-space: nowrap; }
+
 /* ---------- toast ---------- */
 #toast {
   position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom));

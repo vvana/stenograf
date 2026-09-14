@@ -276,10 +276,12 @@ async function framesToPhotos(pid, roomId, stageId, frames, idMap) {
     const take = list.filter(f => f.full).length ? list.filter(f => f.full).slice(0, 2) : list.slice(0, 1);
     for (const f of take) {
       const blob = await (await fetch('data:image/jpeg;base64,' + f.jpeg)).blob();
-      await dbPut('photos', {
+      const rec = {
         id: uid(), projectId: pid, wallKey: `${roomId}:${wid}`, stageId, blob, note: '', created: Date.now(), by,
         calib: { type: 'quad', pts: f.corners, w: cm(f.w), h: cm(f.h) }, marks: [], source: 'lidar',
-      });
+      };
+      await sealPhoto(rec, { source: 'lidar' });
+      await dbPut('photos', rec);
       n++;
     }
   }

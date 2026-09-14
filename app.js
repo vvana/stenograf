@@ -173,6 +173,7 @@ async function render() {
       if (parts[2] === 'w' && parts[3]) return await viewWall(pid, parts[3]);
       if (parts[2] === 'cmp' && parts[3]) return await viewCompare(pid, parts[3]);
       if (parts[2] === 'report') return await viewReport(pid);
+      if (parts[2] === 'verify') return await viewVerify(pid);
       if (parts[2] === 'calc') return await viewCalc(pid);
       if (parts[2] === 'ghost' && parts[3] && parts[4]) return await viewGhost(pid, parts[3], parts[4]);
       if (parts[2] === 'tour') return await viewTour(pid, parts[3] || null);
@@ -235,12 +236,12 @@ async function viewProjects() {
   $('#add-project').onclick = async () => {
     const name = prompt('Название объекта (например, «Квартира на Ленина»):');
     if (!name || !name.trim()) return;
-    const p = { id: uid(), name: name.trim(), created: Date.now() };
-    await dbPut('projects', p);
-    for (let i = 0; i < DEFAULT_STAGES.length; i++) {
-      await dbPut('stages', { id: uid(), projectId: p.id, name: DEFAULT_STAGES[i], ord: i, status: 0 });
-    }
-    nav(`#/p/${p.id}`);
+    templateSheet(async tpl => {
+      const p = { id: uid(), name: name.trim(), created: Date.now(), template: tpl ? tpl.id : 'custom' };
+      await dbPut('projects', p);
+      await createStagesFromTemplate(p.id, tpl);
+      nav(`#/p/${p.id}`);
+    });
   };
   $('#export-all').onclick = exportBackup;
   $('#import-all').onclick = importBackup;
@@ -1075,7 +1076,7 @@ async function viewStages(pid) {
           <div class="card stage-row">
             <div class="stage-main">
               <div class="stage-name" data-rename="${s.id}">${esc(s.name)}</div>
-              <div class="mut small">${counts[s.id] || 0} фото</div>
+              <div class="mut small">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
             </div>
             <button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
             <div class="stage-arrows">
@@ -1086,9 +1087,22 @@ async function viewStages(pid) {
           </div>`).join('')}
       </div>
       <button class="btn primary wide" id="add-stage">+ Добавить этап</button>
+      <button class="btn wide" id="apply-template">📋 Взять этапы из шаблона</button>
     </div>
     ${bottomNav(pid, 'stages')}`;
 
+  $('#apply-template').onclick = () => templateSheet(async tpl => {
+    const withPhotos = stages.filter(s => counts[s.id]);
+    const msg = withPhotos.length
+      ? `Этапы без фото заменятся шаблоном, ${withPhotos.length} этапов с фото останутся в конце списка. Продолжить?`
+      : 'Заменить текущий список этапов шаблоном?';
+    if (!confirm(msg)) return;
+    for (const s of stages) if (!counts[s.id]) await dbDel('stages', s.id);
+    await createStagesFromTemplate(pid, tpl);
+    const list = tpl && tpl.stages ? tpl.stages.length : DEFAULT_STAGES.length;
+    withPhotos.forEach(async (s, i) => { s.ord = list + i; await dbPut('stages', s); });
+    setTimeout(render, 200);
+  });
   $('#add-stage').onclick = async () => {
     const name = prompt('Название этапа:');
     if (!name || !name.trim()) return;
@@ -1173,7 +1187,7 @@ async function viewWall(pid, wallKey) {
           const list = byStage[s.id] || [];
           return `<div class="card stage-photos">
             <div class="stage-photos-head">
-              <b>${esc(s.name)}</b>
+              <b>${esc(s.name)}</b>${s.hint ? `<span class="hint-i" title="${esc(s.hint)}" data-hint="${esc(s.hint)}">ⓘ</span>` : ''}
               <span class="btn-pair">
                 <button class="btn small-btn" data-shoot="${s.id}">📷 Снять</button>
                 <button class="btn small-btn" data-pick="${s.id}">🖼 Галерея</button>
@@ -1207,6 +1221,8 @@ async function viewWall(pid, wallKey) {
 
   const openPano = $('#open-pano');
   if (openPano) openPano.onclick = () => { tourState.mode = 'pano'; nav(`#/p/${pid}/tour/${roomId}`); };
+
+  app.querySelectorAll('[data-hint]').forEach(el => { el.onclick = () => toast(el.dataset.hint); });
 
   const addOp = $('#add-opening');
   if (addOp) {
@@ -1254,10 +1270,12 @@ async function viewWall(pid, wallKey) {
         // для снимков из галереи берём реальную дату съёмки из EXIF
         const shot = fromCamera ? null : await readExifDate(file);
         const blob = await compressImage(file);
-        await dbPut('photos', {
+        const rec = {
           id: uid(), projectId: pid, wallKey, stageId: pendingStage,
           blob, note: '', created: shot || file.lastModified || Date.now(), by,
-        });
+        };
+        await sealPhoto(rec, { source: fromCamera ? 'camera' : 'gallery' });
+        await dbPut('photos', rec);
         ok++;
       } catch (err) {
         console.error(err);
@@ -1416,6 +1434,7 @@ async function viewMore(pid) {
           <div class="mut small">${rooms.length} комн. · ${photos.length} фото</div>
         </div>
         <button class="btn primary wide" data-nav="#/p/${pid}/report">📋 Задание для мастеров</button>
+        <button class="btn wide" data-nav="#/p/${pid}/verify">🔒 Подлинность фото</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">🧮 Площади и материалы</button>
         <div class="card">
           <b>Команда объекта</b>

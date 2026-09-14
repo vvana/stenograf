@@ -53,7 +53,7 @@ async function viewReport(pid) {
             ${it.list.map(p => `
               <figure class="report-fig" data-photo="${p.id}">
                 <div class="report-img-box"><span class="mut small">Готовлю изображение…</span></div>
-                <figcaption class="mut small">${esc(stageName(stages, p.stageId))} · ${fmtDate(p.created)}${p.by ? ' · ' + esc(p.by) : ''}${p.note ? ' · ' + esc(p.note) : ''}</figcaption>
+                <figcaption class="mut small">${esc(stageName(stages, p.stageId))} · ${fmtDate(p.created)}${p.by ? ' · ' + esc(p.by) : ''}${p.note ? ' · ' + esc(p.note) : ''}${p.seal ? `<br><span class="seal-line">🔒 ${new Date(p.seal.at).toLocaleString('ru-RU')}${p.seal.geo ? ' · 📍 ' + fmtGeo(p.seal.geo) : ''} · SHA-256 ${p.seal.sha256.slice(0, 12)}…</span>` : ''}</figcaption>
                 ${pointsTable(p)}
               </figure>`).join('')}
           </section>`).join('')}
@@ -143,6 +143,58 @@ function reportText(project, items, stages) {
   }
   lines.push('', 'Фото с разметкой — во вложении. Сделано в Стенографе.');
   return lines.join('\n');
+}
+
+/* ---------- подлинность фото: реестр печатей и проверка ---------- */
+
+async function viewVerify(pid) {
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  if (!project) return nav('');
+  const sealed = photos.filter(p => p.seal);
+  const unsealed = photos.length - sealed.length;
+  photos.sort((a, b) => a.created - b.created);
+  const roomOf = key => { const { roomId, side } = parseWallKey(key); const r = rooms.find(x => x.id === roomId); return r ? wallLabel(r, side) : key; };
+  app.innerHTML = `
+    ${header('Подлинность фото', `#/p/${pid}/more`)}
+    <div class="pad report" id="verify">
+      <div class="report-head">
+        <h2>${esc(project.name)}</h2>
+        <div class="mut small">Реестр печатей · ${fmtDate(Date.now())} · Стенограф</div>
+      </div>
+      <p class="mut small">Каждое фото при добавлении получает печать: хеш SHA-256 содержимого, время, геометку (если разрешена) и автора. Если файл потом изменён — хеш не совпадёт. Реестр можно распечатать или переслать вместе с фото как доказательство «что и когда было снято».</p>
+      <div class="card"><b>Фото: ${photos.length}</b> · с печатью ${sealed.length}${unsealed ? ` · без печати ${unsealed} (добавлены до этой версии)` : ''}<br><span id="vf-sum" class="mut small">Проверяю…</span></div>
+      <div class="report-actions no-print">
+        <button class="btn" id="vf-print">🖨 Печать / PDF</button>
+        <button class="btn" id="vf-copy">📋 Скопировать реестр</button>
+      </div>
+      <div class="calc-table-wrap"><table class="calc-table seal-table">
+        <thead><tr><th>Снято</th><th>Где</th><th>Этап</th><th>Автор</th><th>Гео</th><th>SHA-256</th><th>Статус</th></tr></thead>
+        <tbody>${photos.map(p => `<tr data-id="${p.id}">
+          <td>${new Date(p.created).toLocaleString('ru-RU')}</td>
+          <td>${esc(roomOf(p.wallKey))}</td>
+          <td>${esc(stageName(stages, p.stageId))}</td>
+          <td>${esc(p.by || '')}</td>
+          <td>${p.seal && p.seal.geo ? fmtGeo(p.seal.geo) : '—'}</td>
+          <td><code>${p.seal ? p.seal.sha256.slice(0, 12) + '…' : '—'}</code></td>
+          <td class="vf-state">${p.seal ? '…' : '<span class="mut">нет печати</span>'}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+  const stats = { ok: 0, edited: 0, broken: 0 };
+  for (const p of sealed) {
+    if (!app.querySelector('#verify')) return;
+    const v = await verifySeal(p);
+    stats[v.state] = (stats[v.state] || 0) + 1;
+    const cell = app.querySelector(`tr[data-id="${p.id}"] .vf-state`);
+    if (cell) cell.textContent = sealBadge(v.state);
+  }
+  const sum = app.querySelector('#vf-sum');
+  if (sum) sum.textContent = `Подлинных: ${stats.ok} · изменённых (стирание, оригинал сохранён): ${stats.edited}${stats.broken ? ` · НЕ СОВПАДАЕТ: ${stats.broken}` : ''}`;
+  $('#vf-print').onclick = () => window.print();
+  $('#vf-copy').onclick = async () => {
+    const lines = [`Реестр фото — ${project.name} — ${new Date().toLocaleString('ru-RU')}`];
+    for (const p of photos) lines.push(`${new Date(p.created).toISOString()} | ${roomOf(p.wallKey)} | ${stageName(stages, p.stageId)} | ${p.by || ''} | ${p.seal && p.seal.geo ? fmtGeo(p.seal.geo) : '-'} | ${p.seal ? p.seal.sha256 : '-'}`);
+    try { await navigator.clipboard.writeText(lines.join('\n')); toast('Реестр скопирован'); } catch { toast('Не удалось скопировать'); }
+  };
 }
 
 /* ---------- калькулятор площадей и материалов ---------- */

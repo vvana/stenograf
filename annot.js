@@ -405,7 +405,7 @@ function openPhotoEditor(photo, ctx) {
     <div class="ed-top">
       <div class="ed-title">
         <b>${esc(stage ? stage.name : 'Этап')}</b>
-        <div class="mut small">${esc(ctx.wallTitle || '')} · ${fmtDate(photo.created)}${photo.by ? ' · ' + esc(photo.by) : ''}</div>
+        <div class="mut small">${esc(ctx.wallTitle || '')} · ${fmtDate(photo.created)}${photo.by ? ' · ' + esc(photo.by) : ''}<span id="ed-seal"></span></div>
       </div>
       <button class="iconbtn light" id="ed-menu">⋯</button>
       <button class="iconbtn light" id="ed-close">✕</button>
@@ -457,6 +457,7 @@ function openPhotoEditor(photo, ctx) {
       + eraseSVG;
   }
   img.onload = () => { natW = img.naturalWidth; natH = img.naturalHeight; layout(); };
+  verifySeal(photo).then(v => { const el = document.getElementById('ed-seal'); if (el && v.state !== 'none') el.textContent = ' · ' + sealBadge(v.state); });
   if (img.complete && img.naturalWidth) img.onload();
   const onResize = () => layout();
   window.addEventListener('resize', onResize);
@@ -770,6 +771,7 @@ function openPhotoEditor(photo, ctx) {
   v.querySelector('#ed-menu').onclick = () => showSheet(`
     <div class="sh-title">Фото</div>
     <div class="viewer-note" id="sh-note">${photo.note ? esc(photo.note) : '<span class="mut">+ добавить заметку к фото</span>'}</div>
+    ${photo.seal ? `<p class="mut small seal-info">🔒 Печать: ${new Date(photo.seal.at).toLocaleString('ru-RU')}${photo.seal.geo ? ' · 📍 ' + fmtGeo(photo.seal.geo) : ' · без геометки'}<br><code>${photo.seal.sha256.slice(0, 16)}…</code></p>` : ''}
     <button class="btn wide" id="sh-ghost">👻 Совместить с камерой</button>
     ${photo.original ? '<button class="btn wide" id="sh-restore">↩ Вернуть оригинал (до стирания)</button>' : ''}
     <button class="btn danger wide" id="sh-delphoto">Удалить фото</button>`, s => {

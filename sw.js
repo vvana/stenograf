@@ -9,6 +9,7 @@ const ASSETS = [
   './db.js',
   './annot.js',
   './extras.js',
+  './templates.js',
   './tour.js',
   './native.js',
   './vendor/three.module.min.js',
