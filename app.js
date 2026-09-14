@@ -394,6 +394,7 @@ async function viewPlan(pid) {
   app.innerHTML = `
     ${header(project.name, '#/',
       `<button class="iconbtn hidden" id="lidar-walk" title="Обход этапа: автосъёмка стен лидаром">🚶</button>
+       <button class="iconbtn hidden" id="lidar-apt" title="Квартира целиком: обмер / финальный скан">🏢</button>
        <button class="iconbtn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">✎</button>`)}
     <div class="plan-wrap">
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
@@ -989,10 +990,25 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
   // лидар (только нативная iOS-версия на iPhone Pro)
   lidarAvailable().then(ok => {
     if (!ok) return;
-    const walkBtn = $('#lidar-walk'), measBtn = $('#lidar-measure');
+    const walkBtn = $('#lidar-walk'), measBtn = $('#lidar-measure'), aptBtn = $('#lidar-apt');
     if (walkBtn) {
       walkBtn.classList.remove('hidden');
       walkBtn.onclick = () => walkSheet();
+    }
+    if (aptBtn) {
+      aptBtn.classList.remove('hidden');
+      aptBtn.onclick = () => showSheet(`<div class="sh-title">Квартира целиком</div>
+        <p class="mut small">Комнаты сканируются подряд в одной сессии: закончили комнату — «Следующая», перешли в другую. Существующие комнаты обновятся, новые добавятся.</p>
+        <button class="btn primary wide" id="apt-measure">📡 Обмер всей квартиры</button>
+        <button class="btn wide" id="apt-final">🏁 Финальный скан (3D с текстурами)</button>`, sh => {
+        sh.querySelector('#apt-measure').onclick = async () => { hideSheet(); try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); } };
+        sh.querySelector('#apt-final').onclick = async () => {
+          hideSheet();
+          if (!confirm('Финальный скан лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям. Начать?')) return;
+          try { await lidarFinal(pid, project, rooms); } catch (err) { alert('Скан не удался: ' + err.message); }
+          render();
+        };
+      });
     }
     if (measBtn) {
       measBtn.classList.remove('hidden');
@@ -1008,19 +1024,23 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     const stagesList = await dbAll('stages', 'projectId', pid);
     stagesList.sort((a, b) => a.ord - b.ord);
     let roomSel = rooms.length === 1 ? rooms[0] : null;
-    const step2 = () => showSheet(`<div class="sh-title">Обход этапа: ${esc(roomSel.name)}</div>
+    const step2 = () => showSheet(`<div class="sh-title">Обход этапа: ${roomSel ? esc(roomSel.name) : 'вся квартира'}</div>
       <p class="mut small">Выберите этап — кадры стен снимутся сами и лягут на этот этап уже откалиброванными.</p>
       ${stagesList.map(s => `<button class="btn wide" data-stage="${s.id}">${esc(s.name)}</button>`).join('')}`, sh => {
       sh.querySelectorAll('[data-stage]').forEach(b => b.onclick = async () => {
         hideSheet();
-        try { await lidarWalk(pid, roomSel, b.dataset.stage); render(); }
-        catch (err) { alert('Обход не удался: ' + err.message); }
+        try {
+          if (roomSel) await lidarWalk(pid, roomSel, b.dataset.stage);
+          else await lidarApartment(pid, rooms, b.dataset.stage);
+          render();
+        } catch (err) { alert('Обход не удался: ' + err.message); }
       });
     });
-    if (roomSel) return step2();
-    showSheet(`<div class="sh-title">Обход этапа: какая комната?</div>
+    if (rooms.length === 1) return step2();
+    showSheet(`<div class="sh-title">Обход этапа: что снимаем?</div>
+      <button class="btn primary wide" data-room="*">🏢 Всю квартиру подряд</button>
       ${rooms.map(r => `<button class="btn wide" data-room="${r.id}">${esc(r.name)}</button>`).join('')}`, sh => {
-      sh.querySelectorAll('[data-room]').forEach(b => b.onclick = () => { roomSel = rooms.find(r => r.id === b.dataset.room); step2(); });
+      sh.querySelectorAll('[data-room]').forEach(b => b.onclick = () => { roomSel = b.dataset.room === '*' ? null : rooms.find(r => r.id === b.dataset.room); step2(); });
     });
   }
 
@@ -1259,7 +1279,13 @@ async function viewWall(pid, wallKey) {
         wallTitle: wallLabel(room, side),
         wallSize: wallSizeOf(room, side),
         onClose: render,
-        onGhost: p => nav(`#/p/${pid}/ghost/${encodeURIComponent(wallKey)}/${p.id}`),
+        onGhost: async p => {
+          if (await lidarAvailable()) {
+            try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { alert('AR-призрак не удался: ' + err.message); }
+            return;
+          }
+          nav(`#/p/${pid}/ghost/${encodeURIComponent(wallKey)}/${p.id}`);
+        },
       });
     };
   });
@@ -1456,10 +1482,10 @@ async function buildExport(kind, projects, rooms, stages, photos) {
   }
   const projectsOut = [];
   for (const p of projects) {
-    if (p.plan && p.plan.blob) {
-      const { blob, ...planMeta } = p.plan;
-      projectsOut.push({ ...p, plan: { ...planMeta, data: await blobToDataURL(blob) } });
-    } else projectsOut.push(p);
+    const rec = { ...p };
+    if (p.plan && p.plan.blob) { const { blob, ...planMeta } = p.plan; rec.plan = { ...planMeta, data: await blobToDataURL(blob) }; }
+    if (p.finalScan && p.finalScan.blob) { const { blob, ...m } = p.finalScan; rec.finalScan = { ...m, data: await blobToDataURL(blob) }; }
+    projectsOut.push(rec);
   }
   const payload = { app: 'stenograf', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms, stages, photos: photosOut };
   return new Blob([JSON.stringify(payload)], { type: 'application/json' });
@@ -1530,6 +1556,10 @@ async function importData(data) {
         if (p.plan && p.plan.data) {
           const { data: planData, ...planMeta } = p.plan;
           p.plan = { ...planMeta, blob: await (await fetch(planData)).blob() };
+        }
+        if (p.finalScan && p.finalScan.data) {
+          const { data: fd, ...m } = p.finalScan;
+          p.finalScan = { ...m, blob: await (await fetch(fd)).blob() };
         }
         if (authoritative || !(await dbGet('projects', p.id))) await dbPut('projects', p);
       }

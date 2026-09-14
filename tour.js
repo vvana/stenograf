@@ -1,7 +1,9 @@
 /* Стенограф — 3D-тур: «кукольный домик» из схемы и фото, вид изнутри, панорамы 360° */
 'use strict';
 
-const tourState = { mode: 'house', stage: 'all', roomId: null };
+const tourState = { mode: 'house', stage: 'all', roomId: null, photos: false };
+const FLOOR_COLORS = [0x6fbf73, 0xe8875f, 0xe6b84a, 0x7fb3d5, 0xb58fd4, 0x8fc9b8, 0xd98fa8, 0xa8b86a];
+const WALL_T = 0.12; // толщина стен на «домике», м
 const TEX_W = 768;
 
 function threeReady() {
@@ -87,6 +89,8 @@ async function viewTour(pid, roomId = null) {
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">🏠 Домик</button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">👁 Внутри</button>
           <button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">🌐 360°</button>
+          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">🏁 Финал</button>` : ''}
+          <button id="tour-photos" class="${tourState.photos ? 'active' : ''}" title="Фото на стенах">📷</button>
         </div>
       </div>
       <div class="tour-bottom">
@@ -121,6 +125,14 @@ async function viewTour(pid, roomId = null) {
   const centerAll = new THREE.Vector3((minX + maxX) / 2, 0.6, (minZ + maxZ) / 2);
   const span = Math.max(maxX - minX, maxZ - minZ, 4);
 
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8078, dark ? 0.9 : 1.15));
+  const sun = new THREE.DirectionalLight(0xffffff, dark ? 0.55 : 0.8);
+  sun.position.set(-4, 10, 6); scene.add(sun);
+  const wallSolid = new THREE.MeshLambertMaterial({ color: dark ? 0xd8d4cc : 0xf6f3ec });
+  const wallCap = new THREE.MeshLambertMaterial({ color: dark ? 0xc9bfae : 0xe8dcc6 });
+  const doorMat = new THREE.MeshLambertMaterial({ color: dark ? 0x8a6a4e : 0xb98a63 });
+  const glassMat = new THREE.MeshLambertMaterial({ color: 0x9fd0ee, transparent: true, opacity: 0.55 });
+  const plainFloors = [], solidWalls = [];
   const greyMat = new THREE.MeshBasicMaterial({ color: dark ? 0x3a3d43 : 0xcfc9bf, side: THREE.FrontSide });
   const floorMat = new THREE.MeshBasicMaterial({ color: dark ? 0x2b2e33 : 0xb9b2a6, side: THREE.FrontSide });
   const ceilMat = new THREE.MeshBasicMaterial({ color: dark ? 0x44474d : 0xe9e5dd, side: THREE.FrontSide });
@@ -154,6 +166,44 @@ async function viewTour(pid, roomId = null) {
     const ceiling = new THREE.Mesh(mkPoly(ceil, false), ceilMat.clone());
     scene.add(floor); scene.add(ceiling);
     ceilings.push(ceiling);
+    // цветной пол «как на плане» (чуть ниже фото-пола, чтобы не мерцать)
+    const plain = new THREE.Mesh(mkPoly(-0.004, true), new THREE.MeshLambertMaterial({ color: FLOOR_COLORS[rooms.indexOf(r) % FLOOR_COLORS.length] }));
+    scene.add(plain); plainFloors.push(plain);
+    // толстые белые стены с вырезами под двери и окна — снаружи от контура
+    for (const e of roomEdges(r)) {
+      const ops = ((r.openings || {})[e.id] || []).filter(o => o.kind !== 'mirror' && o.w > 0 && o.h > 0)
+        .map(o => { const x = o.x != null ? o.x : (e.len - o.w) / 2; const y = o.y != null ? o.y : (o.kind === 'door' ? 0 : 1); return { kind: o.kind, x0: Math.max(0, x), x1: Math.min(e.len, x + o.w), y0: Math.max(0, y), y1: Math.min(ceil, y + o.h) }; })
+        .sort((a, b) => a.x0 - b.x0);
+      const yaw = Math.atan2(e.nx, e.ny);
+      const outN = [-e.nx, -e.ny];
+      const cx0 = e.mid[0] + outN[0] * (WALL_T / 2 + 0.003), cz0 = e.mid[1] + outN[1] * (WALL_T / 2 + 0.003);
+      const addBox = (x0, x1, y0, y1, mat) => {
+        if (x1 - x0 < 0.01 || y1 - y0 < 0.01) return;
+        const box = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, WALL_T), mat);
+        // локальные координаты стены: X вдоль стены слева направо (как у фото-плоскости), Y вверх
+        const lx = -e.len / 2 + (x0 + x1) / 2, ly = (y0 + y1) / 2;
+        box.position.set(cx0 + e.ux * lx, ly, cz0 + e.uy * lx);
+        box.rotation.y = yaw;
+        scene.add(box); solidWalls.push(box);
+      };
+      let cursor = 0;
+      for (const o of ops) {
+        addBox(cursor, o.x0, 0, ceil, wallSolid);
+        if (o.y0 > 0) addBox(o.x0, o.x1, 0, o.y0, wallSolid);          // под окном
+        if (o.y1 < ceil) addBox(o.x0, o.x1, o.y1, ceil, wallSolid);     // над проёмом
+        // сам проём: дверь — тонкая створка, окно — стекло
+        const fill = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.kind === 'door' ? 0.03 : 0.02), o.kind === 'door' ? doorMat : glassMat);
+        const lx = -e.len / 2 + (o.x0 + o.x1) / 2, ly = (o.y0 + o.y1) / 2;
+        fill.position.set(cx0 + e.ux * lx, ly, cz0 + e.uy * lx); fill.rotation.y = yaw;
+        scene.add(fill); solidWalls.push(fill);
+        cursor = Math.max(cursor, o.x1);
+      }
+      addBox(cursor, e.len, 0, ceil, wallSolid);
+      // «крышка» стены — кремовый верх, как на плане
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(e.len, 0.012, WALL_T + 0.002), wallCap);
+      cap.position.set(cx0, ceil + 0.006, cz0); cap.rotation.y = yaw;
+      scene.add(cap); solidWalls.push(cap);
+    }
     surfaces.push({ key: `${r.id}:f`, mesh: floor, w: bb.w, h: bb.h, base: floorMat });
     surfaces.push({ key: `${r.id}:c`, mesh: ceiling, w: bb.w, h: bb.h, base: ceilMat });
 
@@ -216,7 +266,28 @@ async function viewTour(pid, roomId = null) {
       }
       s.mesh.material = new THREE.MeshBasicMaterial({ map: tex, side: THREE.FrontSide });
     }
+    updateHint();
     await applyPano();
+  }
+
+  /* ---------- финальный скан (окрашенная сетка) ---------- */
+  let finalMesh = null;
+  async function loadFinal() {
+    if (finalMesh || !(project.finalScan && project.finalScan.blob) || !window.THREE_PLYLoader) return;
+    try {
+      const buf = await project.finalScan.blob.arrayBuffer();
+      const geo = new window.THREE_PLYLoader().parse(buf);
+      geo.computeVertexNormals();
+      const mat = new THREE.MeshLambertMaterial({ vertexColors: geo.hasAttribute('color'), side: THREE.DoubleSide });
+      finalMesh = new THREE.Mesh(geo, mat);
+      // из координат ARKit (X, Y вверх, Z) в план: тот же поворот+сдвиг, что применялся к комнатам
+      const tr = project.finalScan.transform || { ang: 0, ox: 0, oy: 0 };
+      // план: x = X·cos − Z·sin + ox, z = X·sin + Z·cos + oy ; высота Y остаётся
+      finalMesh.rotation.y = -tr.ang;
+      finalMesh.position.set(tr.ox, 0, tr.oy);
+      finalMesh.visible = false;
+      scene.add(finalMesh);
+    } catch (err) { console.error(err); say('Не удалось открыть финальный скан'); }
   }
 
   /* ---------- панорама ---------- */
@@ -246,10 +317,10 @@ async function viewTour(pid, roomId = null) {
   }
 
   /* ---------- камера и управление ---------- */
-  const orbit = { theta: Math.PI * 0.15, phi: 0.95, radius: span * 1.4, target: centerAll.clone() };
+  const orbit = { theta: Math.PI * 0.15, phi: 0.62, radius: span * 1.5, target: centerAll.clone() };
   const look = { yaw: 0, pitch: 0 };
   function placeCamera() {
-    if (tourState.mode === 'house') {
+    if (tourState.mode === 'house' || tourState.mode === 'final') {
       const { theta, phi, radius, target } = orbit;
       camera.position.set(target.x + radius * Math.sin(phi) * Math.sin(theta), target.y + radius * Math.cos(phi), target.z + radius * Math.sin(phi) * Math.cos(theta));
       camera.lookAt(target);
@@ -282,12 +353,12 @@ async function viewTour(pid, roomId = null) {
       const [a, b] = [...pointers.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       if (lastPinch) {
-        if (tourState.mode === 'house') orbit.radius = Math.max(span * 0.3, Math.min(span * 4, orbit.radius * lastPinch / d));
+        if (tourState.mode === 'house' || tourState.mode === 'final') orbit.radius = Math.max(span * 0.3, Math.min(span * 4, orbit.radius * lastPinch / d));
         else { const cam = tourState.mode === 'pano' ? panoCam : camera; cam.fov = Math.max(30, Math.min(100, cam.fov * lastPinch / d)); cam.updateProjectionMatrix(); }
       }
       lastPinch = d; return;
     }
-    if (tourState.mode === 'house') {
+    if (tourState.mode === 'house' || tourState.mode === 'final') {
       orbit.theta -= dx * 0.006; orbit.phi = Math.max(0.12, Math.min(1.45, orbit.phi - dy * 0.005));
     } else {
       look.yaw += dx * 0.005; look.pitch = Math.max(-1.3, Math.min(1.3, look.pitch + dy * 0.005));
@@ -297,7 +368,7 @@ async function viewTour(pid, roomId = null) {
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    if (tourState.mode === 'house') orbit.radius = Math.max(span * 0.3, Math.min(span * 4, orbit.radius * (e.deltaY > 0 ? 1.1 : 0.9)));
+    if (tourState.mode === 'house' || tourState.mode === 'final') orbit.radius = Math.max(span * 0.3, Math.min(span * 4, orbit.radius * (e.deltaY > 0 ? 1.1 : 0.9)));
   }, { passive: false });
 
   /* ---------- мини-план ---------- */
@@ -324,14 +395,25 @@ async function viewTour(pid, roomId = null) {
     if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем, щипок — масштаб. Тап по комнате на плане — зайти внутрь.';
     else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Серые стены — фото ещё нет.`;
     else hint.textContent = panoAvailable ? `${name}: панорама 360°` : `${name}: панорамы для этого этапа нет — снимите её штатной камерой (режим «Панорама») и добавьте на экране «🌐 Панорама» комнаты.`;
+    if (tourState.mode === 'final') hint.textContent = `Финальный скан: ${project.finalScan ? (project.finalScan.vertices || 0) + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
-    for (const c of ceilings) c.visible = tourState.mode !== 'house';
+    const pb = $('#tour-photos'); if (pb) pb.classList.toggle('active', tourState.photos);
+    const isFinal = tourState.mode === 'final', isInside = tourState.mode === 'inside';
+    const photosOn = isInside || tourState.photos;
+    for (const c of ceilings) c.visible = isInside;                              // потолки только изнутри
+    for (const s of surfaces) { const isFloor = s.key.endsWith(':f'), isCeil = s.key.endsWith(':c'); if (isCeil) continue; s.mesh.visible = !isFinal && photosOn && (!isFloor || s.mesh.material.map); }
+    for (const f of plainFloors) f.visible = !isFinal;
+    for (const w of solidWalls) w.visible = !isFinal;
+    if (finalMesh) finalMesh.visible = isFinal;
   }
   function setMode(m) {
     tourState.mode = m;
+    if (m === 'final') loadFinal().then(updateHint);
     updateHint(); drawPlan();
   }
   app.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { look.yaw = 0; look.pitch = 0; setMode(b.dataset.mode); }; });
+  const photosBtn = $('#tour-photos');
+  if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
   $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); };
 
   /* ---------- цикл ---------- */
@@ -347,7 +429,7 @@ async function viewTour(pid, roomId = null) {
   resize(); setMode(tourState.mode); frame();
   applyStage();
 
-  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, pano: panoAvailable, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId });
+  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, pano: panoAvailable, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId, solidWalls: solidWalls.length, plainFloors: plainFloors.length, photos: tourState.photos, finalLoaded: !!finalMesh, wallPlanesVisible: surfaces.filter(s => !s.key.endsWith(':f') && !s.key.endsWith(':c') && s.mesh.visible).length });
   viewCleanup = () => {
     alive = false; ro.disconnect(); delete window.__tourDebug;
     texCache.forEach(t => t.dispose());

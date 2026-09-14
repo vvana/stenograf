@@ -159,7 +159,8 @@ function alignScanToRoom(scanPts, roomPts, scanOps = [], roomOps = []) {
 }
 
 // применить скан: новая комната или переобмер существующей (id стен и фото сохраняются)
-async function applyScan(pid, rooms, room, scan, name) {
+// opts.keepCoords — не нормализовать положение новой комнаты (координаты уже общие для всей квартиры)
+async function applyScan(pid, rooms, room, scan, name, opts = {}) {
   const res = scanToPolygon(scan);
   if (!res) throw new Error('В скане меньше трёх стен — обойдите комнату полностью');
   const openings = scanOpenings(scan, res);
@@ -190,21 +191,29 @@ async function applyScan(pid, rooms, room, scan, name) {
       if (room.labels && room.labels[o.id]) { delete room.labels[o.id]; }
     }
     room.pts = pts; room.wallIds = wallIds; room.ceil = res.ceil; room.measured = 'lidar'; room.measuredAt = Date.now();
-    // проёмы: заменяем двери/окна на обмеренные, зеркала оставляем
-    const keepMirrors = {};
-    for (const [k, list] of Object.entries(room.openings || {})) { const m = list.filter(x => x.kind === 'mirror'); if (m.length) keepMirrors[k] = m; }
-    room.openings = keepMirrors;
+    // проёмы: на стенах, где скан нашёл двери/окна, — берём обмеренные; на остальных оставляем старые; зеркала всегда сохраняем
+    const scannedWalls = new Set(openings.map(o => wallIds[o.wallIndex]));
+    const merged = {};
+    for (const [k, list] of Object.entries(room.openings || {})) {
+      const keep = list.filter(x => x.kind === 'mirror' || !scannedWalls.has(k));
+      if (keep.length) merged[k] = keep;
+    }
+    room.openings = merged;
     for (const o of openings) { const k = wallIds[o.wallIndex]; (room.openings[k] = room.openings[k] || []).push({ kind: o.kind, w: o.w, h: o.h, x: o.x, y: o.y }); }
     await dbPut('rooms', room);
   } else {
-    // новая комната: самая длинная стена горизонтально, ставим на свободное место
-    const se = edgesOf(res.pts);
-    const longest = se.reduce((m, e) => e.len > m.len ? e : m, se[0]);
-    const sc = centroidOf(res.pts);
-    let p2 = transformPts(res.pts, -longest.ang, sc[0], sc[1], 0, 0);
-    const minX = Math.min(...p2.map(p => p[0])), minY = Math.min(...p2.map(p => p[1]));
-    const [fx, fy] = freeSpot(rooms, 1, 1);
-    pts = p2.map(p => [cm(p[0] - minX + fx), cm(p[1] - minY + fy)]);
+    if (opts.keepCoords) {
+      pts = res.pts.map(p => [cm(p[0]), cm(p[1])]);
+    } else {
+      // новая комната: самая длинная стена горизонтально, ставим на свободное место
+      const se = edgesOf(res.pts);
+      const longest = se.reduce((m, e) => e.len > m.len ? e : m, se[0]);
+      const sc = centroidOf(res.pts);
+      const p2 = transformPts(res.pts, -longest.ang, sc[0], sc[1], 0, 0);
+      const minX = Math.min(...p2.map(p => p[0])), minY = Math.min(...p2.map(p => p[1]));
+      const [fx, fy] = freeSpot(rooms, 1, 1);
+      pts = p2.map(p => [cm(p[0] - minX + fx), cm(p[1] - minY + fy)]);
+    }
     const std = standardizeRect(pts);
     if (std) {
       // прямоугольник → стандартные стены n/e/s/w; перестраиваем соответствие «стена скана → сторона»
@@ -277,6 +286,118 @@ async function framesToPhotos(pid, roomId, stageId, frames, idMap) {
   return { photos: n, walls: Object.keys(byWall).length };
 }
 
+/* ---------- зеркала, найденные лидаром: предложить пользователю ---------- */
+
+async function proposeMirrors(room, scan, res, idMap) {
+  const list = (scan.mirrors || []).filter(m => m.parent && idMap[m.parent]);
+  let added = 0;
+  for (const m of list) {
+    const wid = idMap[m.parent];
+    const chain = res.chain.find(c => c.id === m.parent);
+    if (!chain) continue;
+    // положение вдоль стены «от левого угла» — как у проёмов
+    const dir = [chain.b[0] - chain.a[0], chain.b[1] - chain.a[1]];
+    const t = ((m.cx - chain.a[0]) * dir[0] + (m.cz - chain.a[1]) * dir[1]) / (chain.len || 1);
+    const along = chain.rev ? chain.len - t : t;
+    const x = cm(Math.max(0, along - m.w / 2)), y = cm(Math.max(0, m.fromFloor || 0));
+    const label = wallLabel(room, wid);
+    if (!confirm(`Похоже на зеркало (${m.confidence === 'high' ? 'уверенно' : 'возможно'}): ${label}, ${String(cm(m.w)).replace('.', ',')} × ${String(cm(m.h)).replace('.', ',')} м, ${String(x).replace('.', ',')} м от левого угла.\nДобавить как зеркало?`)) continue;
+    room.openings = room.openings || {};
+    const arr = room.openings[wid] = room.openings[wid] || [];
+    if (arr.some(o => o.kind === 'mirror' && Math.abs(o.x - x) < 0.3)) continue;
+    arr.push({ kind: 'mirror', w: cm(m.w), h: cm(m.h), x, y, detected: true });
+    added++;
+  }
+  if (added) await dbPut('rooms', room);
+  return added;
+}
+
+/* ---------- квартира целиком: несколько комнат в общих координатах ---------- */
+
+// доминирующее направление стен (mod 90°), чтобы квартира легла ровно на сетку
+function dominantAngle(scanRooms) {
+  let sx = 0, sy = 0;
+  for (const r of scanRooms) for (const w of r.walls || []) {
+    const a = Math.atan2(w.y1 - w.y0, w.x1 - w.x0) * 4; // ×4: все направления mod 90° складываются
+    sx += Math.cos(a) * w.w; sy += Math.sin(a) * w.w;
+  }
+  return Math.atan2(sy, sx) / 4;
+}
+function rotateScanRoom(r, ang, ox, oy) {
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  const R = (x, y) => [x * ca - y * sa + ox, x * sa + y * ca + oy];
+  const rot = list => (list || []).map(s => {
+    const [x0, y0] = R(s.x0, s.y0), [x1, y1] = R(s.x1, s.y1), [cx, cz] = R(s.cx, s.cz);
+    return { ...s, x0, y0, x1, y1, cx, cz };
+  });
+  return { ...r, walls: rot(r.walls), doors: rot(r.doors), windows: rot(r.windows), openings: rot(r.openings), mirrors: rot(r.mirrors) };
+}
+
+// скан квартиры → комнаты; существующие комнаты переобмериваются (по совпадению центров), новые добавляются
+async function applyStructure(pid, rooms, scan) {
+  const scanRooms = (scan.rooms || []).filter(r => (r.walls || []).length >= 3);
+  if (!scanRooms.length) throw new Error('В скане нет ни одной комнаты с тремя стенами');
+  // распределяем зеркала по комнатам (по parent-стене)
+  for (const r of scanRooms) r.mirrors = (scan.mirrors || []).filter(m => (r.walls || []).some(w => w.id === m.parent));
+  // общий поворот: к сетке, затем сдвиг в положительную область (или совмещение с существующим планом)
+  let ang = -dominantAngle(scanRooms), ox = 0, oy = 0;
+  let placed = scanRooms.map(r => rotateScanRoom(r, ang, 0, 0));
+  const allPts = placed.flatMap(r => r.walls.flatMap(w => [[w.x0, w.y0], [w.x1, w.y1]]));
+  const minX = Math.min(...allPts.map(p => p[0])), minY = Math.min(...allPts.map(p => p[1]));
+  if (rooms.length) {
+    // пробуем 4 поворота на 90° и сдвиг по центроидам — выбираем тот, где стены лучше ложатся на существующие
+    const roomEdgesAll = rooms.flatMap(r => roomEdges(r).map(e => ({ mid: e.mid, ang: Math.atan2(e.b[1] - e.a[1], e.b[0] - e.a[0]), len: e.len })));
+    const rc = centroidOf(rooms.flatMap(r => r.pts));
+    let best = null;
+    for (let k = 0; k < 4; k++) {
+      const a2 = ang + k * Math.PI / 2;
+      const cand = scanRooms.map(r => rotateScanRoom(r, a2, 0, 0));
+      const pts = cand.flatMap(r => r.walls.flatMap(w => [[w.x0, w.y0], [w.x1, w.y1]]));
+      const sc = centroidOf(pts);
+      const dx = rc[0] - sc[0], dy = rc[1] - sc[1];
+      let cost = 0;
+      for (const r of cand) for (const w of r.walls) {
+        const mid = [(w.x0 + w.x1) / 2 + dx, (w.y0 + w.y1) / 2 + dy], wa = Math.atan2(w.y1 - w.y0, w.x1 - w.x0);
+        let m = 3;
+        for (const e of roomEdgesAll) if (angDiff(wa, e.ang) < 0.3 || angDiff(wa, e.ang + Math.PI) < 0.3) m = Math.min(m, dist2(mid, e.mid));
+        cost += m * w.w;
+      }
+      if (!best || cost < best.cost) best = { cost, a2, dx, dy };
+    }
+    ang = best.a2; ox = best.dx; oy = best.dy;
+    placed = scanRooms.map(r => rotateScanRoom(r, ang, ox, oy));
+  } else {
+    ox = 1 - minX; oy = 1 - minY;
+    placed = scanRooms.map(r => rotateScanRoom(r, ang, ox, oy));
+  }
+  const results = [];
+  const used = new Set();
+  let i = 0;
+  for (const sr of placed) {
+    i++;
+    const res = scanToPolygon(sr);
+    if (!res) continue;
+    const sc = centroidOf(res.pts);
+    // существующая комната с центром рядом (< 1,5 м) и похожей площадью — переобмер
+    let target = null, bd = Infinity;
+    for (const r of rooms) {
+      if (used.has(r.id)) continue;
+      const d = dist2(centroidOf(r.pts), sc);
+      const areaOk = Math.abs(roomArea(r) - Math.abs(polyArea(res.pts))) < Math.max(3, roomArea(r) * 0.5);
+      if (d < 1.5 && areaOk && d < bd) { bd = d; target = r; }
+    }
+    if (target) used.add(target.id);
+    const name = target ? null : `Комната ${rooms.length + results.length + 1}`;
+    const out = await applyScan(pid, rooms.concat(results.map(x => x.room)), target, sr, name, { keepCoords: true });
+    out.res = res; out.scanRoom = sr;
+    results.push(out);
+  }
+  // общая таблица «стена скана → комната:стена» для кадров
+  const wallMap = {};
+  for (const r of results) for (const [sid, wid] of Object.entries(r.idMap)) wallMap[sid] = { roomId: r.room.id, wallId: wid };
+  return { results, wallMap, transform: { ang, ox, oy } };
+}
+
 /* ---------- сценарии ---------- */
 
 async function lidarMeasure(pid, rooms, room) {
@@ -284,9 +405,59 @@ async function lidarMeasure(pid, rooms, room) {
   try { scan = await Native.RP.scan({ mode: 'measure' }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const name = room ? null : (prompt('Название комнаты:', 'Комната ' + (rooms.length + 1)) || null);
-  const { room: r } = await applyScan(pid, rooms, room, scan, name);
+  const { room: r, idMap } = await applyScan(pid, rooms, room, scan, name);
   toast(`Обмер: ${r.pts.length} стен, потолок ${String(r.ceil).replace('.', ',')} м`);
+  const res = scanToPolygon(scan);
+  if (res) await proposeMirrors(r, scan, res, idMap);
   return r;
+}
+
+// обмер / обход всей квартиры: несколько комнат подряд (mode 'multi'), с кадрами — на этап
+async function lidarApartment(pid, rooms, stageId) {
+  let scan;
+  try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId }); }
+  catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
+  const { results, wallMap } = await applyStructure(pid, rooms, scan);
+  let mirrors = 0;
+  for (const r of results) mirrors += await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
+  let photos = 0;
+  if (stageId) {
+    const byRoom = {};
+    for (const f of scan.frames || []) { const m = wallMap[f.wall]; if (!m) continue; (byRoom[m.roomId] = byRoom[m.roomId] || []).push(f); }
+    for (const [roomId, list] of Object.entries(byRoom)) {
+      const idMap = {}; for (const f of list) idMap[f.wall] = wallMap[f.wall].wallId;
+      const r = await framesToPhotos(pid, roomId, stageId, list, idMap);
+      photos += r.photos;
+    }
+  }
+  toast(`Квартира: ${results.length} комн.${photos ? `, ${photos} фото` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
+  return results;
+}
+
+// AR-призрак: старое фото приклеивается к стене в живой картинке (нативно)
+async function lidarGhost(photo, wallSize) {
+  const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(photo.blob); });
+  const quad = photo.calib && photo.calib.type === 'quad' ? photo.calib.pts : null;
+  const w = photo.calib && photo.calib.type === 'quad' ? photo.calib.w : (wallSize && wallSize.w) || 0;
+  const h = photo.calib && photo.calib.type === 'quad' ? photo.calib.h : (wallSize && wallSize.h) || 0;
+  try { await Native.RP.scan({ mode: 'ghost', overlay: { jpeg: b64, quad, w, h } }); }
+  catch (err) { if (!String(err && err.message).includes('cancelled')) throw err; }
+}
+
+// финальный скан: комнаты + окрашенная сетка квартиры → project.finalScan
+async function lidarFinal(pid, project, rooms) {
+  let scan;
+  try { scan = await Native.RP.scan({ mode: 'final' }); }
+  catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
+  const { results, transform } = await applyStructure(pid, rooms, scan);
+  for (const r of results) await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
+  if (scan.mesh) {
+    const blob = await (await fetch('data:application/octet-stream;base64,' + scan.mesh)).blob();
+    project.finalScan = { blob, transform, vertices: scan.meshVertices || 0, faces: scan.meshFaces || 0, created: Date.now() };
+    await dbPut('projects', project);
+  }
+  toast(`Финальный скан: ${results.length} комн., ${scan.meshVertices || 0} вершин`);
+  return results;
 }
 
 async function lidarWalk(pid, room, stageId) {

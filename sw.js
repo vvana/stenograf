@@ -13,6 +13,7 @@ const ASSETS = [
   './native.js',
   './vendor/three.module.min.js',
   './vendor/Reflector.js',
+  './vendor/PLYLoader.js',
   './app.js',
   './manifest.webmanifest',
   './icon.svg',

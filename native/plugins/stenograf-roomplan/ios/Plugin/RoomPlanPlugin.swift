@@ -3,7 +3,9 @@ import Capacitor
 import RoomPlan
 
 /// Мост Стенограф ↔ Apple RoomPlan.
-/// JS: const RP = Capacitor.registerPlugin('RoomPlan'); await RP.isSupported(); await RP.scan({ mode: 'measure' | 'walk' })
+/// JS: const RP = Capacitor.registerPlugin('RoomPlan');
+///   await RP.isSupported()
+///   await RP.scan({ mode: 'measure' | 'walk' | 'multi' | 'final' | 'ghost', frames?: bool, overlay?: {...} })
 @objc(RoomPlanPlugin)
 public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "RoomPlanPlugin"
@@ -28,8 +30,10 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         let mode = call.getString("mode") ?? "measure"
         let maxDim = call.getInt("maxDim") ?? 1600
+        let wantFrames = call.getBool("frames") ?? (mode == "walk")
+        let overlay = call.getObject("overlay")
         DispatchQueue.main.async {
-            let vc = RoomScanViewController(mode: mode, maxDim: maxDim) { result in
+            let vc = RoomScanViewController(mode: mode, maxDim: maxDim, wantFrames: wantFrames, overlay: overlay) { result in
                 switch result {
                 case .success(let dict): call.resolve(dict)
                 case .failure(let err): call.reject(err.localizedDescription)

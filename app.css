@@ -439,6 +439,7 @@ body {
   border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; box-shadow: var(--shadow);
 }
 .tour-modes button.active { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
+.tour-modes { flex-wrap: wrap; }
 .tour-bottom { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: flex-end; gap: 8px; pointer-events: none; }
 .tour-hint { flex: 1; font-size: 12px; color: var(--ink); background: color-mix(in srgb, var(--card) 85%, transparent); border-radius: 10px; padding: 8px 10px; }
 .tour-plan { width: 120px; height: 100px; background: color-mix(in srgb, var(--card) 90%, transparent); border-radius: 10px; padding: 4px; pointer-events: auto; }

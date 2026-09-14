@@ -27,8 +27,10 @@
   <script type="module">
     import * as THREE from './vendor/three.module.min.js';
     import { Reflector } from './vendor/Reflector.js';
+    import { PLYLoader } from './vendor/PLYLoader.js';
     window.THREE = THREE;
     window.THREE_Reflector = Reflector;
+    window.THREE_PLYLoader = PLYLoader;
     window.dispatchEvent(new Event('three-ready'));
   </script>
 </body>
