@@ -314,6 +314,14 @@ body {
 #ed-svg .mk.calib .end { fill: #3ec6ff; }
 #ed-svg .mk.tmp .pin { fill: #3ec6ff; }
 #ed-svg .mk.done .pin { fill: #2e8b57; }
+#ed-svg .mk.conduit .ln { stroke: var(--cc, #ff3b30); stroke-width: 4; }
+#ed-svg .mk.conduit .ln.halo { stroke: rgba(255,255,255,.85); stroke-width: 8; }
+#ed-svg .mk.conduit .end { fill: var(--cc, #ff3b30); stroke: #fff; stroke-width: 1.5; }
+#ed-svg .mk.conduit .ico { font-size: 13px; }
+#ed-svg .ln.draw.conduit { stroke-width: 4; }
+.cprops { display: flex; flex-direction: column; gap: 8px; }
+.cprops label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--mut); }
+.cprops .inp { font-size: 15px; color: var(--ink); }
 .trade-filter { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 4px; }
 .report-list li.done { opacity: .75; }
 #ed-svg .ln.draw { fill: none; stroke: #ff7a1a; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }

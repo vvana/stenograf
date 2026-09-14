@@ -387,7 +387,7 @@ async function viewPlan(pid) {
   const counts = {}, points = {};
   photos.forEach(p => {
     counts[p.wallKey] = (counts[p.wallKey] || 0) + 1;
-    const n = (p.marks || []).filter(m => m.type === 'point' && (m.layer || 'main') === 'main').length;
+    const n = (p.marks || []).filter(m => (m.type === 'point' || m.type === 'conduit') && (m.layer || 'main') === 'main').length;
     if (n) points[p.wallKey] = (points[p.wallKey] || 0) + n;
   });
 

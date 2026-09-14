@@ -17,6 +17,32 @@ const TRADES = [['electric', '⚡ Электрика'], ['plumb', '🚰 Сант
 const tradeOf = kind => ({ socket: 'electric', switch: 'electric', light: 'electric', tv: 'electric', water: 'plumb', sewer: 'plumb', heat: 'plumb' })[kind] || 'other';
 const tradeName = t => (TRADES.find(x => x[0] === t) || TRADES[2])[1];
 
+// коммуникации (скрытые трассы): тип → цвет, специальность, единица сечения
+const CONDUIT_KINDS = [
+  ['power',  '⚡', 'Силовой кабель',   '#ff3b30', 'electric', 'мм²'],
+  ['low',    '📶', 'Слаботочка',       '#ff9f0a', 'electric', 'мм²'],
+  ['water',  '💧', 'Вода',             '#0a84ff', 'plumb',    'мм'],
+  ['sewer',  '🕳', 'Канализация',      '#8e8e93', 'plumb',    'мм'],
+  ['heat',   '♨',  'Отопление',        '#ff6b3d', 'plumb',    'мм'],
+  ['gas',    '🔥', 'Газ',              '#ffd60a', 'other',    'мм'],
+];
+const conduitOf = k => CONDUIT_KINDS.find(x => x[0] === k) || CONDUIT_KINDS[0];
+// подпись трассы: тип, глубина, сечение, координаты концов при калибровке
+function conduitLabel(m, measurer) {
+  const k = conduitOf(m.kind);
+  let s = k[2];
+  const bits = [];
+  if (m.size) bits.push(`${String(m.size).replace('.', ',')} ${k[5]}`);
+  if (m.depth) bits.push(`глубина ${m.depth} см`);
+  if (m.note) bits.push(m.note);
+  if (bits.length) s += ' · ' + bits.join(', ');
+  if (measurer && measurer.wall && m.pts && m.pts.length) {
+    const a = measurer.wall(m.pts[0]), b = measurer.wall(m.pts[m.pts.length - 1]);
+    s += ` · от (${fmtLen(a.fromLeft)}; h ${fmtLen(a.fromFloor)}) до (${fmtLen(b.fromLeft)}; h ${fmtLen(b.fromFloor)})`;
+  }
+  return s;
+}
+
 const LAYERS = [
   ['main', 'Разметка'],
   ['draft', 'Черновик'],
@@ -24,6 +50,24 @@ const LAYERS = [
 ];
 
 /* ---------- геометрия ---------- */
+
+// Дуглас–Пекер: ломаная → ключевые точки (eps в нормированных единицах)
+function simplifyPolyline(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  const d2 = (p, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;
+    if (!l2) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+    let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2; t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+  };
+  const rec = (a, b) => {
+    let best = -1, bi = -1;
+    for (let i = a + 1; i < b; i++) { const d = d2(pts[i], pts[a], pts[b]); if (d > best) { best = d; bi = i; } }
+    if (best > eps) return [...rec(a, bi), ...rec(bi, b).slice(1)];
+    return [pts[a], pts[b]];
+  };
+  return rec(0, pts.length - 1);
+}
 
 // гомография по 4 парам точек (DLT + Гаусс); возвращает 9 коэффициентов или null
 function solveHomography(src, dst) {
@@ -121,6 +165,8 @@ function markPrimitives(photo, measurer, hidden = new Set()) {
       out.push({ type: 'text', id: m.id, at: m.at, label: m.text, cls });
     } else if (m.type === 'path') {
       out.push({ type: 'path', id: m.id, pts: m.pts, cls });
+    } else if (m.type === 'conduit') {
+      out.push({ type: 'conduit', id: m.id, pts: m.pts, cls: cls + ' conduit', color: conduitOf(m.kind)[3], ico: conduitOf(m.kind)[1], label: conduitLabel(m, measurer) });
     } else if (m.type === 'point') {
       out.push({ type: 'point', id: m.id, at: m.at, ico: kindOf(m.kind)[1], label: pointLabel(m, measurer), cls: cls + (m.done ? ' done' : '') });
     }
@@ -155,6 +201,14 @@ function primsToSVG(prims, W, H, tmpPts = []) {
       const pts = pr.pts.map(P);
       s += `<g class="mk ${pr.cls}" ${g}><polyline class="hit" points="${pts.map(p => p.join(',')).join(' ')}"/>
         <polyline class="ln" points="${pts.map(p => p.join(',')).join(' ')}"/></g>`;
+    } else if (pr.type === 'conduit') {
+      const pts = pr.pts.map(P);
+      const mid = pts[Math.floor(pts.length / 2)];
+      s += `<g class="mk ${pr.cls}" ${g} style="--cc:${pr.color}"><polyline class="hit" points="${pts.map(p => p.join(',')).join(' ')}"/>
+        <polyline class="ln halo" points="${pts.map(p => p.join(',')).join(' ')}"/>
+        <polyline class="ln" points="${pts.map(p => p.join(',')).join(' ')}"/>
+        ${pts.length > 1 ? `<circle class="end" cx="${pts[0][0]}" cy="${pts[0][1]}" r="4"/><circle class="end" cx="${pts[pts.length - 1][0]}" cy="${pts[pts.length - 1][1]}" r="4"/>` : ''}
+        <text class="ico" x="${mid[0]}" y="${mid[1]}">${pr.ico}</text>${lbl(mid[0] + 12, mid[1] - 8, pr.label, pr.cls)}</g>`;
     } else if (pr.type === 'text') {
       const [x, y] = P(pr.at);
       s += `<g class="mk ${pr.cls}" ${g}><circle class="hit" cx="${x}" cy="${y}" r="14"/>
@@ -205,6 +259,16 @@ function drawPrimsCanvas(g, prims, W, H) {
     } else if (pr.type === 'path') {
       const pts = pr.pts.map(P);
       g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.stroke();
+    } else if (pr.type === 'conduit') {
+      const pts = pr.pts.map(P);
+      g.setLineDash([]);
+      g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 7 * k;
+      g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.stroke();
+      g.strokeStyle = pr.color; g.fillStyle = pr.color; g.lineWidth = 4 * k;
+      g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.stroke();
+      for (const p of [pts[0], pts[pts.length - 1]]) { g.beginPath(); g.arc(p[0], p[1], 4 * k, 0, 7); g.fill(); }
+      const mid = pts[Math.floor(pts.length / 2)];
+      label(mid[0] + 10 * k, mid[1] - 12 * k, pr.label);
     } else if (pr.type === 'text') {
       const [x, y] = P(pr.at);
       g.setLineDash([]);
@@ -332,6 +396,7 @@ function openPhotoEditor(photo, ctx) {
   const hidden = new Set();
   let tool = null, layer = 'main', tmp = [], pendingKind = null, drawing = null;
   let erasing = null, eraseStrokes = [], eraseR = 0.045;
+  let conduitKind = null, conduitDraw = null;
   let natW = 0, natH = 0, W = 0, H = 0, measurer = null;
   const url = newURL(photo.blob);
 
@@ -357,6 +422,7 @@ function openPhotoEditor(photo, ctx) {
       <button data-tool="dim" title="Размер">📐</button>
       <button data-tool="text" title="Заметка">💬</button>
       <button data-tool="sketch" title="Набросок">✏️</button>
+      <button data-tool="conduit" title="Коммуникация: кабель, труба">🔧</button>
       <button data-tool="point" title="Точка">🔌</button>
       <button data-tool="erase" title="Стереть область (себя в зеркале, лицо)">🩹</button>
       <span class="ed-sep"></span>
@@ -387,6 +453,7 @@ function openPhotoEditor(photo, ctx) {
       : `<polyline class="erase-st" stroke-width="${st.r * W * 2}" points="${st.pts.map(p => (p[0] * W) + ',' + (p[1] * H)).join(' ')}"/>`).join('');
     svg.innerHTML = primsToSVG(markPrimitives(photo, measurer, hidden), W, H, tmp)
       + (drawing ? `<polyline class="ln draw ${layer}" points="${drawing.map(p => (p[0] * W) + ',' + (p[1] * H)).join(' ')}"/>` : '')
+      + (conduitDraw && conduitDraw.length > 1 ? `<polyline class="ln draw conduit" style="stroke:${conduitOf(conduitKind)[3]}" points="${conduitDraw.map(p => (p[0] * W) + ',' + (p[1] * H)).join(' ')}"/>` : '')
       + eraseSVG;
   }
   img.onload = () => { natW = img.naturalWidth; natH = img.naturalHeight; layout(); };
@@ -409,6 +476,7 @@ function openPhotoEditor(photo, ctx) {
     dim: () => tmp.length ? 'Тапните вторую точку отрезка' : 'Тапните первую точку отрезка',
     text: () => 'Тапните, где поставить заметку',
     sketch: () => 'Рисуйте пальцем. Наброски удобно вести в слое «черновик».',
+    conduit: () => conduitKind ? `${conduitOf(conduitKind)[2]}: проведите пальцем вдоль трассы — от начала до конца` : '',
     erase: () => eraseStrokes.length ? 'Закрасьте всё лишнее и нажмите «Применить» внизу' : 'Закрасьте пальцем область, которую надо убрать (себя в зеркале, лицо)',
     point: () => pendingKind ? `Тапните, где находится: ${kindOf(pendingKind)[2]}` : '',
     'calib-ruler': () => tmp.length ? 'Тапните второй конец эталона (рулетки)' : 'Тапните первый конец эталона (рулетки)',
@@ -473,6 +541,7 @@ function openPhotoEditor(photo, ctx) {
     const t = b.dataset.tool;
     if (t === 'calib') return sheetCalib();
     if (t === 'point') return sheetKinds();
+    if (t === 'conduit') return sheetConduit();
     if (t === 'layers') return sheetLayers();
     if (t) return setTool(tool === t ? null : t);
     if (b.id === 'ed-layer') {
@@ -500,6 +569,13 @@ function openPhotoEditor(photo, ctx) {
       if (r) r.onclick = () => { delete photo.calib; hideSheet(); save(); updateHint(); };
     });
   }
+  function sheetConduit() {
+    showSheet(`<div class="sh-title">Что зафиксировать?</div>
+      <p class="mut small">Трасса рисуется по уже сделанным коммуникациям — до штукатурки. Потом она видна на этой стене через AR-призрак.</p>
+      <div class="sh-grid">${CONDUIT_KINDS.map(k => `<button class="btn" data-ckind="${k[0]}"><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${k[3]};margin-right:6px;vertical-align:-1px"></span>${k[2]}</button>`).join('')}</div>`, s => {
+      s.querySelectorAll('[data-ckind]').forEach(b => b.onclick = () => { conduitKind = b.dataset.ckind; hideSheet(); setTool('conduit'); });
+    });
+  }
   function sheetKinds() {
     showSheet(`<div class="sh-title">Что отметить?</div>
       <div class="sh-grid">${MARK_KINDS.map(k => `<button class="btn" data-kind="${k[0]}">${k[1]} ${k[2]}</button>`).join('')}</div>`, s => {
@@ -522,12 +598,13 @@ function openPhotoEditor(photo, ctx) {
   }
   function sheetItem(id) {
     const m = photo.marks.find(x => x.id === id); if (!m) return;
-    const names = { dim: 'Размер', text: 'Заметка', path: 'Набросок', point: 'Точка' };
+    const names = { dim: 'Размер', text: 'Заметка', path: 'Набросок', point: 'Точка', conduit: 'Коммуникация' };
     const meta = [m.by ? `поставил: ${esc(m.by)}` : '', m.done ? `выполнил: ${esc(m.doneBy || '—')} ${m.doneAt ? fmtDate(m.doneAt) : ''}` : ''].filter(Boolean).join(' · ');
     showSheet(`<div class="sh-title">${names[m.type] || 'Пометка'}${m.layer === 'draft' ? ' (черновик)' : ''}</div>
       ${meta ? `<p class="mut small">${meta}</p>` : ''}
       ${m.type === 'point' ? `<button class="btn wide ${m.done ? '' : 'primary'}" id="sh-done">${m.done ? '↩ Не сделано' : '✓ Сделано'}</button>` : ''}
       ${m.type === 'text' || m.type === 'point' ? '<button class="btn wide" id="sh-edit">Изменить текст</button>' : ''}
+      ${m.type === 'conduit' ? `<p class="mut small">${esc(conduitLabel(m, measurer))}</p><button class="btn wide" id="sh-cprops">Тип, сечение, глубина, заметка</button>` : ''}
       ${m.type === 'dim' ? '<button class="btn wide" id="sh-val">Ввести длину вручную</button>' : ''}
       <button class="btn wide" id="sh-move">Перенести в ${m.layer === 'draft' ? 'основной слой' : 'черновик'}</button>
       <button class="btn danger wide" id="sh-del">Удалить</button>`, s => {
@@ -537,6 +614,8 @@ function openPhotoEditor(photo, ctx) {
         else { m.done = true; m.doneBy = userName(true); m.doneAt = Date.now(); }
         hideSheet(); save();
       };
+      const cp = s.querySelector('#sh-cprops');
+      if (cp) cp.onclick = () => { hideSheet(); conduitProps(m); };
       const e = s.querySelector('#sh-edit');
       if (e) e.onclick = () => {
         const t = prompt('Текст:', m.type === 'text' ? m.text : (m.note || ''));
@@ -554,6 +633,29 @@ function openPhotoEditor(photo, ctx) {
       };
       s.querySelector('#sh-move').onclick = () => { m.layer = m.layer === 'draft' ? 'main' : 'draft'; hideSheet(); save(); };
       s.querySelector('#sh-del').onclick = () => { photo.marks = photo.marks.filter(x => x.id !== id); hideSheet(); save(); };
+    });
+  }
+
+  // свойства трассы: тип, сечение/диаметр, глубина, заметка
+  function conduitProps(m) {
+    const k = conduitOf(m.kind);
+    showSheet(`<div class="sh-title">${k[2]}</div>
+      <div class="cprops">
+        <label>Тип <select class="inp" id="cp-kind">${CONDUIT_KINDS.map(x => `<option value="${x[0]}" ${x[0] === m.kind ? 'selected' : ''}>${x[2]}</option>`).join('')}</select></label>
+        <label>Сечение / диаметр, ${k[5]} <input class="inp" id="cp-size" inputmode="decimal" value="${m.size || ''}" placeholder="${k[0] === 'power' ? '2,5' : k[0] === 'low' ? '0,5' : '20'}"></label>
+        <label>Глубина от чистовой стены, см <input class="inp" id="cp-depth" inputmode="decimal" value="${m.depth || ''}" placeholder="3"></label>
+        <label>Заметка <input class="inp" id="cp-note" value="${esc(m.note || '')}" placeholder="к розеткам у окна, 3×2,5"></label>
+      </div>
+      <button class="btn primary wide" id="cp-ok">Сохранить</button>`, s => {
+      s.querySelector('#cp-ok').onclick = async () => {
+        m.kind = s.querySelector('#cp-kind').value;
+        const sz = parseFloat(String(s.querySelector('#cp-size').value).replace(',', '.'));
+        const dp = parseFloat(String(s.querySelector('#cp-depth').value).replace(',', '.'));
+        if (sz > 0) m.size = sz; else delete m.size;
+        if (dp > 0) m.depth = dp; else delete m.depth;
+        m.note = s.querySelector('#cp-note').value.trim();
+        hideSheet(); await save();
+      };
     });
   }
 
@@ -575,12 +677,17 @@ function openPhotoEditor(photo, ctx) {
       try { svg.setPointerCapture(e.pointerId); } catch {}
       draw();
     }
+    if (tool === 'conduit' && conduitKind) {
+      conduitDraw = [norm(e)];
+      try { svg.setPointerCapture(e.pointerId); } catch {}
+    }
   });
   svg.addEventListener('pointermove', e => {
     if (!down) return;
     if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) down.moved = true;
     if (drawing) { drawing.push(norm(e)); draw(); }
     if (erasing) { erasing.pts.push(norm(e)); draw(); }
+    if (conduitDraw) { conduitDraw.push(norm(e)); draw(); }
   });
   svg.addEventListener('pointerup', async e => {
     if (!down) return;
@@ -594,6 +701,16 @@ function openPhotoEditor(photo, ctx) {
       const pts = drawing; drawing = null;
       if (pts.length > 2) { photo.marks.push({ id: uid(), type: 'path', layer, pts, by: userName() }); await save(); }
       else draw();
+      return;
+    }
+    if (conduitDraw) {
+      const raw = conduitDraw; conduitDraw = null;
+      if (raw.length < 3) { draw(); return; }
+      // упрощаем трассу: оставляем точки, где направление меняется, и концы (кабель идёт прямыми отрезками)
+      const pts = simplifyPolyline(raw, 0.012);
+      const m = { id: uid(), type: 'conduit', layer, kind: conduitKind, pts, by: userName() };
+      photo.marks.push(m); await save();
+      conduitProps(m);
       return;
     }
     if (d.moved) return;
