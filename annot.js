@@ -236,6 +236,92 @@ async function bakePhoto(photo, opts = {}) {
   return canvas;
 }
 
+/* ---------- стирание области (убрать себя из зеркала, лицо, мусор) ---------- */
+
+// mask: [[u,v,r], ...] — круги в нормированных координатах (r — доля ширины кадра)
+// mode: 'patch' — заполнение из соседних пикселей (сходящаяся заливка + сглаживание), 'blur' — сильное размытие
+async function eraseRegion(blob, strokes, mode) {
+  const bmp = await createImageBitmap(blob);
+  const W = bmp.width, H = bmp.height;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0); bmp.close();
+  // маска
+  const mk = document.createElement('canvas'); mk.width = W; mk.height = H;
+  const mg = mk.getContext('2d', { willReadFrequently: true });
+  mg.fillStyle = '#000'; mg.fillRect(0, 0, W, H);
+  mg.fillStyle = '#fff'; mg.strokeStyle = '#fff'; mg.lineCap = 'round'; mg.lineJoin = 'round';
+  for (const st of strokes) {
+    const r = st.r * W;
+    if (st.pts.length === 1) { mg.beginPath(); mg.arc(st.pts[0][0] * W, st.pts[0][1] * H, r, 0, 7); mg.fill(); continue; }
+    mg.lineWidth = r * 2; mg.beginPath();
+    st.pts.forEach((p, i) => i ? mg.lineTo(p[0] * W, p[1] * H) : mg.moveTo(p[0] * W, p[1] * H));
+    mg.stroke();
+  }
+  const mask = mg.getImageData(0, 0, W, H).data;
+  const img = g.getImageData(0, 0, W, H);
+  const d = img.data;
+  const inMask = new Uint8Array(W * H);
+  let minX = W, minY = H, maxX = 0, maxY = 0, cnt = 0;
+  for (let i = 0; i < W * H; i++) if (mask[i * 4] > 127) { inMask[i] = 1; cnt++; const x = i % W, y = (i / W) | 0; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  if (!cnt) return blob;
+
+  if (mode === 'blur') {
+    // сильное гауссово размытие всего кадра, накладываем только по маске
+    const bl = document.createElement('canvas'); bl.width = W; bl.height = H;
+    const bg = bl.getContext('2d');
+    bg.filter = `blur(${Math.max(12, Math.round(W / 40))}px)`;
+    bg.drawImage(cv, 0, 0);
+    bg.filter = 'none';
+    const bd = bg.getImageData(0, 0, W, H).data;
+    for (let i = 0; i < W * H; i++) if (inMask[i]) { d[i * 4] = bd[i * 4]; d[i * 4 + 1] = bd[i * 4 + 1]; d[i * 4 + 2] = bd[i * 4 + 2]; }
+    g.putImageData(img, 0, 0);
+  } else {
+    // «заплатка»: многократное заполнение от границы внутрь (среднее по заполненным соседям), затем сглаживание внутри маски
+    const todo = new Uint8Array(inMask);
+    const x0 = Math.max(0, minX - 1), x1 = Math.min(W - 1, maxX + 1), y0 = Math.max(0, minY - 1), y1 = Math.min(H - 1, maxY + 1);
+    let remaining = cnt, guard = 0;
+    while (remaining > 0 && guard++ < 4000) {
+      const filled = [];
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const i = y * W + x;
+        if (!todo[i]) continue;
+        let r = 0, gg = 0, b = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          const j = yy * W + xx;
+          if (todo[j]) continue;
+          r += d[j * 4]; gg += d[j * 4 + 1]; b += d[j * 4 + 2]; n++;
+        }
+        if (n >= 2) { d[i * 4] = r / n; d[i * 4 + 1] = gg / n; d[i * 4 + 2] = b / n; filled.push(i); }
+      }
+      if (!filled.length) break;
+      for (const i of filled) todo[i] = 0;
+      remaining -= filled.length;
+    }
+    // сглаживание внутри маски (несколько проходов box-blur 5×5 только по замаскированным пикселям)
+    for (let pass = 0; pass < 3; pass++) {
+      const src = new Uint8ClampedArray(d);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const i = y * W + x;
+        if (!inMask[i]) continue;
+        let r = 0, gg = 0, b = 0, n = 0;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          const j = (yy * W + xx) * 4;
+          r += src[j]; gg += src[j + 1]; b += src[j + 2]; n++;
+        }
+        d[i * 4] = r / n; d[i * 4 + 1] = gg / n; d[i * 4 + 2] = b / n;
+      }
+    }
+    g.putImageData(img, 0, 0);
+  }
+  return await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.9));
+}
+
 /* ---------- редактор ---------- */
 
 // ctx: { stages, wallSize: {w, h} | null, wallTitle, onClose }
@@ -245,6 +331,7 @@ function openPhotoEditor(photo, ctx) {
   const stage = ctx.stages.find(s => s.id === photo.stageId);
   const hidden = new Set();
   let tool = null, layer = 'main', tmp = [], pendingKind = null, drawing = null;
+  let erasing = null, eraseStrokes = [], eraseR = 0.045;
   let natW = 0, natH = 0, W = 0, H = 0, measurer = null;
   const url = newURL(photo.blob);
 
@@ -271,6 +358,7 @@ function openPhotoEditor(photo, ctx) {
       <button data-tool="text" title="Заметка">💬</button>
       <button data-tool="sketch" title="Набросок">✏️</button>
       <button data-tool="point" title="Точка">🔌</button>
+      <button data-tool="erase" title="Стереть область (себя в зеркале, лицо)">🩹</button>
       <span class="ed-sep"></span>
       <button id="ed-layer" title="Слой для новых пометок">${layer === 'draft' ? '📝 черновик' : '📌 разметка'}</button>
       <button data-tool="layers" title="Слои">👁</button>
@@ -294,8 +382,12 @@ function openPhotoEditor(photo, ctx) {
   }
   function draw() {
     measurer = makeMeasurer(photo, natW, natH);
+    const eraseSVG = [...eraseStrokes, ...(erasing ? [erasing] : [])].map(st => st.pts.length === 1
+      ? `<circle class="erase-st" cx="${st.pts[0][0] * W}" cy="${st.pts[0][1] * H}" r="${st.r * W}"/>`
+      : `<polyline class="erase-st" stroke-width="${st.r * W * 2}" points="${st.pts.map(p => (p[0] * W) + ',' + (p[1] * H)).join(' ')}"/>`).join('');
     svg.innerHTML = primsToSVG(markPrimitives(photo, measurer, hidden), W, H, tmp)
-      + (drawing ? `<polyline class="ln draw ${layer}" points="${drawing.map(p => (p[0] * W) + ',' + (p[1] * H)).join(' ')}"/>` : '');
+      + (drawing ? `<polyline class="ln draw ${layer}" points="${drawing.map(p => (p[0] * W) + ',' + (p[1] * H)).join(' ')}"/>` : '')
+      + eraseSVG;
   }
   img.onload = () => { natW = img.naturalWidth; natH = img.naturalHeight; layout(); };
   if (img.complete && img.naturalWidth) img.onload();
@@ -317,12 +409,15 @@ function openPhotoEditor(photo, ctx) {
     dim: () => tmp.length ? 'Тапните вторую точку отрезка' : 'Тапните первую точку отрезка',
     text: () => 'Тапните, где поставить заметку',
     sketch: () => 'Рисуйте пальцем. Наброски удобно вести в слое «черновик».',
+    erase: () => eraseStrokes.length ? 'Закрасьте всё лишнее и нажмите «Применить» внизу' : 'Закрасьте пальцем область, которую надо убрать (себя в зеркале, лицо)',
     point: () => pendingKind ? `Тапните, где находится: ${kindOf(pendingKind)[2]}` : '',
     'calib-ruler': () => tmp.length ? 'Тапните второй конец эталона (рулетки)' : 'Тапните первый конец эталона (рулетки)',
     'calib-quad': () => ['Тапните ВЕРХНИЙ ЛЕВЫЙ угол стены', 'Теперь ВЕРХНИЙ ПРАВЫЙ угол', 'Теперь НИЖНИЙ ПРАВЫЙ угол', 'И НИЖНИЙ ЛЕВЫЙ угол'][tmp.length],
   };
   function setTool(t) {
+    if (tool === 'erase' && t !== 'erase') { eraseStrokes = []; erasing = null; hideEraseBar(); }
     tool = t; tmp = [];
+    if (t === 'erase') showEraseBar();
     v.querySelectorAll('#ed-tools [data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t || (t && t.startsWith('calib') && b.dataset.tool === 'calib')));
     updateHint(); draw();
   }
@@ -330,6 +425,38 @@ function openPhotoEditor(photo, ctx) {
     const h = HINTS[tool];
     hint.textContent = h ? h(measurer) : '';
     hint.classList.toggle('hidden', !hint.textContent);
+  }
+
+  function showEraseBar() {
+    let bar = v.querySelector('#erase-bar');
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'erase-bar'; bar.className = 'erase-bar';
+      bar.innerHTML = `<label>Кисть <input type="range" id="er-size" min="2" max="15" value="${Math.round(eraseR * 100)}"></label>
+        <select class="inp" id="er-mode"><option value="patch">Заплатка</option><option value="blur">Размытие</option></select>
+        <button class="btn small-btn" id="er-undo">↶</button>
+        <button class="btn small-btn primary" id="er-apply">Применить</button>`;
+      hint.insertAdjacentElement('beforebegin', bar);
+      bar.querySelector('#er-size').oninput = e => { eraseR = e.target.value / 100; };
+      bar.querySelector('#er-undo').onclick = () => { eraseStrokes.pop(); updateHint(); draw(); };
+      bar.querySelector('#er-apply').onclick = applyErase;
+    }
+    bar.classList.remove('hidden');
+  }
+  function hideEraseBar() { const bar = v.querySelector('#erase-bar'); if (bar) bar.classList.add('hidden'); }
+  async function applyErase() {
+    if (!eraseStrokes.length) return toast('Сначала закрасьте область');
+    if (!confirm('Стереть закрашенное? Исходное фото сохранится в истории (⋯ → «Вернуть оригинал»).')) return;
+    const mode = v.querySelector('#er-mode').value;
+    toast('Стираю…');
+    try {
+      const out = await eraseRegion(photo.blob, eraseStrokes, mode);
+      if (!photo.original) photo.original = photo.blob;   // оригинал храним рядом
+      photo.blob = out;
+      eraseStrokes = []; erasing = null;
+      await dbPut('photos', photo);
+      const u = newURL(photo.blob); img.src = u;
+      setTool(null); toast('Готово');
+    } catch (err) { console.error(err); toast('Не удалось стереть: ' + err.message); }
   }
 
   function showSheet(html, wire) {
@@ -443,15 +570,26 @@ function openPhotoEditor(photo, ctx) {
       drawing = [norm(e)];
       try { svg.setPointerCapture(e.pointerId); } catch {}
     }
+    if (tool === 'erase') {
+      erasing = { pts: [norm(e)], r: eraseR };
+      try { svg.setPointerCapture(e.pointerId); } catch {}
+      draw();
+    }
   });
   svg.addEventListener('pointermove', e => {
     if (!down) return;
     if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) down.moved = true;
     if (drawing) { drawing.push(norm(e)); draw(); }
+    if (erasing) { erasing.pts.push(norm(e)); draw(); }
   });
   svg.addEventListener('pointerup', async e => {
     if (!down) return;
     const d = down; down = null;
+    if (erasing) {
+      eraseStrokes.push(erasing); erasing = null;
+      updateHint(); draw();
+      return;
+    }
     if (drawing) {
       const pts = drawing; drawing = null;
       if (pts.length > 2) { photo.marks.push({ id: uid(), type: 'path', layer, pts, by: userName() }); await save(); }
@@ -516,7 +654,15 @@ function openPhotoEditor(photo, ctx) {
     <div class="sh-title">Фото</div>
     <div class="viewer-note" id="sh-note">${photo.note ? esc(photo.note) : '<span class="mut">+ добавить заметку к фото</span>'}</div>
     <button class="btn wide" id="sh-ghost">👻 Совместить с камерой</button>
+    ${photo.original ? '<button class="btn wide" id="sh-restore">↩ Вернуть оригинал (до стирания)</button>' : ''}
     <button class="btn danger wide" id="sh-delphoto">Удалить фото</button>`, s => {
+    const rs = s.querySelector('#sh-restore');
+    if (rs) rs.onclick = async () => {
+      if (!confirm('Вернуть исходное фото? Стёртые области появятся снова.')) return;
+      photo.blob = photo.original; delete photo.original;
+      await dbPut('photos', photo); hideSheet();
+      img.src = newURL(photo.blob); toast('Оригинал восстановлен');
+    };
     s.querySelector('#sh-note').onclick = async () => {
       const t = prompt('Заметка к фото:', photo.note || '');
       if (t === null) return;

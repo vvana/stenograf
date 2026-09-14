@@ -1449,8 +1449,10 @@ function blobToDataURL(blob) {
 async function buildExport(kind, projects, rooms, stages, photos) {
   const photosOut = [];
   for (const p of photos) {
-    const { blob, ...meta } = p;
-    photosOut.push({ ...meta, data: await blobToDataURL(blob) });
+    const { blob, original, ...meta } = p;
+    const rec = { ...meta, data: await blobToDataURL(blob) };
+    if (original) rec.originalData = await blobToDataURL(original);
+    photosOut.push(rec);
   }
   const projectsOut = [];
   for (const p of projects) {
@@ -1534,11 +1536,13 @@ async function importData(data) {
       for (const r of data.rooms || []) if (authoritative || !(await dbGet('rooms', r.id))) await dbPut('rooms', r);
       for (const s of data.stages || []) if (authoritative || !(await dbGet('stages', s.id))) await dbPut('stages', s);
       for (const ph of data.photos || []) {
-        const { data: dataUrl, ...meta } = ph;
+        const { data: dataUrl, originalData, ...meta } = ph;
         const mine = await dbGet('photos', ph.id);
         if (!mine) {
           const blob = await (await fetch(dataUrl)).blob();
-          await dbPut('photos', { ...meta, blob }); added++;
+          const rec = { ...meta, blob };
+          if (originalData) rec.original = await (await fetch(originalData)).blob();
+          await dbPut('photos', rec); added++;
         } else {
           // фото уже есть — подливаем только новые пометки и статусы «сделано»
           const ids = new Set((mine.marks || []).map(m => m.id));

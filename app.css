@@ -318,6 +318,13 @@ body {
 .report-list li.done { opacity: .75; }
 #ed-svg .ln.draw { fill: none; stroke: #ff7a1a; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 #ed-svg .ln.draw.draft { stroke: #ffd400; }
+#ed-svg .erase-st { fill: rgba(255, 60, 60, .45); stroke: rgba(255, 60, 60, .45); stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.erase-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(255,255,255,.06); font-size: 13px; }
+.erase-bar label { display: flex; align-items: center; gap: 6px; flex: 1; }
+.erase-bar input[type=range] { flex: 1; accent-color: var(--acc); }
+.erase-bar .inp { width: auto; padding: 6px 8px; font-size: 13px; background: #222; color: #fff; border-color: #444; }
+.erase-bar .btn.small-btn { color: #fff; background: rgba(255,255,255,.1); border-color: transparent; }
+.erase-bar .btn.primary { background: var(--acc); }
 
 /* ---------- сравнение ---------- */
 .cmp-selects { display: flex; gap: 10px; margin: 10px 0; }
