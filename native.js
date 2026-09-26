@@ -1,11 +1,27 @@
 /* Стенограф — нативный мост: Apple RoomPlan (обмер комнат лидаром, обход этапа с автопривязкой фото) */
 'use strict';
 
+// Связь с нативным плагином. Библиотеку @capacitor/core мы не подключаем (нет сборщика), поэтому
+// registerPlugin на телефоне может отсутствовать. Используем то, что точно даёт нативный мост:
+// Capacitor.nativePromise → Capacitor.Plugins.RoomPlan → registerPlugin (по убыванию надёжности).
 const Native = (() => {
   const cap = window.Capacitor;
   const isNative = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
-  const RP = isNative && cap.registerPlugin ? cap.registerPlugin('RoomPlan') : null;
-  return { isNative, RP };
+  let RP = null, via = 'нет';
+  if (isNative) {
+    if (typeof cap.nativePromise === 'function') {
+      via = 'nativePromise';
+      const call = m => (opts = {}) => cap.nativePromise('RoomPlan', m, opts);
+      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo') };
+    } else if (cap.Plugins && cap.Plugins.RoomPlan) {
+      via = 'Plugins.RoomPlan';
+      RP = cap.Plugins.RoomPlan;
+    } else if (typeof cap.registerPlugin === 'function') {
+      via = 'registerPlugin';
+      RP = cap.registerPlugin('RoomPlan');
+    }
+  }
+  return { isNative, RP, via };
 })();
 
 let lidarSupportedCache = null;
@@ -36,6 +52,7 @@ async function nativeDiagnostics() {
     'Нативное приложение': Native.isNative ? 'да' : 'нет',
     'Плагин RoomPlan доступен': cap && cap.isPluginAvailable ? String(cap.isPluginAvailable('RoomPlan')) : '—',
     'Плагины в мосте': cap && cap.PluginHeaders ? cap.PluginHeaders.map(h => h.name).join(', ') || '—' : '—',
+    'Способ вызова': Native.via,
   };
   lidarSupportedCache = null; lidarDiag.raw = null; lidarDiag.error = null;
   const ok = await lidarAvailable();
