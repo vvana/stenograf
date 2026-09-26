@@ -1611,6 +1611,27 @@ async function importData(data) {
 
 /* ---------- запуск ---------- */
 
+// на телефоне нет консоли — показываем ошибки на экране, чтобы по скриншоту было видно причину
+(() => {
+  const shown = new Set();
+  const report = (msg, where) => {
+    const text = String(msg || 'неизвестная ошибка') + (where ? ` (${where})` : '');
+    if (shown.has(text)) return; shown.add(text);
+    let bar = document.getElementById('err-bar');
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'err-bar';
+      bar.style.cssText = 'position:fixed;left:8px;right:8px;bottom:calc(70px + env(safe-area-inset-bottom));z-index:99;background:#8b1e1e;color:#fff;font:12px/1.35 system-ui;padding:8px 10px;border-radius:10px;max-height:30vh;overflow:auto;white-space:pre-wrap';
+      bar.onclick = () => bar.remove();
+      document.body.appendChild(bar);
+    }
+    bar.textContent = (bar.textContent ? bar.textContent + '
+' : '⚠️ Ошибка (тап — скрыть):
+') + text;
+  };
+  window.addEventListener('error', e => report(e.message, e.filename ? e.filename.split('/').pop() + ':' + e.lineno : ''));
+  window.addEventListener('unhandledrejection', e => report(e.reason && (e.reason.message || e.reason), 'promise'));
+})();
+
 if ('serviceWorker' in navigator) {
   // если страницу уже обслуживал SW и он сменился на новый — перезагружаемся один раз,
   // чтобы подхватить свежие файлы, а не те, что отдал старый воркер
