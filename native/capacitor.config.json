@@ -3,7 +3,7 @@
   "appName": "Стенограф",
   "webDir": "www",
   "ios": {
-    "contentInset": "automatic",
+    "contentInset": "never",
     "backgroundColor": "#faf6ef",
     "limitsNavigationsToAppBoundDomains": false
   },

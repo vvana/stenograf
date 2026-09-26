@@ -9,12 +9,41 @@ const Native = (() => {
 })();
 
 let lidarSupportedCache = null;
+const lidarDiag = { checked: false, error: null, raw: null };
+const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(what + ': нет ответа ' + ms / 1000 + ' с')), ms))]);
 async function lidarAvailable() {
   if (!Native.RP) return false;
   if (lidarSupportedCache === null) {
-    try { lidarSupportedCache = !!(await Native.RP.isSupported()).supported; } catch { lidarSupportedCache = false; }
+    try {
+      const r = await withTimeout(Native.RP.isSupported(), 5000, 'RoomPlan.isSupported');
+      lidarDiag.raw = r;
+      lidarSupportedCache = !!(r && r.supported);
+    } catch (err) {
+      lidarDiag.error = (err && (err.message || err.code)) || String(err);
+      lidarSupportedCache = false;
+    }
+    lidarDiag.checked = true;
   }
   return lidarSupportedCache;
+}
+
+// сведения для экрана «Ещё → Диагностика»
+async function nativeDiagnostics() {
+  const cap = window.Capacitor;
+  const d = {
+    'Capacitor': cap ? 'есть' : 'НЕТ',
+    'Платформа': cap && cap.getPlatform ? cap.getPlatform() : '—',
+    'Нативное приложение': Native.isNative ? 'да' : 'нет',
+    'Плагин RoomPlan доступен': cap && cap.isPluginAvailable ? String(cap.isPluginAvailable('RoomPlan')) : '—',
+    'Плагины в мосте': cap && cap.PluginHeaders ? cap.PluginHeaders.map(h => h.name).join(', ') || '—' : '—',
+  };
+  lidarSupportedCache = null;
+  const ok = await lidarAvailable();
+  d['Лидар (isSupported)'] = ok ? 'да' : 'нет';
+  if (lidarDiag.raw) d['Ответ плагина'] = JSON.stringify(lidarDiag.raw);
+  if (lidarDiag.error) d['Ошибка'] = lidarDiag.error;
+  d['iOS / браузер'] = navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 90);
+  return d;
 }
 
 /* ---------- геометрия скана ---------- */

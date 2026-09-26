@@ -990,7 +990,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
 
   // лидар (только нативная iOS-версия на iPhone Pro)
   lidarAvailable().then(ok => {
-    if (!ok) return;
+    if (!ok) {
+      if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → Диагностика»');
+      return;
+    }
     const walkBtn = $('#lidar-walk'), measBtn = $('#lidar-measure'), aptBtn = $('#lidar-apt');
     if (walkBtn) {
       walkBtn.classList.remove('hidden');
@@ -1444,6 +1447,7 @@ async function viewMore(pid) {
           <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
+        <div class="card" id="diag-card"><b>Диагностика</b><div class="mut small" id="diag">Проверяю модуль лидара…</div></div>
         <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
@@ -1452,6 +1456,10 @@ async function viewMore(pid) {
     </div>
     ${bottomNav(pid, 'more')}`;
 
+  nativeDiagnostics().then(d => {
+    const el = $('#diag');
+    if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
+  }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
   $('#rename-project').onclick = async () => {
     const name = prompt('Название объекта:', project.name);
     if (!name || !name.trim()) return;

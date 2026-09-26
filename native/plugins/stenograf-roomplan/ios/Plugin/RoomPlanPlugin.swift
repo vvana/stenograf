@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Capacitor
 import RoomPlan
 
@@ -16,10 +17,12 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     ]
 
     @objc func isSupported(_ call: CAPPluginCall) {
-        if #available(iOS 17.0, *) {
-            call.resolve(["supported": RoomCaptureSession.isSupported])
-        } else {
-            call.resolve(["supported": false])
+        DispatchQueue.main.async {
+            if #available(iOS 17.0, *) {
+                call.resolve(["supported": RoomCaptureSession.isSupported, "ios": UIDevice.current.systemVersion])
+            } else {
+                call.resolve(["supported": false, "ios": UIDevice.current.systemVersion])
+            }
         }
     }
 
