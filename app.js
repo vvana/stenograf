@@ -1624,9 +1624,7 @@ async function importData(data) {
       bar.onclick = () => bar.remove();
       document.body.appendChild(bar);
     }
-    bar.textContent = (bar.textContent ? bar.textContent + '
-' : '⚠️ Ошибка (тап — скрыть):
-') + text;
+    bar.textContent = (bar.textContent ? bar.textContent + String.fromCharCode(10) : '⚠️ Ошибка (тап — скрыть):' + String.fromCharCode(10)) + text;
   };
   window.addEventListener('error', e => report(e.message, e.filename ? e.filename.split('/').pop() + ':' + e.lineno : ''));
   window.addEventListener('unhandledrejection', e => report(e.reason && (e.reason.message || e.reason), 'promise'));

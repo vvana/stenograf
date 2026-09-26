@@ -31,6 +31,9 @@ jobs:
         working-directory: native
         run: npm install --no-audit --no-fund
 
+      - name: Check JS syntax
+        run: for f in *.js; do node --check "$f" || exit 1; done
+
       - name: Prepare web assets
         working-directory: native
         run: npm run www
