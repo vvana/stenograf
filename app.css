@@ -131,6 +131,8 @@ body {
 #room-tools { display: flex; gap: 8px; flex: 1; }
 #room-name { flex: 1; min-width: 0; }
 .plan-box { padding: 8px 10px; }
+.lidar-row { padding: 10px 10px 0; }
+.lidar-row .btn { font-size: 16px; padding: 12px; margin-top: 0; }
 #plan {
   width: 100%; height: min(62vh, 520px);
   background: var(--card); border: 1px solid var(--line); border-radius: 14px;

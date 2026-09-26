@@ -404,7 +404,6 @@ async function viewPlan(pid) {
           <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">✏ Обвести</button>
           <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">📏 По обмеру</button>
           <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">🗺 Подложка</button>
-          <button class="btn small-btn primary hidden" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)">📡 Обмер лидаром</button>
         </span>
         <span id="mode-tools" class="tools hidden">
           <span id="mode-text" class="small"></span>
@@ -427,6 +426,7 @@ async function viewPlan(pid) {
         </span>
         <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
       </div>
+      <div id="lidar-row" class="lidar-row hidden"><button class="btn primary wide" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)">📡 Обмер комнаты лидаром</button></div>
       <div id="plan-box" class="plan-box"></div>
       <div id="plan-sheet" class="plan-sheet hidden"></div>
       <input type="file" id="underlay-file" accept="image/*" class="hidden-input">
@@ -1015,7 +1015,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       });
     }
     if (measBtn) {
-      measBtn.classList.remove('hidden');
+      $('#lidar-row').classList.remove('hidden');
+      const empty = $('.empty .mut');
+      if (empty) empty.textContent = 'Нажмите «📡 Обмер комнаты лидаром» и обойдите комнату вдоль стен — или ✎ сверху, чтобы нарисовать схему вручную.';
       measBtn.onclick = async () => {
         const room = selRoom();
         if (room && !confirm(`Переобмерить «${room.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
