@@ -223,7 +223,25 @@ body {
 #plan .surf .surf-hit { fill: transparent; }
 
 /* ---------- этапы ---------- */
-.stage-row { display: flex; align-items: center; gap: 10px; }
+.stage-row { display: flex; align-items: center; gap: 10px; touch-action: pan-y; }
+.stage-row.dragging { position: relative; z-index: 5; box-shadow: 0 10px 28px rgba(0,0,0,.22); transition: none; opacity: .97; }
+.stage-row.picked { outline: 2px solid var(--danger, #c0392b); outline-offset: -2px; }
+.drag-handle {
+  flex: 0 0 auto; font-size: 22px; line-height: 1; color: var(--mut); padding: 10px 6px 10px 2px; margin-left: -4px;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.stage-check { flex: 0 0 auto; font-size: 24px; padding: 4px 4px 4px 0; cursor: pointer; user-select: none; }
+.selecting .stage-row { cursor: pointer; }
+.stage-sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.stage-toolbar { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.stage-toolbar p { margin: 0; flex: 1; }
+.sel-bar {
+  position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 22;
+  display: flex; gap: 8px; justify-content: space-between; padding: 10px 14px;
+  background: var(--card); border-top: 1px solid var(--line); box-shadow: 0 -6px 18px rgba(0,0,0,.08);
+}
+.sel-bar .btn { flex: 1; }
+.sel-bar .btn[disabled] { opacity: .45; }
 .stage-main { flex: 1; min-width: 0; }
 .stage-name { font-weight: 600; }
 .stage-arrows { display: flex; }
@@ -496,3 +514,4 @@ body {
   white-space: nowrap;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.cards.selecting { margin-bottom: 72px; }

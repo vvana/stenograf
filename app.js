@@ -1151,37 +1151,139 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
 
 /* ---------- экран: этапы ---------- */
 
+// режим выбора этапов (удаление нескольких); сбрасывается при уходе с экрана
+const stageSel = { pid: null, on: false, ids: new Set() };
+
 async function viewStages(pid) {
   const { project, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
+  if (stageSel.pid !== pid) { stageSel.pid = pid; stageSel.on = false; stageSel.ids.clear(); }
+  for (const id of [...stageSel.ids]) if (!stages.some(s => s.id === id)) stageSel.ids.delete(id);
   const counts = {};
   photos.forEach(p => { counts[p.stageId] = (counts[p.stageId] || 0) + 1; });
 
   app.innerHTML = `
     ${header('Этапы ремонта', `#/p/${pid}`)}
     <div class="pad">
-      <p class="mut small">Тапните статус, чтобы переключить. Стрелками меняйте порядок.</p>
-      <div class="cards" id="stage-list">
-        ${stages.map((s, i) => `
-          <div class="card stage-row">
-            <div class="stage-main">
-              <div class="stage-name" data-rename="${s.id}">${esc(s.name)}</div>
-              <div class="mut small">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
+      <div class="stage-toolbar">
+        <p class="mut small">${stageSel.on ? 'Отметьте этапы, которые нужно удалить.' : 'Порядок — перетаскивайте за ⠿. Статус — тап по плашке. Название — тап по нему.'}</p>
+        ${stages.length ? `<button class="btn small-btn" id="stage-select">${stageSel.on ? 'Готово' : '☑ Выбрать'}</button>` : ''}
+      </div>
+      <div class="cards ${stageSel.on ? 'selecting' : ''}" id="stage-list">
+        ${stages.map(s => `
+          <div class="card stage-row ${stageSel.ids.has(s.id) ? 'picked' : ''}" data-id="${s.id}">
+            ${stageSel.on
+              ? `<span class="stage-check" data-pick="${s.id}">${stageSel.ids.has(s.id) ? '☑' : '☐'}</span>`
+              : `<span class="drag-handle" title="Перетащите, чтобы поменять порядок" aria-label="Переместить">⠿</span>`}
+            <div class="stage-main" ${stageSel.on ? `data-pick="${s.id}"` : ''}>
+              <div class="stage-name" ${stageSel.on ? '' : `data-rename="${s.id}"`}>${esc(s.name)}</div>
+              <div class="mut small stage-sub">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
             </div>
-            <button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
-            <div class="stage-arrows">
-              <button class="iconbtn" data-up="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
-              <button class="iconbtn" data-down="${s.id}" ${i === stages.length - 1 ? 'disabled' : ''}>↓</button>
-              <button class="iconbtn danger" data-del="${s.id}">✕</button>
-            </div>
+            ${stageSel.on ? '' : `<button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>`}
           </div>`).join('')}
       </div>
-      <button class="btn primary wide" id="add-stage">+ Добавить этап</button>
-      <button class="btn wide" id="apply-template">📋 Взять этапы из шаблона</button>
+      ${stageSel.on ? '' : `<button class="btn primary wide" id="add-stage">+ Добавить этап</button>
+      <button class="btn wide" id="apply-template">📋 Взять этапы из шаблона</button>`}
     </div>
+    ${stageSel.on ? `<div class="sel-bar">
+      <button class="btn small-btn" id="sel-all">${stageSel.ids.size === stages.length ? 'Снять все' : 'Все'}</button>
+      <button class="btn small-btn danger" id="sel-del" ${stageSel.ids.size ? '' : 'disabled'}>🗑 Удалить${stageSel.ids.size ? ` (${stageSel.ids.size})` : ''}</button>
+      <button class="btn small-btn" id="sel-cancel">Отмена</button>
+    </div>` : ''}
     ${bottomNav(pid, 'stages')}`;
 
-  $('#apply-template').onclick = () => templateSheet(async tpl => {
+  const selBtn = $('#stage-select');
+  if (selBtn) selBtn.onclick = () => { stageSel.on = !stageSel.on; stageSel.ids.clear(); render(); };
+  if (stageSel.on) {
+    $('#sel-cancel').onclick = () => { stageSel.on = false; stageSel.ids.clear(); render(); };
+    $('#sel-all').onclick = () => {
+      if (stageSel.ids.size === stages.length) stageSel.ids.clear(); else stages.forEach(s => stageSel.ids.add(s.id));
+      render();
+    };
+    $('#sel-del').onclick = async () => {
+      const chosen = stages.filter(s => stageSel.ids.has(s.id));
+      if (!chosen.length) return;
+      const ph = photos.filter(p => stageSel.ids.has(p.stageId));
+      const names = chosen.slice(0, 6).map(s => '• ' + s.name).join('\n') + (chosen.length > 6 ? `\n… и ещё ${chosen.length - 6}` : '');
+      if (!confirm(`Удалить этапы (${chosen.length})?\n${names}${ph.length ? `\n\nВместе с ними удалятся ${ph.length} фото!` : ''}`)) return;
+      if (ph.length && !confirm(`Точно удалить ${ph.length} фото? Восстановить будет нельзя (только из резервной копии).`)) return;
+      for (const p of ph) await dbDel('photos', p.id);
+      for (const s of chosen) await dbDel('stages', s.id);
+      const rest = stages.filter(s => !stageSel.ids.has(s.id));
+      for (let i = 0; i < rest.length; i++) if (rest[i].ord !== i) { rest[i].ord = i; await dbPut('stages', rest[i]); }
+      stageSel.on = false; stageSel.ids.clear();
+      toast(`Удалено этапов: ${chosen.length}`);
+      render();
+    };
+  }
+
+  // перетаскивание этапов за ⠿
+  const list = $('#stage-list');
+  let drag = null;
+  const rowTop = row => row.getBoundingClientRect().top - (drag && drag.row === row ? drag.dy : 0);
+  list.addEventListener('pointerdown', e => {
+    const h = e.target.closest('.drag-handle');
+    if (!h) return;
+    e.preventDefault();
+    const row = h.closest('.stage-row');
+    h.setPointerCapture(e.pointerId);
+    drag = { row, h, startY: e.clientY, dy: 0, scroll: 0 };
+    row.classList.add('dragging');
+  });
+  const moveDrag = clientY => {
+    if (!drag) return;
+    const { row } = drag;
+    const shift = (el, before) => {
+      const t0 = rowTop(row);
+      if (before) list.insertBefore(row, el); else list.insertBefore(el, row);
+      row.style.transform = 'none';
+      const t1 = row.getBoundingClientRect().top;
+      drag.startY += t1 - t0; drag.dy = 0;
+    };
+    // быстрый рывок — проскакиваем сразу несколько этапов
+    for (let guard = 0; guard < 50; guard++) {
+      const dy = clientY - drag.startY;
+      const prev = row.previousElementSibling, next = row.nextElementSibling;
+      if (next && dy > next.offsetHeight / 2 + 5) shift(next, false);
+      else if (prev && dy < -(prev.offsetHeight / 2 + 5)) shift(prev, true);
+      else break;
+    }
+    drag.dy = clientY - drag.startY;
+    row.style.transform = `translateY(${drag.dy}px)`;
+  };
+  list.addEventListener('pointermove', e => {
+    if (!drag) return;
+    drag.lastY = e.clientY;
+    moveDrag(e.clientY);
+    // автопрокрутка у краёв экрана
+    const edge = e.clientY < 110 ? -1 : e.clientY > innerHeight - 130 ? 1 : 0;
+    if (edge && !drag.timer) {
+      drag.timer = setInterval(() => {
+        if (!drag) return;
+        const y0 = scrollY; scrollBy(0, edge * 10);
+        drag.startY -= scrollY - y0;
+        moveDrag(drag.lastY);
+      }, 16);
+    } else if (!edge && drag.timer) { clearInterval(drag.timer); drag.timer = null; }
+  });
+  const endDrag = async () => {
+    if (!drag) return;
+    const { row } = drag;
+    if (drag.timer) clearInterval(drag.timer);
+    row.classList.remove('dragging'); row.style.transform = '';
+    drag = null;
+    const order = [...list.querySelectorAll('.stage-row')].map(r => r.dataset.id);
+    let changed = 0;
+    for (let i = 0; i < order.length; i++) {
+      const s = stages.find(x => x.id === order[i]);
+      if (s && s.ord !== i) { s.ord = i; await dbPut('stages', s); changed++; }
+    }
+    if (changed) render();
+  };
+  list.addEventListener('pointerup', endDrag);
+  list.addEventListener('pointercancel', endDrag);
+
+  if (!stageSel.on) $('#apply-template').onclick = () => templateSheet(async tpl => {
     const withPhotos = stages.filter(s => counts[s.id]);
     const msg = withPhotos.length
       ? `Этапы без фото заменятся шаблоном, ${withPhotos.length} этапов с фото останутся в конце списка. Продолжить?`
@@ -1193,7 +1295,7 @@ async function viewStages(pid) {
     withPhotos.forEach(async (s, i) => { s.ord = list + i; await dbPut('stages', s); });
     setTimeout(render, 200);
   });
-  $('#add-stage').onclick = async () => {
+  if (!stageSel.on) $('#add-stage').onclick = async () => {
     const name = prompt('Название этапа:');
     if (!name || !name.trim()) return;
     const maxOrd = stages.length ? Math.max(...stages.map(s => s.ord)) : -1;
@@ -1202,6 +1304,14 @@ async function viewStages(pid) {
   };
 
   $('#stage-list').addEventListener('click', async e => {
+    if (stageSel.on) {
+      const row = e.target.closest('.stage-row');
+      if (!row) return;
+      const id = row.dataset.id;
+      if (stageSel.ids.has(id)) stageSel.ids.delete(id); else stageSel.ids.add(id);
+      render();
+      return;
+    }
     const b = e.target.closest('button, [data-rename]');
     if (!b) return;
     const find = id => stages.find(s => s.id === id);
