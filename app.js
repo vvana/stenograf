@@ -1447,7 +1447,8 @@ async function viewMore(pid) {
           <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
-        <div class="card" id="diag-card"><b>Диагностика</b><div class="mut small" id="diag">Проверяю модуль лидара…</div></div>
+        <div class="card" id="diag-card"><b>Диагностика</b><div class="mut small" id="diag">Проверяю модуль лидара…</div>
+          <button class="btn wide hidden" id="diag-force">📡 Попробовать обмер без проверки</button></div>
         <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
@@ -1459,6 +1460,16 @@ async function viewMore(pid) {
   nativeDiagnostics().then(d => {
     const el = $('#diag');
     if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
+    const fb = $('#diag-force');
+    if (fb && Native.RP) {
+      fb.classList.remove('hidden');
+      fb.onclick = async () => {
+        try {
+          const scan = await Native.RP.scan({ mode: 'measure', force: true });
+          alert('Скан получен: стен ' + ((scan && scan.walls) || []).length + ', дверей ' + ((scan && scan.doors) || []).length + ', окон ' + ((scan && scan.windows) || []).length);
+        } catch (err) { alert('Обмер не запустился: ' + ((err && err.message) || err)); }
+      };
+    }
   }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
   $('#rename-project').onclick = async () => {
     const name = prompt('Название объекта:', project.name);

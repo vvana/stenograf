@@ -2,6 +2,8 @@ import Foundation
 import UIKit
 import Capacitor
 import RoomPlan
+import ARKit
+import AVFoundation
 
 /// Мост Стенограф ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
@@ -14,7 +16,36 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isSupported", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deviceInfo", returnType: CAPPluginReturnPromise),
     ]
+
+    /// Подробно: что видит приложение — ARKit, сцена-реконструкция (лидар), RoomPlan, модель.
+    @objc func deviceInfo(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            var info: [String: Any] = [
+                "ios": UIDevice.current.systemVersion,
+                "model": Self.modelIdentifier(),
+                "arWorldTracking": ARWorldTrackingConfiguration.isSupported,
+                "sceneDepth": ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth),
+                "meshReconstruction": ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
+                "camera": AVCaptureDevice.authorizationStatus(for: .video).rawValue,
+            ]
+            if #available(iOS 17.0, *) {
+                info["roomPlan"] = RoomCaptureSession.isSupported
+            } else {
+                info["roomPlan"] = "iOS < 17"
+            }
+            call.resolve(info)
+        }
+    }
+
+    static func modelIdentifier() -> String {
+        var sys = utsname()
+        uname(&sys)
+        return withUnsafePointer(to: &sys.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
+    }
 
     @objc func isSupported(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
@@ -27,8 +58,13 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func scan(_ call: CAPPluginCall) {
-        guard #available(iOS 17.0, *), RoomCaptureSession.isSupported else {
-            call.reject("Лидар не поддерживается на этом устройстве")
+        let force = call.getBool("force") ?? false
+        guard #available(iOS 17.0, *) else {
+            call.reject("Нужна iOS 17 или новее")
+            return
+        }
+        if !force && !RoomCaptureSession.isSupported {
+            call.reject("Лидар не поддерживается на этом устройстве (RoomCaptureSession.isSupported = false)")
             return
         }
         let mode = call.getString("mode") ?? "measure"

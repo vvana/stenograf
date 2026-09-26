@@ -37,11 +37,17 @@ async function nativeDiagnostics() {
     'Плагин RoomPlan доступен': cap && cap.isPluginAvailable ? String(cap.isPluginAvailable('RoomPlan')) : '—',
     'Плагины в мосте': cap && cap.PluginHeaders ? cap.PluginHeaders.map(h => h.name).join(', ') || '—' : '—',
   };
-  lidarSupportedCache = null;
+  lidarSupportedCache = null; lidarDiag.raw = null; lidarDiag.error = null;
   const ok = await lidarAvailable();
   d['Лидар (isSupported)'] = ok ? 'да' : 'нет';
-  if (lidarDiag.raw) d['Ответ плагина'] = JSON.stringify(lidarDiag.raw);
+  d['Ответ плагина'] = typeof lidarDiag.raw + ' ' + JSON.stringify(lidarDiag.raw);
   if (lidarDiag.error) d['Ошибка'] = lidarDiag.error;
+  if (Native.RP) {
+    try {
+      const info = await withTimeout(Native.RP.deviceInfo(), 5000, 'RoomPlan.deviceInfo');
+      d['Устройство'] = JSON.stringify(info);
+    } catch (err) { d['Устройство'] = 'ошибка: ' + ((err && err.message) || err); }
+  }
   d['iOS / браузер'] = navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 90);
   return d;
 }
