@@ -53,6 +53,24 @@ jobs:
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '17.0'/" Podfile
           grep -n "platform :ios" Podfile
 
+      - name: App icon and splash (house)
+        working-directory: native/ios/App/App/Assets.xcassets
+        run: |
+          set -e
+          ICON=$GITHUB_WORKSPACE/native/resources/icon-1024.png
+          SPLASH=$GITHUB_WORKSPACE/native/resources/splash-2732.png
+          for f in AppIcon.appiconset/*.png; do
+            w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/{print $2}')
+            sips -z "$w" "$w" "$ICON" --out "$f" >/dev/null
+            echo "icon -> $f ($w)"
+          done
+          for f in Splash.imageset/*.png; do
+            w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/{print $2}')
+            h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/{print $2}')
+            sips -z "$h" "$w" "$SPLASH" --out "$f" >/dev/null
+            echo "splash -> $f ($w x $h)"
+          done
+
       - name: Sync plugins and install pods
         working-directory: native
         run: npx cap sync ios
