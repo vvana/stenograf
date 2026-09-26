@@ -1447,7 +1447,7 @@ async function viewMore(pid) {
           <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
-        <div class="card" id="diag-card"><b>Диагностика</b><div class="mut small" id="diag">Проверяю модуль лидара…</div>
+        <div class="card" id="diag-card"><b>Диагностика</b><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div>
           <button class="btn wide hidden" id="diag-force">📡 Попробовать обмер без проверки</button></div>
         <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
