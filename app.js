@@ -577,6 +577,32 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
           if (ws) s += `<text class="wall-len" x="${e.mid[0] + e.nx * 0.3}" y="${e.mid[1] + e.ny * 0.3}">${e.len.toFixed(2).replace('.', ',')} м</text>`;
         }
       }
+      // размеры стен — снаружи комнаты вдоль стены; у стен со своей высотой — ещё и высота
+      for (const e of edges) {
+        if (planState.edit && sel && planState.sel && planState.sel.type === 'wall' && planState.sel.i === e.i) continue;
+        if (e.len < 0.25) continue;
+        let deg = Math.atan2(e.uy, e.ux) * 180 / Math.PI;
+        if (deg > 90.5) deg -= 180; else if (deg <= -89.5) deg += 180;
+        const x = e.mid[0] - e.nx * 0.3, y = e.mid[1] - e.ny * 0.3;
+        let txt = fmtM(e.len);
+        if (r.wallTop && r.wallTop[e.id]) {
+          const hs = wallTop(r, e.id).map(q => q[1]);
+          const h0 = hs[0], h1 = hs[hs.length - 1], lo = Math.min(...hs), hi = Math.max(...hs);
+          txt += hi - lo < 0.015 ? ` · h ${fmtM(hi)}` : (Math.abs(Math.min(h0, h1) - lo) < 0.005 && Math.abs(Math.max(h0, h1) - hi) < 0.005 && !hs.some((h, k) => k && Math.abs(h - hs[k - 1]) > 0.005 && Math.abs(wallTop(r, e.id)[k][0] - wallTop(r, e.id)[k - 1][0]) < 1e-3) ? ` · h ${fmtM(h0)}→${fmtM(h1)}` : ` · h ${fmtM(lo)}–${fmtM(hi)}`);
+        }
+        const fs = Math.min(0.26, Math.max(0.14, e.len * 0.12));
+        s += `<text class="wall-dim" style="font-size:${fs}px" transform="translate(${x} ${y}) rotate(${deg})">${txt}</text>`;
+      }
+      // радиусы скруглённых углов
+      r.pts.forEach((V, i) => {
+        if (!(V[2] > 0)) return;
+        const P = r.pts[(i - 1 + r.pts.length) % r.pts.length], N = r.pts[(i + 1) % r.pts.length];
+        const lp = Math.hypot(P[0] - V[0], P[1] - V[1]) || 1, ln = Math.hypot(N[0] - V[0], N[1] - V[1]) || 1;
+        let bx = (P[0] - V[0]) / lp + (N[0] - V[0]) / ln, by = (P[1] - V[1]) / lp + (N[1] - V[1]) / ln;
+        const bl = Math.hypot(bx, by) || 1; bx /= bl; by /= bl;
+        const d = V[2] * 0.42 + 0.4;
+        s += `<text class="wall-dim" style="font-size:0.2px" x="${V[0] + bx * d}" y="${V[1] + by * d}">R ${fmtM(V[2])}</text>`;
+      });
       if (!planState.edit) {
         const compact = bb.w < 3.2 || bb.h < 2.8;
         const chips = [['c', 'Потолок', '⬆'], ['f', 'Пол', '⬇'], ['p', 'Панорама', '🌐']];

@@ -153,6 +153,10 @@ body {
   font-size: 0.26px; font-weight: 700; fill: var(--mut);
   text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
 }
+#plan .wall-dim {
+  fill: var(--ink); font-weight: 600; text-anchor: middle; dominant-baseline: central;
+  pointer-events: none; user-select: none; paint-order: stroke; stroke: var(--bg); stroke-width: 0.06px;
+}
 #plan .wall-len {
   font-size: 0.3px; font-weight: 700; fill: var(--acc);
   text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
