@@ -360,6 +360,21 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         return d
     }
 
+    /// Мебель и оборудование, распознанные RoomPlan: габариты, центр и направление оси X.
+    private func objectDict(_ o: CapturedRoom.Object) -> [String: Any] {
+        let t = o.transform
+        let c = xyz(t.columns.3)
+        let ax = simd_normalize(xyz(t.columns.0))
+        return [
+            "id": o.identifier.uuidString,
+            "cat": String(describing: o.category),
+            "w": o.dimensions.x, "h": o.dimensions.y, "d": o.dimensions.z,
+            "cx": c.x, "cy": c.y, "cz": c.z,
+            "ax": ax.x, "az": ax.z,
+            "confidence": confidenceName(o.confidence),
+        ]
+    }
+
     private func confidenceName(_ c: CapturedRoom.Confidence) -> String {
         switch c {
         case .high: return "high"
@@ -374,6 +389,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         out["doors"] = room.doors.map(surfaceDict)
         out["windows"] = room.windows.map(surfaceDict)
         out["openings"] = room.openings.map(surfaceDict)
+        out["objects"] = room.objects.map(objectDict)
         let floorY = room.walls.map { xyz($0.transform.columns.3).y - $0.dimensions.y / 2 }.min() ?? 0
         out["floorY"] = floorY
         return out

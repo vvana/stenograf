@@ -137,6 +137,7 @@ async function viewTour(pid, roomId = null) {
   const floorMat = new THREE.MeshBasicMaterial({ color: dark ? 0x2b2e33 : 0xb9b2a6, side: THREE.FrontSide });
   const ceilMat = new THREE.MeshBasicMaterial({ color: dark ? 0x44474d : 0xe9e5dd, side: THREE.FrontSide });
   const lineMat = new THREE.LineBasicMaterial({ color: dark ? 0x9a9a9a : 0x555555 });
+  const furnMat = new THREE.MeshLambertMaterial({ color: dark ? 0xb8b4ac : 0xfbfaf7, transparent: true, opacity: 0.92 });
 
   const surfaces = []; // { key, mesh, w, h }
   const ceilings = [], mirrors = [];
@@ -244,6 +245,15 @@ async function viewTour(pid, roomId = null) {
     });
     const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
     scene.add(new THREE.LineSegments(lg, lineMat));
+    // мебель из скана лидаром — светлые блоки с контуром, как в предпросмотре RoomPlan
+    for (const o of r.objects || []) {
+      const geo = new THREE.BoxGeometry(o.w, o.h, o.d);
+      const box = new THREE.Mesh(geo, furnMat);
+      box.position.set(o.x, o.z + o.h / 2, o.y);
+      box.rotation.y = -o.ang;
+      box.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), lineMat));
+      scene.add(box);
+    }
     const c = roomCenter(r);
     roomInfo[r.id] = { center: new THREE.Vector3(c[0], 1.55, c[1]), ceil, name: r.name };
   }

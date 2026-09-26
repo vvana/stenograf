@@ -135,7 +135,7 @@ function reversePolygon(res) {
 function scanOpenings(scan, res) {
   const out = [];
   const floorY = scan.floorY || 0;
-  const lists = [['door', scan.doors], ['window', scan.windows], ['window', scan.openings]];
+  const lists = [['door', scan.doors], ['window', scan.windows], ['door', scan.openings]]; // openings — проходы без дверного полотна
   for (const [kind, list] of lists) {
     for (const o of list || []) {
       const i = res.chain.findIndex(c => c.id === o.parent);
@@ -148,6 +148,23 @@ function scanOpenings(scan, res) {
     }
   }
   return out;
+}
+
+// мебель и оборудование из скана → в координатах схемы: центр x,y; габариты w (вдоль оси), d, h; z — низ над полом; ang — поворот оси
+const OBJECT_NAMES = {
+  storage: 'Шкаф', refrigerator: 'Холодильник', stove: 'Плита', bed: 'Кровать', sink: 'Раковина', washerDryer: 'Стиральная машина',
+  toilet: 'Унитаз', bathtub: 'Ванна', oven: 'Духовка', dishwasher: 'Посудомойка', table: 'Стол', sofa: 'Диван', chair: 'Стул',
+  fireplace: 'Камин', television: 'Телевизор', stairs: 'Лестница',
+};
+function scanObjects(scan, toPlan, turn) {
+  const floorY = scan.floorY || 0;
+  return (scan.objects || []).filter(o => o.w > 0.05 && o.d > 0.05).map(o => {
+    const [x, y] = toPlan([o.cx, o.cz]);
+    return {
+      cat: o.cat, x: cm(x), y: cm(y), w: cm(o.w), d: cm(o.d), h: cm(o.h),
+      z: cm(Math.max(0, o.cy - o.h / 2 - floorY)), ang: +(Math.atan2(o.az, o.ax) + turn).toFixed(4),
+    };
+  });
 }
 
 /* ---------- совмещение скана с существующей комнатой ---------- */
@@ -217,8 +234,11 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
   if (!res) throw new Error('В скане меньше трёх стен — обойдите комнату полностью');
   const openings = scanOpenings(scan, res);
   let pts, wallIds, idMap = {};
+  let toPlan = p => p, turn = 0; // координаты скана → координаты схемы (для мебели)
   if (room) {
     const al = alignScanToRoom(res.pts, room.pts, scanOpeningPts(scan, res), roomOpeningPts(room));
+    const sc0 = centroidOf(res.pts), rc0 = centroidOf(room.pts);
+    toPlan = p => transformPts([p], al.ang, sc0[0], sc0[1], rc0[0], rc0[1])[0]; turn = al.ang;
     pts = al.pts.map(p => [cm(p[0]), cm(p[1])]);
     const oldEdges = roomEdges(room), newE = edgesOf(pts);
     const takenOld = new Set();
@@ -243,6 +263,7 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
       if (room.labels && room.labels[o.id]) { delete room.labels[o.id]; }
     }
     room.pts = pts; room.wallIds = wallIds; room.ceil = res.ceil; room.measured = 'lidar'; room.measuredAt = Date.now();
+    room.objects = scanObjects(scan, toPlan, turn);
     // проёмы: на стенах, где скан нашёл двери/окна, — берём обмеренные; на остальных оставляем старые; зеркала всегда сохраняем
     const scannedWalls = new Set(openings.map(o => wallIds[o.wallIndex]));
     const merged = {};
@@ -265,6 +286,8 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
       const minX = Math.min(...p2.map(p => p[0])), minY = Math.min(...p2.map(p => p[1]));
       const [fx, fy] = freeSpot(rooms, 1, 1);
       pts = p2.map(p => [cm(p[0] - minX + fx), cm(p[1] - minY + fy)]);
+      toPlan = p => { const q = transformPts([p], -longest.ang, sc[0], sc[1], 0, 0)[0]; return [q[0] - minX + fx, q[1] - minY + fy]; };
+      turn = -longest.ang;
     }
     const std = standardizeRect(pts);
     if (std) {
@@ -285,6 +308,7 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
     room = {
       id: uid(), projectId: pid, name: name || ('Комната ' + (rooms.length + 1)),
       pts, wallIds, labels: {}, ceil: res.ceil, openings: {}, measured: 'lidar', measuredAt: Date.now(), created: Date.now(),
+      objects: scanObjects(scan, toPlan, turn),
     };
     for (const o of openings) { const k = wallIds[o.wallIndex]; (room.openings[k] = room.openings[k] || []).push({ kind: o.kind, w: o.w, h: o.h, x: o.x, y: o.y }); }
     await dbPut('rooms', room);
@@ -384,7 +408,11 @@ function rotateScanRoom(r, ang, ox, oy) {
     const [x0, y0] = R(s.x0, s.y0), [x1, y1] = R(s.x1, s.y1), [cx, cz] = R(s.cx, s.cz);
     return { ...s, x0, y0, x1, y1, cx, cz };
   });
-  return { ...r, walls: rot(r.walls), doors: rot(r.doors), windows: rot(r.windows), openings: rot(r.openings), mirrors: rot(r.mirrors) };
+  const rotObj = list => (list || []).map(o => {
+    const [cx, cz] = R(o.cx, o.cz);
+    return { ...o, cx, cz, ax: o.ax * ca - o.az * sa, az: o.ax * sa + o.az * ca };
+  });
+  return { ...r, walls: rot(r.walls), doors: rot(r.doors), windows: rot(r.windows), openings: rot(r.openings), mirrors: rot(r.mirrors), objects: rotObj(r.objects) };
 }
 
 // скан квартиры → комнаты; существующие комнаты переобмериваются (по совпадению центров), новые добавляются

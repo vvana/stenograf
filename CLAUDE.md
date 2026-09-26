@@ -107,6 +107,7 @@ PWA-фотодневник ремонта: несколько объектов (
 - Иконка/заставка Capacitor по умолчанию (синий X) заменяются в CI шагом «App icon and splash» из `native/resources/`.
 - `contentInset: never` — иначе двойной отступ сверху.
 - Диагностика: «Ещё → Диагностика» (Capacitor, плагины, способ вызова, isSupported, deviceInfo: ARKit/sceneDepth/mesh/модель), кнопка «Попробовать обмер без проверки», красная плашка с ошибками JS внизу экрана.
+- Мебель из RoomPlan (`CapturedRoom.objects`) сохраняется в `room.objects` {cat,x,y,w,d,h,z,ang} в координатах схемы (функция `scanObjects`, перевод координат `toPlan/turn` в `applyScan`) и рисуется блоками в 3D-туре и пунктиром на схеме. `openings` RoomPlan — проходы без полотна → kind 'door'.
 - На iPhone 17 Pro / iOS 27.0 подтверждено: RoomPlan isSupported = true, sceneDepth = true. Обмер на устройстве ещё не запускался.
 
 ### Где остановились (2026-09-12)

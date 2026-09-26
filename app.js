@@ -550,6 +550,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       s += `<g>
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
+        ${(r.objects || []).map(o => `<rect class="furn" x="${-o.w / 2}" y="${-o.d / 2}" width="${o.w}" height="${o.d}" rx="0.04" transform="translate(${o.x} ${o.y}) rotate(${o.ang * 180 / Math.PI})"><title>${esc((typeof OBJECT_NAMES !== 'undefined' && OBJECT_NAMES[o.cat]) || o.cat)}</title></rect>`).join('')}
         <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}${r.measured === 'lidar' ? ' 📡' : ''}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
