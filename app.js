@@ -196,9 +196,49 @@ function header(title, backHash, right = '') {
 }
 
 app.addEventListener('click', e => {
+  if (e.target.closest('[data-nonav]')) return;
   const t = e.target.closest('[data-nav]');
   if (t) nav(t.dataset.nav);
 });
+
+/* ---------- удаление объекта и схемы ---------- */
+
+async function deleteProject(pid) {
+  const project = await dbGet('projects', pid);
+  if (!project) return false;
+  const photos = await dbAll('photos', 'projectId', pid);
+  const rooms = await dbAll('rooms', 'projectId', pid);
+  if (!confirm(`Удалить объект «${project.name}»?
+Комнат: ${rooms.length}, фото: ${photos.length}. Удалятся схема, этапы и все фото.`)) return false;
+  if (!confirm('Точно удалить? Восстановить будет нельзя (только из резервной копии).')) return false;
+  await dbDelWhere('photos', 'projectId', pid);
+  await dbDelWhere('rooms', 'projectId', pid);
+  await dbDelWhere('stages', 'projectId', pid);
+  await dbDel('projects', pid);
+  toast(`Объект «${project.name}» удалён`);
+  return true;
+}
+
+// очистить схему: комнаты и всё, что к ним привязано (фото стен, потолка, пола, панорамы), модели скана; этапы остаются
+async function clearPlan(pid) {
+  const project = await dbGet('projects', pid);
+  const rooms = await dbAll('rooms', 'projectId', pid);
+  if (!rooms.length && !(project && (project.plan || project.usdz || project.finalScan))) { toast('Схема и так пустая'); return false; }
+  const ids = new Set(rooms.map(r => r.id));
+  const photos = (await dbAll('photos', 'projectId', pid)).filter(p => ids.has(String(p.wallKey).split(':')[0]));
+  if (!confirm(`Удалить схему объекта «${project.name}»?
+Комнат: ${rooms.length}${photos.length ? `, вместе с ними удалятся ${photos.length} фото стен, потолков, полов и панорам` : ''}.
+Этапы останутся.`)) return false;
+  if (photos.length && !confirm(`Точно удалить ${photos.length} фото? Восстановить будет нельзя (только из резервной копии).`)) return false;
+  for (const p of photos) await dbDel('photos', p.id);
+  for (const r of rooms) await dbDel('rooms', r.id);
+  delete project.usdz; delete project.usdzAt; delete project.finalScan;
+  if (project.plan && confirm('Подложку (план БТИ / скан) тоже удалить?')) delete project.plan;
+  await dbPut('projects', project);
+  planState.selected = null; planState.sel = null; planState.mode = null; planState.tmp = [];
+  toast('Схема удалена');
+  return true;
+}
 
 /* ---------- экран: список объектов ---------- */
 
@@ -221,6 +261,7 @@ async function viewProjects() {
       <div class="cards">
         ${projects.map(p => `
           <div class="card project-card" data-nav="#/p/${p.id}">
+            <button class="card-del" data-nonav data-del="${p.id}" title="Удалить объект" aria-label="Удалить объект">🗑</button>
             <div class="project-name">${esc(p.name)}</div>
             <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
           </div>`).join('')}
@@ -245,6 +286,7 @@ async function viewProjects() {
   };
   $('#export-all').onclick = exportBackup;
   $('#import-all').onclick = importBackup;
+  app.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (await deleteProject(b.dataset.del)) render(); });
 }
 
 /* ---------- экран: план квартиры ---------- */
@@ -404,6 +446,7 @@ async function viewPlan(pid) {
           <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">✏ Обвести</button>
           <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">📏 По обмеру</button>
           <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">🗺 Подложка</button>
+          ${rooms.length ? '<button class="btn small-btn danger" id="clear-plan" title="Удалить все комнаты схемы">🗑 Очистить схему</button>' : ''}
         </span>
         <span id="mode-tools" class="tools hidden">
           <span id="mode-text" class="small"></span>
@@ -443,6 +486,8 @@ async function viewPlan(pid) {
     ${bottomNav(pid, 'plan')}`;
 
   $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; render(); };
+  const clearBtn = $('#clear-plan');
+  if (clearBtn) clearBtn.onclick = async () => { if (await clearPlan(pid)) render(); };
   if (planState.edit) {
     $('#add-room').onclick = async () => {
       const t = prompt('Размеры комнаты, м: ширина и глубина через пробел (например 4,2 3,1). Пусто — 4 × 3,5', '');
@@ -1493,6 +1538,7 @@ async function viewMore(pid) {
           <button class="btn wide hidden" id="diag-force">📡 Попробовать обмер без проверки</button></div>
         <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
+        <button class="btn danger wide" id="clear-plan2">🗑 Удалить схему (комнаты и их фото)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
       </div>
       <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия сохраняет всё (схемы, этапы, фото) в один файл, который можно импортировать на другом телефоне.</p>
@@ -1529,15 +1575,8 @@ async function viewMore(pid) {
     try { localStorage.setItem('stenograf.user', t.trim()); } catch {}
     render();
   };
-  $('#del-project').onclick = async () => {
-    if (!confirm(`Удалить объект «${project.name}» со всеми схемами и ${photos.length} фото? Это необратимо.`)) return;
-    if (!confirm('Точно удалить? Восстановить будет нельзя.')) return;
-    await dbDelWhere('photos', 'projectId', pid);
-    await dbDelWhere('rooms', 'projectId', pid);
-    await dbDelWhere('stages', 'projectId', pid);
-    await dbDel('projects', pid);
-    nav('');
-  };
+  $('#clear-plan2').onclick = async () => { if (await clearPlan(pid)) render(); };
+  $('#del-project').onclick = async () => { if (await deleteProject(pid)) nav(''); };
 }
 
 /* ---------- резервная копия ---------- */
