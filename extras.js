@@ -5,6 +5,89 @@ const roomSurfaces = r => [...(r.wallIds || []), 'c', 'f', 'p'];
 const DEFAULT_CEIL = 2.7;
 const roomCeil = r => (r.ceil > 0 ? r.ceil : DEFAULT_CEIL);
 
+/* ---------- высота стен: у каждой стены свой профиль верха ---------- */
+// r.wallTop[wallId] = [[f, h], ...]: f — доля длины от начала стены (0..1), h — высота над полом, м.
+// Две точки с одним f — ступенька (короб), разные h по краям — скос. Нет записи — стена ровная, высота roomCeil.
+function wallTop(r, wallId) {
+  const p = r.wallTop && r.wallTop[wallId];
+  if (p && p.length >= 2) return p;
+  const h = roomCeil(r);
+  return [[0, h], [1, h]];
+}
+function wallHAt(r, wallId, f) {
+  const p = wallTop(r, wallId);
+  if (f <= p[0][0]) return p[0][1];
+  for (let k = 1; k < p.length; k++) {
+    if (f <= p[k][0]) {
+      const [f0, h0] = p[k - 1], [f1, h1] = p[k];
+      return f1 - f0 < 1e-6 ? Math.min(h0, h1) : h0 + (h1 - h0) * (f - f0) / (f1 - f0);
+    }
+  }
+  return p[p.length - 1][1];
+}
+const wallMaxH = (r, id) => Math.max(...wallTop(r, id).map(q => q[1]));
+const wallIsFlat = (r, id) => { const hs = wallTop(r, id).map(q => q[1]); return Math.max(...hs) - Math.min(...hs) < 0.015; };
+// площадь стены под профилем, м² (без вычета проёмов)
+function wallGrossArea(r, e) {
+  const p = wallTop(r, e.id);
+  let s = 0;
+  for (let k = 0; k + 1 < p.length; k++) s += (p[k + 1][0] - p[k][0]) * (p[k][1] + p[k + 1][1]) / 2;
+  return s * e.len;
+}
+// диапазон высот комнаты: [мин, макс]
+function roomHeightRange(r) {
+  let lo = Infinity, hi = -Infinity;
+  for (const e of roomEdges(r)) for (const [, h] of wallTop(r, e.id)) { lo = Math.min(lo, h); hi = Math.max(hi, h); }
+  return lo === Infinity ? [roomCeil(r), roomCeil(r)] : [lo, hi];
+}
+const fmtM = v => v.toFixed(2).replace('.', ',');
+function roomHeightText(r) {
+  const [lo, hi] = roomHeightRange(r);
+  return hi - lo < 0.015 ? `h ${fmtM(hi)}` : `h ${fmtM(lo)}–${fmtM(hi)}`;
+}
+
+/* ---------- радиусные углы: отступы и контур для 3D (как на схеме — квадратичная кривая) ---------- */
+function roomCorners(r) {
+  const n = r.pts.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const V = r.pts[i], rad = V[2] || 0;
+    if (!(rad > 0)) { out.push({ t: 0 }); continue; }
+    const P = r.pts[(i - 1 + n) % n], N = r.pts[(i + 1) % n];
+    const lP = Math.hypot(P[0] - V[0], P[1] - V[1]) || 1e-9, lN = Math.hypot(N[0] - V[0], N[1] - V[1]) || 1e-9;
+    let ang = cornerAngle(r, i); if (ang > 180) ang = 360 - ang;
+    const t = Math.min(rad / Math.tan(ang / 2 * Math.PI / 180), lP / 2, lN / 2);
+    out.push({
+      t, V,
+      A: [V[0] + (P[0] - V[0]) / lP * t, V[1] + (P[1] - V[1]) / lP * t],
+      B: [V[0] + (N[0] - V[0]) / lN * t, V[1] + (N[1] - V[1]) / lN * t],
+    });
+  }
+  return out;
+}
+const bezier2 = (A, V, B, s) => [(1 - s) * (1 - s) * A[0] + 2 * (1 - s) * s * V[0] + s * s * B[0], (1 - s) * (1 - s) * A[1] + 2 * (1 - s) * s * V[1] + s * s * B[1]];
+// контур пола/потолка: [{x, y, h, corner?, arc?}] — h высота потолка в точке; скругления и изломы профиля стен учтены
+function roomRing(r, seg = 8) {
+  const n = r.pts.length, cs = roomCorners(r), edges = roomEdges(r), out = [];
+  for (let i = 0; i < n; i++) {
+    const c = cs[i], V = r.pts[i];
+    const hc = Math.min(wallHAt(r, edges[(i - 1 + n) % n].id, 1), wallHAt(r, edges[i].id, 0));
+    if (c.t > 0) {
+      for (let k = 0; k <= seg; k++) { const [x, y] = bezier2(c.A, V, c.B, k / seg); out.push({ x, y, h: hc, arc: i }); }
+    } else out.push({ x: V[0], y: V[1], h: hc, corner: true });
+    // изломы верха стены между углами (ступеньки, скосы)
+    const e = edges[i], tS = c.t, tE = e.len - cs[(i + 1) % n].t;
+    let last = null;
+    for (const [f, h] of wallTop(r, e.id)) {
+      const t = f * e.len;
+      if (t <= tS + 0.01 || t >= tE - 0.01) continue;
+      if (last && Math.abs(t - last.t) < 1e-3) { last.p.h = Math.min(last.p.h, h); continue; }
+      const p = { x: e.a[0] + e.ux * t, y: e.a[1] + e.uy * t, h };
+      out.push(p); last = { t, p };
+    }
+  }
+  return out.filter((p, k) => { const q = out[(k + 1) % out.length]; return Math.hypot(p.x - q.x, p.y - q.y) > 1e-3; });
+}
+
 /* ---------- отчёт: задание для мастеров ---------- */
 
 let reportTrade = 'all'; // фильтр отчёта по специальности
@@ -204,7 +287,7 @@ const CALC_DEFAULTS = { wall: 'paint', floor: 'laminate', ceil: 'paint', plaster
 function roomAreas(r) {
   const ceil = roomCeil(r);
   const perimeter = roomEdges(r).reduce((s, e) => s + e.len, 0);
-  const gross = perimeter * ceil;
+  const gross = roomEdges(r).reduce((s, e) => s + wallGrossArea(r, e), 0);
   const area = roomArea(r);
   let openings = 0, doorsW = 0;
   for (const side of Object.keys(r.openings || {})) {

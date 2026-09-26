@@ -284,6 +284,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let mirrors = detectMirrors(rooms: [room])
         var dict = buildResult(rooms: [room])
         dict["mirrors"] = mirrors
+        if let usdz = exportUSDZ({ try room.export(to: $0) }) { dict["usdz"] = usdz }
         sharedSession?.pause()
         dismiss(animated: true) { self.completion(.success(dict)) }
     }
@@ -296,14 +297,19 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         statusLabel.text = wantMesh ? "Собираю квартиру и 3D-модель…" : "Собираю план квартиры…"
         Task { @MainActor in
             var finalRooms = rooms
+            var usdz: String? = nil
             if rooms.count > 1 {
                 do {
                     let builder = StructureBuilder(options: [.beautifyObjects])
                     let structure = try await builder.capturedStructure(from: rooms)
                     if !structure.rooms.isEmpty { finalRooms = structure.rooms }
+                    usdz = self.exportUSDZ({ try structure.export(to: $0) })
                 } catch { /* оставляем сырые комнаты — они уже в общих координатах */ }
+            } else if let only = rooms.first {
+                usdz = self.exportUSDZ({ try only.export(to: $0) })
             }
             var dict = self.buildResult(rooms: finalRooms)
+            if let usdz = usdz { dict["usdz"] = usdz }
             dict["mirrors"] = self.detectMirrors(rooms: finalRooms)
             if wantMesh {
                 let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
@@ -315,6 +321,48 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             self.sharedSession?.pause()
             self.dismiss(animated: true) { self.completion(.success(dict)) }
         }
+    }
+
+    /// Оригинальная модель RoomPlan (USDZ, как в предпросмотре) → base64; при ошибке nil.
+    private func exportUSDZ(_ write: (URL) throws -> Void) -> String? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("roomplan-\(UUID().uuidString).usdz")
+        defer { try? FileManager.default.removeItem(at: url) }
+        do {
+            try write(url)
+            return try Data(contentsOf: url).base64EncodedString()
+        } catch {
+            return nil
+        }
+    }
+
+    /// Верхний край стены по polygonCorners (скосы, ступеньки): [[x вдоль стены от центра, высота над низом стены]].
+    /// nil — стена прямоугольная.
+    private func topProfile(_ s: CapturedRoom.Surface) -> [[Float]]? {
+        let corners = s.polygonCorners
+        guard corners.count >= 3 else { return nil }
+        let w = s.dimensions.x, h = s.dimensions.y
+        // углы могут прийти в локальных координатах стены или в мировых — приводим к локальным
+        let looksLocal = corners.allSatisfy { abs($0.z) < 0.15 && abs($0.x) <= w / 2 + 0.3 && abs($0.y) <= h / 2 + 0.3 }
+        let inv = s.transform.inverse
+        let local: [simd_float3] = looksLocal ? corners : corners.map { p in
+            let q = inv * simd_float4(p.x, p.y, p.z, 1)
+            return simd_float3(q.x, q.y, q.z)
+        }
+        let minY = local.map { $0.y }.min() ?? 0
+        let isBottom: (simd_float3) -> Bool = { $0.y < minY + 0.03 }
+        let n = local.count
+        guard let startIdx = (0..<n).first(where: { isBottom(local[$0]) && !isBottom(local[($0 + 1) % n]) }) else { return nil }
+        var run: [simd_float3] = []
+        var k = (startIdx + 1) % n
+        while !isBottom(local[k]) && run.count < n {
+            run.append(local[k])
+            k = (k + 1) % n
+        }
+        guard run.count >= 2 else { return nil }
+        if run.first!.x > run.last!.x { run.reverse() }
+        let hs = run.map { $0.y - minY }
+        if (hs.max()! - hs.min()!) < 0.02 { return nil }
+        return run.map { [$0.x, $0.y - minY] }
     }
 
     // MARK: RoomCaptureSessionDelegate
@@ -357,6 +405,14 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             "confidence": confidenceName(s.confidence),
         ]
         if let parent = s.parentIdentifier { d["parent"] = parent.uuidString }
+        if let curve = s.curve {
+            d["curve"] = [
+                "radius": curve.radius,
+                "start": curve.startAngle.converted(to: .radians).value,
+                "end": curve.endAngle.converted(to: .radians).value,
+            ]
+        }
+        if case .wall = s.category, let top = topProfile(s) { d["top"] = top }
         return d
     }
 

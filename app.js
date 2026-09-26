@@ -422,6 +422,7 @@ async function viewPlan(pid) {
         </span>
         <span id="wall-tools" class="tools hidden">
           <label>Длина, м <input id="w-len" class="inp num" type="number" step="0.01" min="0.1" max="50"></label>
+          <label>h, м <input id="w-h" class="inp num" type="number" step="0.01" min="1" max="10" title="Высота этой стены"></label>
           <button class="btn small-btn" id="add-vertex">+ Угол на стене</button>
         </span>
         <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
@@ -551,7 +552,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map(o => `<rect class="furn" x="${-o.w / 2}" y="${-o.d / 2}" width="${o.w}" height="${o.d}" rx="0.04" transform="translate(${o.x} ${o.y}) rotate(${o.ang * 180 / Math.PI})"><title>${esc((typeof OBJECT_NAMES !== 'undefined' && OBJECT_NAMES[o.cat]) || o.cat)}</title></rect>`).join('')}
-        <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}${r.measured === 'lidar' ? ' 📡' : ''}</text>`;
+        <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}${r.measured === 'lidar' ? ' 📡' : ''}</text>
+        ${r.wallTop && Object.keys(r.wallTop).length ? `<text class="room-label room-h" x="${cx}" y="${planState.edit ? cy + 0.5 : cy - 1.05}">${roomHeightText(r)}</text>` : ''}`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
@@ -839,6 +841,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       };
       const ceilInp = $('#room-ceil');
       ceilInp.value = room.ceil || '';
+      if (room.wallTop && Object.keys(room.wallTop).length) ceilInp.title = `Высота потолка. У части стен своя высота по обмеру (${roomHeightText(room)}) — её меняют у стены`;
       ceilInp.oninput = () => {
         const v = parseFloat(ceilInp.value);
         if (v > 0) room.ceil = v; else delete room.ceil;
@@ -881,6 +884,16 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         const v = parseFloat(String(len.value).replace(',', '.'));
         if (!(v > 0)) return;
         setWallLength(room, i, v);
+        await dbPut('rooms', room); draw();
+      };
+      const wh = $('#w-h'), wid = roomEdges(room)[i].id;
+      wh.value = wallMaxH(room, wid).toFixed(2);
+      if (!wallIsFlat(room, wid)) wh.title = 'Верх стены неровный (скос/короб по обмеру): ' + wallTop(room, wid).map(([f, h]) => `${Math.round(f * 100)}% → ${fmtM(h)}`).join(', ') + '. Новое значение сделает стену ровной.';
+      wh.onchange = async () => {
+        const v = parseFloat(String(wh.value).replace(',', '.'));
+        if (!(v > 0)) return;
+        room.wallTop = { ...(room.wallTop || {}) };
+        if (Math.abs(v - roomCeil(room)) < 0.005) delete room.wallTop[wid]; else room.wallTop[wid] = [[0, cm(v)], [1, cm(v)]];
         await dbPut('rooms', room); draw();
       };
       $('#add-vertex').onclick = () => insertVertex(room, i);
@@ -1526,9 +1539,15 @@ async function buildExport(kind, projects, rooms, stages, photos) {
     const rec = { ...p };
     if (p.plan && p.plan.blob) { const { blob, ...planMeta } = p.plan; rec.plan = { ...planMeta, data: await blobToDataURL(blob) }; }
     if (p.finalScan && p.finalScan.blob) { const { blob, ...m } = p.finalScan; rec.finalScan = { ...m, data: await blobToDataURL(blob) }; }
+    if (p.usdz) { delete rec.usdz; rec.usdzData = await blobToDataURL(p.usdz); }
     projectsOut.push(rec);
   }
-  const payload = { app: 'stenograf', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms, stages, photos: photosOut };
+  const roomsOut = [];
+  for (const r of rooms) {
+    const { usdz, ...rest } = r;
+    roomsOut.push(usdz ? { ...rest, usdzData: await blobToDataURL(usdz) } : rest);
+  }
+  const payload = { app: 'stenograf', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages, photos: photosOut };
   return new Blob([JSON.stringify(payload)], { type: 'application/json' });
 }
 
@@ -1602,9 +1621,13 @@ async function importData(data) {
           const { data: fd, ...m } = p.finalScan;
           p.finalScan = { ...m, blob: await (await fetch(fd)).blob() };
         }
+        if (p.usdzData) { p.usdz = await (await fetch(p.usdzData)).blob(); delete p.usdzData; }
         if (authoritative || !(await dbGet('projects', p.id))) await dbPut('projects', p);
       }
-      for (const r of data.rooms || []) if (authoritative || !(await dbGet('rooms', r.id))) await dbPut('rooms', r);
+      for (const r of data.rooms || []) {
+        if (r.usdzData) { r.usdz = await (await fetch(r.usdzData)).blob(); delete r.usdzData; }
+        if (authoritative || !(await dbGet('rooms', r.id))) await dbPut('rooms', r);
+      }
       for (const s of data.stages || []) if (authoritative || !(await dbGet('stages', s.id))) await dbPut('stages', s);
       for (const ph of data.photos || []) {
         const { data: dataUrl, originalData, ...meta } = ph;

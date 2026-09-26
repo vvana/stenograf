@@ -4,6 +4,7 @@ import Capacitor
 import RoomPlan
 import ARKit
 import AVFoundation
+import QuickLook
 
 /// Мост Стенограф ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
@@ -17,7 +18,38 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "isSupported", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deviceInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "quickLook", returnType: CAPPluginReturnPromise),
     ]
+    private var qlSource: ModelPreviewSource?
+
+    /// Показать оригинальную модель RoomPlan (USDZ) во встроенном просмотрщике iOS: 3D и AR.
+    @objc func quickLook(_ call: CAPPluginCall) {
+        guard let b64 = call.getString("usdz"), let data = Data(base64Encoded: b64) else {
+            call.reject("Нет модели")
+            return
+        }
+        let title = call.getString("title") ?? "Модель RoomPlan"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("stenograf-model.usdz")
+        do {
+            try? FileManager.default.removeItem(at: url)
+            try data.write(to: url)
+        } catch {
+            call.reject("Не удалось сохранить модель: \(error.localizedDescription)")
+            return
+        }
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else {
+                call.reject("Нет окна для просмотра")
+                return
+            }
+            let src = ModelPreviewSource(url: url, title: title)
+            self.qlSource = src
+            let ql = QLPreviewController()
+            ql.dataSource = src
+            host.present(ql, animated: true)
+            call.resolve()
+        }
+    }
 
     /// Подробно: что видит приложение — ARKit, сцена-реконструкция (лидар), RoomPlan, модель.
     @objc func deviceInfo(_ call: CAPPluginCall) {
@@ -86,4 +118,20 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
             host.present(vc, animated: true)
         }
     }
+}
+
+final class ModelPreviewItem: NSObject, QLPreviewItem {
+    let previewItemURL: URL?
+    let previewItemTitle: String?
+    init(url: URL, title: String) {
+        previewItemURL = url
+        previewItemTitle = title
+    }
+}
+
+final class ModelPreviewSource: NSObject, QLPreviewControllerDataSource {
+    let item: ModelPreviewItem
+    init(url: URL, title: String) { item = ModelPreviewItem(url: url, title: title) }
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { item }
 }

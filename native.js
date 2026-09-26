@@ -12,7 +12,7 @@ const Native = (() => {
     if (typeof cap.nativePromise === 'function') {
       via = 'nativePromise';
       const call = m => (opts = {}) => cap.nativePromise('RoomPlan', m, opts);
-      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo') };
+      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo'), quickLook: call('quickLook') };
     } else if (cap.Plugins && cap.Plugins.RoomPlan) {
       via = 'Plugins.RoomPlan';
       RP = cap.Plugins.RoomPlan;
@@ -87,7 +87,7 @@ function lineIntersect(p1, p2, p3, p4) {
 // стены скана (отрезки в плане) → замкнутый многоугольник; chain[i] — стена от pts[i] к pts[i+1]
 function scanToPolygon(scan) {
   const walls = (scan.walls || []).filter(w => w.w > 0.15)
-    .map(w => ({ id: w.id, a: [w.x0, w.y0], b: [w.x1, w.y1], len: Math.hypot(w.x1 - w.x0, w.y1 - w.y0), h: w.h }));
+    .map(w => ({ id: w.id, a: [w.x0, w.y0], b: [w.x1, w.y1], len: Math.hypot(w.x1 - w.x0, w.y1 - w.y0), h: w.h, curve: w.curve || null, top: w.top || null }));
   if (walls.length < 3) return null;
   walls.sort((p, q) => q.len - p.len);
   const used = new Set([walls[0].id]);
@@ -106,13 +106,26 @@ function scanToPolygon(scan) {
     chain.push({ ...best.w, rev: best.rev }); used.add(best.w.id);
   }
   if (chain.length < 3) return null;
-  const n = chain.length;
   const endsOf = c => c.rev ? [c.b, c.a] : [c.a, c.b];
+  const dirOf = c => { const [p, q] = endsOf(c); const l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1; return [(q[0] - p[0]) / l, (q[1] - p[1]) / l]; };
+  // скруглённая стена (curve) между двумя непараллельными прямыми → радиусный угол на их пересечении
+  for (let k = 0; k < chain.length && chain.length > 3; k++) {
+    const c = chain[k];
+    if (!(c.curve && c.curve.radius > 0.02)) continue;
+    const prev = chain[(k - 1 + chain.length) % chain.length], next = chain[(k + 1) % chain.length];
+    if (prev.curve || next.curve) continue;
+    const d1 = dirOf(prev), d2 = dirOf(next);
+    if (Math.abs(d1[0] * d2[1] - d1[1] * d2[0]) < 0.3) continue; // почти параллельны — эркер, оставляем хордой
+    next.radIn = Math.min(c.curve.radius, 5);
+    chain.splice(k, 1); k--;
+  }
+  const n = chain.length;
   const pts = [];
   for (let i = 0; i < n; i++) {
     const [pA, pB] = endsOf(chain[(i - 1 + n) % n]);
     const [cA, cB] = endsOf(chain[i]);
-    pts.push(lineIntersect(pA, pB, cA, cB) || [(pB[0] + cA[0]) / 2, (pB[1] + cA[1]) / 2]);
+    const p = lineIntersect(pA, pB, cA, cB) || [(pB[0] + cA[0]) / 2, (pB[1] + cA[1]) / 2];
+    pts.push(chain[i].radIn ? [p[0], p[1], +chain[i].radIn.toFixed(3)] : p);
   }
   let res = { pts, chain, ceil: cm(median(walls.map(w => w.h))) || 2.7 };
   if (polyArea(pts) < 0) res = reversePolygon(res); // по часовой на экране — как рисует редактор
@@ -171,7 +184,7 @@ function scanObjects(scan, toPlan, turn) {
 
 function transformPts(pts, ang, cx, cy, tx, ty) {
   const ca = Math.cos(ang), sa = Math.sin(ang);
-  return pts.map(p => { const x = p[0] - cx, y = p[1] - cy; return [x * ca - y * sa + tx, x * sa + y * ca + ty]; });
+  return pts.map(p => { const x = p[0] - cx, y = p[1] - cy; return [x * ca - y * sa + tx, x * sa + y * ca + ty, ...p.slice(2)]; });
 }
 const centroidOf = pts => [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
 const edgesOf = pts => pts.map((p, i) => { const q = pts[(i + 1) % pts.length]; return { mid: [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], ang: Math.atan2(q[1] - p[1], q[0] - p[0]), len: dist2(p, q) }; });
@@ -239,7 +252,13 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
     const al = alignScanToRoom(res.pts, room.pts, scanOpeningPts(scan, res), roomOpeningPts(room));
     const sc0 = centroidOf(res.pts), rc0 = centroidOf(room.pts);
     toPlan = p => transformPts([p], al.ang, sc0[0], sc0[1], rc0[0], rc0[1])[0]; turn = al.ang;
-    pts = al.pts.map(p => [cm(p[0]), cm(p[1])]);
+    pts = al.pts.map(p => [cm(p[0]), cm(p[1]), ...p.slice(2)]);
+    // радиусы углов, заданные вручную, остаются на ближайших новых углах (если скан сам не нашёл скругление)
+    pts = pts.map(p => {
+      if (p[2]) return p;
+      const old = room.pts.find(o => o[2] > 0 && Math.hypot(o[0] - p[0], o[1] - p[1]) < 0.4);
+      return old ? [p[0], p[1], old[2]] : p;
+    });
     const oldEdges = roomEdges(room), newE = edgesOf(pts);
     const takenOld = new Set();
     wallIds = newE.map(e => {
@@ -276,7 +295,7 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
     await dbPut('rooms', room);
   } else {
     if (opts.keepCoords) {
-      pts = res.pts.map(p => [cm(p[0]), cm(p[1])]);
+      pts = res.pts.map(p => [cm(p[0]), cm(p[1]), ...p.slice(2)]);
     } else {
       // новая комната: самая длинная стена горизонтально, ставим на свободное место
       const se = edgesOf(res.pts);
@@ -285,7 +304,7 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
       const p2 = transformPts(res.pts, -longest.ang, sc[0], sc[1], 0, 0);
       const minX = Math.min(...p2.map(p => p[0])), minY = Math.min(...p2.map(p => p[1]));
       const [fx, fy] = freeSpot(rooms, 1, 1);
-      pts = p2.map(p => [cm(p[0] - minX + fx), cm(p[1] - minY + fy)]);
+      pts = p2.map(p => [cm(p[0] - minX + fx), cm(p[1] - minY + fy), ...p.slice(2)]);
       toPlan = p => { const q = transformPts([p], -longest.ang, sc[0], sc[1], 0, 0)[0]; return [q[0] - minX + fx, q[1] - minY + fy]; };
       turn = -longest.ang;
     }
@@ -314,6 +333,25 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
     await dbPut('rooms', room);
   }
   res.chain.forEach((c, i) => { idMap[c.id] = wallIds[c.__to != null ? c.__to : i]; });
+  // высота каждой стены из скана (разная высота, скосы, ступеньки) — только там, где отличается от общей
+  const edgesNow = roomEdges(room), tops = {};
+  res.chain.forEach((c, i) => {
+    const e = edgesNow.find(x => x.id === idMap[c.id]);
+    if (!e) return;
+    const prof = c.top && c.top.length >= 2 ? c.top : [[-c.len / 2, c.h], [c.len / 2, c.h]];
+    let pr = prof.map(([lx, h]) => {
+      const s = (lx + c.len / 2) / (c.len || 1);
+      const P = toPlan([c.a[0] + (c.b[0] - c.a[0]) * s, c.a[1] + (c.b[1] - c.a[1]) * s]);
+      return [((P[0] - e.a[0]) * e.ux + (P[1] - e.a[1]) * e.uy) / e.len, h];
+    });
+    if (pr[0][0] > pr[pr.length - 1][0]) pr.reverse();
+    pr = pr.map(([f, h]) => [+Math.min(1, Math.max(0, f)).toFixed(4), cm(h)]);
+    if (pr[0][0] > 0) pr.unshift([0, pr[0][1]]);
+    if (pr[pr.length - 1][0] < 1) pr.push([1, pr[pr.length - 1][1]]);
+    if (pr.some(([, h]) => Math.abs(h - room.ceil) > 0.02)) tops[e.id] = pr;
+  });
+  room.wallTop = tops;
+  await dbPut('rooms', room);
   return { room, idMap };
 }
 
@@ -480,6 +518,29 @@ async function applyStructure(pid, rooms, scan) {
   return { results, wallMap, transform: { ang, ox, oy } };
 }
 
+/* ---------- оригинальная модель RoomPlan (USDZ) ---------- */
+
+const b64Blob = async (b64, type) => (await fetch(`data:${type};base64,` + b64)).blob();
+async function saveProjectUsdz(pid, scan) {
+  if (!scan.usdz) return;
+  const p = await dbGet('projects', pid);
+  p.usdz = await b64Blob(scan.usdz, 'model/vnd.usdz+zip'); p.usdzAt = Date.now();
+  await dbPut('projects', p);
+}
+// открыть во встроенном просмотрщике iOS (3D, AR)
+async function openRoomPlanModel(blob, title) {
+  if (!Native.RP || !Native.RP.quickLook) throw new Error('Просмотр модели есть только в приложении на iPhone');
+  const url = await blobToDataURL(blob);
+  await Native.RP.quickLook({ usdz: url.slice(url.indexOf(',') + 1), title });
+}
+// модели объекта: квартира целиком + отдельные комнаты
+function roomPlanModels(project, rooms) {
+  const out = [];
+  if (project.usdz) out.push({ title: 'Вся квартира', blob: project.usdz, at: project.usdzAt });
+  for (const r of rooms) if (r.usdz) out.push({ title: r.name, blob: r.usdz, at: r.usdzAt });
+  return out;
+}
+
 /* ---------- сценарии ---------- */
 
 async function lidarMeasure(pid, rooms, room) {
@@ -488,7 +549,8 @@ async function lidarMeasure(pid, rooms, room) {
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const name = room ? null : (prompt('Название комнаты:', 'Комната ' + (rooms.length + 1)) || null);
   const { room: r, idMap } = await applyScan(pid, rooms, room, scan, name);
-  toast(`Обмер: ${r.pts.length} стен, потолок ${String(r.ceil).replace('.', ',')} м`);
+  if (scan.usdz) { r.usdz = await b64Blob(scan.usdz, 'model/vnd.usdz+zip'); r.usdzAt = Date.now(); await dbPut('rooms', r); }
+  toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м`);
   const res = scanToPolygon(scan);
   if (res) await proposeMirrors(r, scan, res, idMap);
   return r;
@@ -500,6 +562,7 @@ async function lidarApartment(pid, rooms, stageId) {
   try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { results, wallMap } = await applyStructure(pid, rooms, scan);
+  await saveProjectUsdz(pid, scan);
   let mirrors = 0;
   for (const r of results) mirrors += await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
   let photos = 0;
@@ -532,6 +595,8 @@ async function lidarFinal(pid, project, rooms) {
   try { scan = await Native.RP.scan({ mode: 'final' }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { results, transform } = await applyStructure(pid, rooms, scan);
+  await saveProjectUsdz(pid, scan);
+  if (scan.usdz) project = await dbGet('projects', pid);
   for (const r of results) await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
   if (scan.mesh) {
     const blob = await (await fetch('data:application/octet-stream;base64,' + scan.mesh)).blob();

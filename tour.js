@@ -90,6 +90,7 @@ async function viewTour(pid, roomId = null) {
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">👁 Внутри</button>
           <button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">🌐 360°</button>
           ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">🏁 Финал</button>` : ''}
+          ${Native.isNative && roomPlanModels(project, rooms).length ? `<button id="tour-rp" title="Оригинальная модель RoomPlan: 3D и AR">📐 RoomPlan</button>` : ''}
           <button id="tour-photos" class="${tourState.photos ? 'active' : ''}" title="Фото на стенах">📷</button>
         </div>
       </div>
@@ -143,15 +144,17 @@ async function viewTour(pid, roomId = null) {
   const ceilings = [], mirrors = [];
   const roomInfo = {};
   for (const r of rooms) {
-    const ceil = roomCeil(r);
-    const pts = r.pts.map(p => new THREE.Vector2(p[0], p[1]));
+    const ring = roomRing(r);                       // контур со скруглениями, h — высота потолка в точке
+    const ceil = Math.max(...ring.map(p => p.h));
+    const ringArr = ring.map(p => [p.x, p.y]);
+    const pts = ring.map(p => new THREE.Vector2(p.x, p.y));
     const tris = THREE.ShapeUtils.triangulateShape(pts, []);
     const bb = roomBBox(r);
-    // горизонтальный многоугольник; wantUp — нормаль вверх (пол) или вниз (потолок), порядок вершин проверяем по нормали
-    const mkPoly = (y, wantUp) => {
+    // горизонтальный (или наклонный — при разной высоте) многоугольник; wantUp — нормаль вверх (пол) или вниз (потолок)
+    const mkPoly = (yOf, wantUp) => {
       const pos = [], uv = [];
       let idx = [];
-      pts.forEach(p => { pos.push(p.x, y, p.y); uv.push((p.x - bb.x) / (bb.w || 1), 1 - (p.y - bb.y) / (bb.h || 1)); });
+      ring.forEach(p => { pos.push(p.x, yOf(p), p.y); uv.push((p.x - bb.x) / (bb.w || 1), 1 - (p.y - bb.y) / (bb.h || 1)); });
       tris.forEach(t => idx.push(t[0], t[1], t[2]));
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -163,65 +166,134 @@ async function viewTour(pid, roomId = null) {
       }
       return geo;
     };
-    const floor = new THREE.Mesh(mkPoly(0, true), floorMat.clone());
-    const ceiling = new THREE.Mesh(mkPoly(ceil, false), ceilMat.clone());
+    const floor = new THREE.Mesh(mkPoly(() => 0, true), floorMat.clone());
+    const ceiling = new THREE.Mesh(mkPoly(p => p.h, false), ceilMat.clone());
     scene.add(floor); scene.add(ceiling);
     ceilings.push(ceiling);
     // цветной пол «как на плане» (чуть ниже фото-пола, чтобы не мерцать)
-    const plain = new THREE.Mesh(mkPoly(-0.004, true), new THREE.MeshLambertMaterial({ color: FLOOR_COLORS[rooms.indexOf(r) % FLOOR_COLORS.length] }));
+    const plain = new THREE.Mesh(mkPoly(() => -0.004, true), new THREE.MeshLambertMaterial({ color: FLOOR_COLORS[rooms.indexOf(r) % FLOOR_COLORS.length] }));
     scene.add(plain); plainFloors.push(plain);
-    // толстые белые стены с вырезами под двери и окна — снаружи от контура
-    for (const e of roomEdges(r)) {
-      const ops = ((r.openings || {})[e.id] || []).filter(o => o.kind !== 'mirror' && o.w > 0 && o.h > 0)
-        .map(o => { const x = o.x != null ? o.x : (e.len - o.w) / 2; const y = o.y != null ? o.y : (o.kind === 'door' ? 0 : 1); return { kind: o.kind, x0: Math.max(0, x), x1: Math.min(e.len, x + o.w), y0: Math.max(0, y), y1: Math.min(ceil, y + o.h) }; })
-        .sort((a, b) => a.x0 - b.x0);
-      const yaw = Math.atan2(e.nx, e.ny);
+
+    // ориентация по стене: X вдоль стены (a→b), Y вверх, Z = X×Y (горизонтальная нормаль)
+    const basisQ = (ux, uy) => new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(ux, 0, uy), new THREE.Vector3(0, 1, 0), new THREE.Vector3(-uy, 0, ux)));
+    const outOff = WALL_T / 2 + 0.003;
+    const cs = roomCorners(r);
+    const edges = roomEdges(r);
+    edges.forEach((e, i) => {
+      const tS = cs[i].t, tE = e.len - cs[(i + 1) % edges.length].t;
       const outN = [-e.nx, -e.ny];
-      const cx0 = e.mid[0] + outN[0] * (WALL_T / 2 + 0.003), cz0 = e.mid[1] + outN[1] * (WALL_T / 2 + 0.003);
-      const addBox = (x0, x1, y0, y1, mat) => {
-        if (x1 - x0 < 0.01 || y1 - y0 < 0.01) return;
-        const box = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, WALL_T), mat);
-        // локальные координаты стены: X вдоль стены слева направо (как у фото-плоскости), Y вверх
-        const lx = -e.len / 2 + (x0 + x1) / 2, ly = (y0 + y1) / 2;
-        box.position.set(cx0 + e.ux * lx, ly, cz0 + e.uy * lx);
-        box.rotation.y = yaw;
-        scene.add(box); solidWalls.push(box);
-      };
-      let cursor = 0;
+      // верх стены на участке [tS, tE]: [[t, h]]
+      const prof = wallTop(r, e.id).map(([f, h]) => [f * e.len, h]);
+      const hAt = t => wallHAt(r, e.id, t / e.len);
+      const top = [[tS, hAt(tS)], ...prof.filter(([t]) => t > tS + 0.005 && t < tE - 0.005), [tE, hAt(tE)]];
+      const minTop = (x0, x1) => Math.min(hAt(x0), hAt(x1), ...top.filter(([t]) => t >= x0 && t <= x1).map(q => q[1]));
+      const ops = ((r.openings || {})[e.id] || []).filter(o => o.kind !== 'mirror' && o.w > 0 && o.h > 0)
+        .map(o => { const x = o.x != null ? o.x : (e.len - o.w) / 2; const y = o.y != null ? o.y : (o.kind === 'door' ? 0 : 1); return { kind: o.kind, x0: Math.max(tS + 0.02, x), x1: Math.min(tE - 0.02, x + o.w), y0: Math.max(0, y), y1: y + o.h }; })
+        .filter(o => o.x1 - o.x0 > 0.05)
+        .sort((a, b) => a.x0 - b.x0);
+      // контур стены: низ с вырезами дверей, верх по профилю, окна — отверстия
+      const shape = new THREE.Shape();
+      shape.moveTo(tS, 0);
+      let cursor = tS;
+      const fills = [];
       for (const o of ops) {
-        addBox(cursor, o.x0, 0, ceil, wallSolid);
-        if (o.y0 > 0) addBox(o.x0, o.x1, 0, o.y0, wallSolid);          // под окном
-        if (o.y1 < ceil) addBox(o.x0, o.x1, o.y1, ceil, wallSolid);     // над проёмом
-        // сам проём: дверь — тонкая створка, окно — стекло
-        const fill = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.kind === 'door' ? 0.03 : 0.02), o.kind === 'door' ? doorMat : glassMat);
-        const lx = -e.len / 2 + (o.x0 + o.x1) / 2, ly = (o.y0 + o.y1) / 2;
-        fill.position.set(cx0 + e.ux * lx, ly, cz0 + e.uy * lx); fill.rotation.y = yaw;
-        scene.add(fill); solidWalls.push(fill);
-        cursor = Math.max(cursor, o.x1);
+        if (o.x0 < cursor + 0.01) continue;
+        const lim = minTop(o.x0, o.x1) - 0.02;
+        const y1 = Math.min(o.y1, lim);
+        if (o.y0 < 0.05) {
+          shape.lineTo(o.x0, 0); shape.lineTo(o.x0, y1); shape.lineTo(o.x1, y1); shape.lineTo(o.x1, 0);
+          cursor = o.x1;
+          fills.push({ ...o, y0: 0, y1 });
+        } else if (y1 - o.y0 > 0.05) {
+          const hole = new THREE.Path();
+          hole.moveTo(o.x0, o.y0); hole.lineTo(o.x1, o.y0); hole.lineTo(o.x1, y1); hole.lineTo(o.x0, y1); hole.lineTo(o.x0, o.y0);
+          shape.holes.push(hole);
+          cursor = o.x1;
+          fills.push({ ...o, y1 });
+        }
       }
-      addBox(cursor, e.len, 0, ceil, wallSolid);
-      // «крышка» стены — кремовый верх, как на плане
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(e.len, 0.012, WALL_T + 0.002), wallCap);
-      cap.position.set(cx0, ceil + 0.006, cz0); cap.rotation.y = yaw;
-      scene.add(cap); solidWalls.push(cap);
-    }
+      shape.lineTo(tE, 0);
+      for (let k = top.length - 1; k >= 0; k--) shape.lineTo(top[k][0], top[k][1]);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: WALL_T, bevelEnabled: false, curveSegments: 1 });
+      const zOut = (-e.uy * outN[0] + e.ux * outN[1]) > 0;
+      geo.translate(0, 0, zOut ? 0.003 : -(WALL_T + 0.003));
+      const wall = new THREE.Mesh(geo, wallSolid);
+      wall.position.set(e.a[0], 0, e.a[1]);
+      wall.quaternion.copy(basisQ(e.ux, e.uy));
+      scene.add(wall); solidWalls.push(wall);
+      // сам проём: дверь — тонкая створка, окно — стекло
+      for (const o of fills) {
+        const fill = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.kind === 'door' ? 0.03 : 0.02), o.kind === 'door' ? doorMat : glassMat);
+        const tc = (o.x0 + o.x1) / 2;
+        fill.position.set(e.a[0] + e.ux * tc + outN[0] * outOff, (o.y0 + o.y1) / 2, e.a[1] + e.uy * tc + outN[1] * outOff);
+        fill.quaternion.copy(basisQ(e.ux, e.uy));
+        scene.add(fill); solidWalls.push(fill);
+      }
+      // «крышка» стены — кремовый верх по профилю
+      for (let k = 0; k + 1 < top.length; k++) {
+        const [t0, h0] = top[k], [t1, h1] = top[k + 1];
+        if (t1 - t0 < 0.01) continue;
+        const L = Math.hypot(t1 - t0, h1 - h0);
+        const X = new THREE.Vector3(e.ux * (t1 - t0) / L, (h1 - h0) / L, e.uy * (t1 - t0) / L), Z = new THREE.Vector3(-e.uy, 0, e.ux);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(L, 0.012, WALL_T + 0.002), wallCap);
+        const tm = (t0 + t1) / 2;
+        cap.position.set(e.a[0] + e.ux * tm + outN[0] * outOff, (h0 + h1) / 2 + 0.006, e.a[1] + e.uy * tm + outN[1] * outOff);
+        cap.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, new THREE.Vector3().crossVectors(Z, X), Z));
+        scene.add(cap); solidWalls.push(cap);
+      }
+    });
+    // скруглённые углы: стена по дуге из коротких сегментов
+    cs.forEach((c, i) => {
+      if (!(c.t > 0)) return;
+      const arc = ring.filter(p => p.arc === i);
+      for (let k = 0; k + 1 < arc.length; k++) {
+        const P = arc[k], Q = arc[k + 1];
+        const L = Math.hypot(Q.x - P.x, Q.y - P.y);
+        if (L < 0.002) continue;
+        const ux = (Q.x - P.x) / L, uy = (Q.y - P.y) / L;
+        let nx = -uy, ny = ux;
+        const mx = (P.x + Q.x) / 2, my = (P.y + Q.y) / 2;
+        if (pointInPoly([mx + nx * 0.02, my + ny * 0.02], ringArr)) { nx = -nx; ny = -ny; }
+        const h = P.h;
+        const seg = new THREE.Mesh(new THREE.BoxGeometry(L + 0.02, h, WALL_T), wallSolid);
+        seg.position.set(mx + nx * outOff, h / 2, my + ny * outOff);
+        seg.quaternion.copy(basisQ(ux, uy));
+        scene.add(seg); solidWalls.push(seg);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(L + 0.02, 0.012, WALL_T + 0.002), wallCap);
+        cap.position.set(mx + nx * outOff, h + 0.006, my + ny * outOff);
+        cap.quaternion.copy(basisQ(ux, uy));
+        scene.add(cap); solidWalls.push(cap);
+      }
+    });
     surfaces.push({ key: `${r.id}:f`, mesh: floor, w: bb.w, h: bb.h, base: floorMat });
     surfaces.push({ key: `${r.id}:c`, mesh: ceiling, w: bb.w, h: bb.h, base: ceilMat });
 
-    for (const e of roomEdges(r)) {
-      const geo = new THREE.PlaneGeometry(e.len, ceil);
+    // поверхности для фото: форма стены по профилю (без скруглённых концов), текстура — по всей стене
+    edges.forEach((e, i) => {
+      const tS = cs[i].t, tE = e.len - cs[(i + 1) % edges.length].t;
+      const H = wallMaxH(r, e.id);
+      const yaw = Math.atan2(e.nx, e.ny);
+      const sx = Math.cos(yaw) * e.ux - Math.sin(yaw) * e.uy; // +1: локальная X идёт от a к b
+      const hAt = t => wallHAt(r, e.id, t / e.len);
+      const prof = wallTop(r, e.id).map(([f, h]) => [f * e.len, h]).filter(([t]) => t > tS + 0.005 && t < tE - 0.005);
+      const outline = [[tS, 0], [tE, 0], [tE, hAt(tE)], ...prof.reverse(), [tS, hAt(tS)]];
+      const geo = new THREE.ShapeGeometry(new THREE.Shape(outline.map(([t, h]) => new THREE.Vector2(sx * (t - e.len / 2), h - H / 2))));
+      const pos = geo.attributes.position, uv = geo.attributes.uv;
+      for (let k = 0; k < pos.count; k++) uv.setXY(k, (pos.getX(k) + e.len / 2) / e.len, (pos.getY(k) + H / 2) / H);
+      uv.needsUpdate = true;
       const mesh = new THREE.Mesh(geo, greyMat.clone());
-      mesh.position.set(e.mid[0], ceil / 2, e.mid[1]);
-      mesh.rotation.y = Math.atan2(e.nx, e.ny); // нормаль внутрь комнаты; локальная ось X — слева направо для зрителя внутри
+      mesh.position.set(e.mid[0], H / 2, e.mid[1]);
+      mesh.rotation.y = yaw; // нормаль внутрь комнаты; локальная ось X — слева направо для зрителя внутри
       scene.add(mesh);
-      surfaces.push({ key: `${r.id}:${e.id}`, mesh, w: e.len, h: ceil, base: greyMat });
+      surfaces.push({ key: `${r.id}:${e.id}`, mesh, w: e.len, h: H, base: greyMat });
       // проёмы и зеркала: дочерние плоскости на стене (локально: X слева направо, Y снизу вверх от пола)
       for (const o of ((r.openings || {})[e.id] || [])) {
         if (!(o.w > 0 && o.h > 0)) continue;
         const ox = o.x != null ? o.x : (e.len - o.w) / 2;
         const oy = o.y != null ? o.y : (o.kind === 'door' ? 0 : 1);
-        const w = Math.min(o.w, e.len), h = Math.min(o.h, ceil);
-        const lx = -e.len / 2 + ox + w / 2, ly = -ceil / 2 + oy + h / 2;
+        const w = Math.min(o.w, e.len), h = Math.min(o.h, H);
+        const lx = -e.len / 2 + ox + w / 2, ly = -H / 2 + oy + h / 2;
         let child;
         if (o.kind === 'mirror' && window.THREE_Reflector) {
           child = new window.THREE_Reflector(new THREE.PlaneGeometry(w, h), { textureWidth: 512, textureHeight: 512, color: 0xb8c4c8, clipBias: 0.003 });
@@ -236,12 +308,13 @@ async function viewTour(pid, roomId = null) {
         child.position.set(lx, ly, 0.012);
         mesh.add(child);
       }
-    }
+    });
     // рёбра: контур пола, потолка и вертикали
     const lp = [];
-    r.pts.forEach((p, i) => {
-      const q = r.pts[(i + 1) % r.pts.length];
-      lp.push(p[0], 0, p[1], q[0], 0, q[1], p[0], ceil, p[1], q[0], ceil, q[1], p[0], 0, p[1], p[0], ceil, p[1]);
+    ring.forEach((p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      lp.push(p.x, 0, p.y, q.x, 0, q.y, p.x, p.h, p.y, q.x, q.h, q.y);
+      if (p.corner) lp.push(p.x, 0, p.y, p.x, p.h, p.y);
     });
     const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
     scene.add(new THREE.LineSegments(lg, lineMat));
@@ -422,6 +495,20 @@ async function viewTour(pid, roomId = null) {
     updateHint(); drawPlan();
   }
   app.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { look.yaw = 0; look.pitch = 0; setMode(b.dataset.mode); }; });
+  const rpBtn = app.querySelector('#tour-rp');
+  if (rpBtn) rpBtn.onclick = () => {
+    const list = roomPlanModels(project, rooms);
+    const open = m => openRoomPlanModel(m.blob, m.title).catch(err => alert(err.message));
+    if (list.length === 1) { open(list[0]); return; }
+    const host = document.createElement('div');
+    host.className = 'plan-sheet tpl-sheet';
+    host.innerHTML = `<div class="sh-title">Модель RoomPlan</div>
+      <p class="mut small">Оригинальная модель Apple из скана: крутите пальцем, вкладка AR ставит её в комнату.</p>
+      ${list.map((m, i) => `<button class="btn wide" data-rp="${i}">${esc(m.title)} <small class="mut">· ${fmtDate(m.at)}</small></button>`).join('')}
+      <button class="btn ghost wide" data-rp="x">Отмена</button>`;
+    document.body.appendChild(host);
+    host.querySelectorAll('[data-rp]').forEach(b => b.onclick = () => { host.remove(); if (b.dataset.rp !== 'x') open(list[+b.dataset.rp]); });
+  };
   const photosBtn = $('#tour-photos');
   if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
   $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); };

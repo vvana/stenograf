@@ -108,6 +108,9 @@ PWA-фотодневник ремонта: несколько объектов (
 - `contentInset: never` — иначе двойной отступ сверху.
 - Диагностика: «Ещё → Диагностика» (Capacitor, плагины, способ вызова, isSupported, deviceInfo: ARKit/sceneDepth/mesh/модель), кнопка «Попробовать обмер без проверки», красная плашка с ошибками JS внизу экрана.
 - Мебель из RoomPlan (`CapturedRoom.objects`) сохраняется в `room.objects` {cat,x,y,w,d,h,z,ang} в координатах схемы (функция `scanObjects`, перевод координат `toPlan/turn` в `applyScan`) и рисуется блоками в 3D-туре и пунктиром на схеме. `openings` RoomPlan — проходы без полотна → kind 'door'.
+- **Высоты стен**: `room.wallTop[wallId] = [[f, h]…]` (f — доля длины от начала стены, две точки с одним f — ступенька короба, разные h — скос); нет записи — ровно `roomCeil`. Хелперы в extras.js: wallTop/wallHAt/wallMaxH/roomHeightRange/roomHeightText/wallGrossArea. Из скана: Swift `topProfile()` по `Surface.polygonCorners`; сохраняются только стены, отличающиеся от общей высоты > 2 см. В редакторе у стены поле «h, м».
+- **Радиусные углы**: `pts[i][2]` = R, м. 3D-тур строит стены по `roomRing/roomCorners` (скругление той же квадратичной кривой, что на схеме), стены — ExtrudeGeometry по профилю с вырезами дверей и отверстиями окон. Скруглённые стены RoomPlan (`Surface.curve`) между непараллельными прямыми → радиус угла. При переобмере ручные радиусы переносятся на ближайший угол (< 40 см).
+- **Оригинальная модель RoomPlan**: USDZ из `CapturedRoom/CapturedStructure.export` → `room.usdz` (обмер комнаты) / `project.usdz` (квартира, финальный скан); кнопка «📐 RoomPlan» в 3D-туре открывает QLPreviewController (метод плагина `quickLook`), в резервной копии — `usdzData`.
 - На iPhone 17 Pro / iOS 27.0 подтверждено: RoomPlan isSupported = true, sceneDepth = true. Обмер на устройстве ещё не запускался.
 
 ### Где остановились (2026-09-12)

@@ -143,6 +143,7 @@ body {
   fill: color-mix(in srgb, var(--acc) 7%, var(--card));
   stroke: none;
 }
+#plan .room-h { font-size: 0.26px; }
 #plan .furn { fill: color-mix(in srgb, var(--mut) 10%, transparent); stroke: var(--mut); stroke-width: 0.02; stroke-dasharray: 0.06 0.05; pointer-events: none; }
 #plan .room.sel { fill: color-mix(in srgb, var(--acc) 20%, var(--card)); }
 #plan .wall-outline { fill: none; stroke: var(--ink); stroke-width: 0.12; stroke-linejoin: round; pointer-events: none; }
