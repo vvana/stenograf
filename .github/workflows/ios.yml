@@ -101,8 +101,12 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/App.app Payload/
           zip -qr Stenograf-unsigned.ipa Payload
           ls -la Stenograf-unsigned.ipa
-          SIZE=$(stat -f%z Stenograf-unsigned.ipa)
-          test "$SIZE" -gt 1000000 || { echo "::error::ipa is suspiciously small ($SIZE bytes)"; exit 1; }
+          # проверяем содержимое, а не размер: исполняемый файл, веб-часть, модуль лидара, иконка
+          for need in Payload/App.app/App Payload/App.app/public/index.html Payload/App.app/public/templates.js                       Payload/App.app/Frameworks/StenografRoomplan.framework/StenografRoomplan; do
+            test -e "$need" || { echo "::error::в сборке нет $need"; exit 1; }
+          done
+          ls Payload/App.app | grep -q '^AppIcon' || { echo "::error::в сборке нет иконки"; exit 1; }
+          echo "ipa OK: $(stat -f%z Stenograf-unsigned.ipa) bytes"
 
       - uses: actions/upload-artifact@v4
         with:
