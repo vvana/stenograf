@@ -1,16 +1,7 @@
 name: iOS build (unsigned ipa)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'native/**'
-      - '.github/workflows/ios.yml'
-      - '*.js'
-      - '*.css'
-      - '*.html'
-      - 'vendor/**'
-      - 'manifest.webmanifest'
+  # сборка только по запросу (Actions → Run workflow или `gh workflow run ios.yml`), не на каждый пуш
   workflow_dispatch:
 
 jobs:
