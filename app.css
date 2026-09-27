@@ -528,3 +528,6 @@ body {
 .about { margin-top: 14px; }
 .about summary { color: var(--mut); font-size: 13px; cursor: pointer; }
 .about #diag { margin-top: 8px; }
+.proj-name-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.proj-name-row b { font-size: 17px; overflow-wrap: anywhere; }
+.proj-name-row .iconbtn { font-size: 18px; padding: 4px 6px; margin: -4px -6px -4px 0; }

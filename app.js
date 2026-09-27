@@ -1788,8 +1788,8 @@ async function viewMore(pid) {
     ${header('Ещё', `#/p/${pid}`)}
     <div class="pad">
       <div class="cards">
-        <div class="card">
-          <b>${esc(project.name)}</b>
+        <div class="card proj-name-card">
+          <div class="proj-name-row"><b>${esc(project.name)}</b><button class="iconbtn" id="rename-project" title="Переименовать объект" aria-label="Переименовать объект">✏️</button></div>
           <div class="mut small">${rooms.length} комн. · ${photos.length} фото</div>
         </div>
         <button class="btn primary wide" data-nav="#/p/${pid}/report">📋 Задание для мастеров</button>
@@ -1803,7 +1803,6 @@ async function viewMore(pid) {
           <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
-        <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
         <button class="btn danger wide" id="clear-plan2">🗑 Удалить схему (комнаты и их фото)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
