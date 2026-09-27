@@ -139,7 +139,7 @@ async function viewTour(pid, roomId = null) {
   sun.shadow.bias = -0.0005;
   Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 0.5, far: span * 5 });
   scene.add(sun);
-  const wallSolid = new THREE.MeshLambertMaterial({ color: 0xfbfaf8, side: THREE.DoubleSide });
+  const wallSolid = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x8c8c8c, side: THREE.DoubleSide }); // почти белые, светотень мягкая
   const wallCap = new THREE.MeshLambertMaterial({ color: 0xe9dcc4 });
   const doorMat = new THREE.MeshLambertMaterial({ color: 0xdcc3a0 });
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xe4f1f8, transparent: true, opacity: 0.6 });
@@ -201,7 +201,7 @@ async function viewTour(pid, roomId = null) {
       const top = [[tS, hAt(tS)], ...prof.filter(([t]) => t > tS + 0.005 && t < tE - 0.005), [tE, hAt(tE)]];
       const minTop = (x0, x1) => Math.min(hAt(x0), hAt(x1), ...top.filter(([t]) => t >= x0 && t <= x1).map(q => q[1]));
       const ops = ((r.openings || {})[e.id] || []).filter(o => o.kind !== 'mirror' && o.w > 0 && o.h > 0)
-        .map(o => { const x = o.x != null ? o.x : (e.len - o.w) / 2; const y = o.y != null ? o.y : (o.kind === 'door' ? 0 : 1); return { kind: o.kind, x0: Math.max(tS + 0.02, x), x1: Math.min(tE - 0.02, x + o.w), y0: Math.max(0, y), y1: y + o.h }; })
+        .map(o => { const x = o.x != null ? o.x : (e.len - o.w) / 2; const y = o.y != null ? o.y : (o.kind === 'door' ? 0 : 1); return { kind: o.kind, passage: !!o.passage, x0: Math.max(tS + 0.02, x), x1: Math.min(tE - 0.02, x + o.w), y0: Math.max(0, y), y1: y + o.h }; })
         .filter(o => o.x1 - o.x0 > 0.05)
         .sort((a, b) => a.x0 - b.x0);
       // контур стены: низ с вырезами дверей, верх по профилю, окна — отверстия
@@ -237,6 +237,7 @@ async function viewTour(pid, roomId = null) {
       scene.add(wall); solidWalls.push(wall);
       // сам проём: дверь — тонкая створка, окно — стекло
       for (const o of fills) {
+        if (o.passage) continue; // проход без полотна
         const fill = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.kind === 'door' ? 0.03 : 0.02), o.kind === 'door' ? doorMat : glassMat);
         const tc = (o.x0 + o.x1) / 2;
         fill.position.set(e.a[0] + e.ux * tc + outN[0] * outOff, (o.y0 + o.y1) / 2, e.a[1] + e.uy * tc + outN[1] * outOff);

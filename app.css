@@ -160,6 +160,12 @@ body {
   font-size: 0.26px; font-weight: 700; fill: var(--mut);
   text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
 }
+#plan .op-gap { fill: var(--card); stroke: none; pointer-events: none; }
+#plan .op-win { fill: #e6f3fb; stroke: #4f86b3; stroke-width: 0.018; pointer-events: none; }
+#plan .op-win-l { stroke: #4f86b3; stroke-width: 0.014; pointer-events: none; }
+#plan .op-jamb { stroke: var(--ink); stroke-width: 0.03; pointer-events: none; }
+#plan .op-leaf { stroke: #8a6a45; stroke-width: 0.035; stroke-linecap: round; pointer-events: none; }
+#plan .op-arc { fill: none; stroke: #8a6a45; stroke-width: 0.015; stroke-dasharray: 0.06 0.04; pointer-events: none; }
 #plan .wall-dim {
   fill: var(--ink); font-weight: 600; text-anchor: middle; dominant-baseline: central;
   pointer-events: none; user-select: none; paint-order: stroke; stroke: var(--bg); stroke-width: 0.06px;

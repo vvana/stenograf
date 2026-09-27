@@ -148,8 +148,8 @@ function reversePolygon(res) {
 function scanOpenings(scan, res) {
   const out = [];
   const floorY = scan.floorY || 0;
-  const lists = [['door', scan.doors], ['window', scan.windows], ['door', scan.openings]]; // openings — проходы без дверного полотна
-  for (const [kind, list] of lists) {
+  const lists = [['door', scan.doors], ['window', scan.windows], ['door', scan.openings, true]]; // openings — проходы без дверного полотна
+  for (const [kind, list, passage] of lists) {
     for (const o of list || []) {
       const i = res.chain.findIndex(c => c.id === o.parent);
       if (i < 0) continue;
@@ -157,7 +157,7 @@ function scanOpenings(scan, res) {
       const dir = [c.b[0] - c.a[0], c.b[1] - c.a[1]];
       const t = ((o.cx - c.a[0]) * dir[0] + (o.cz - c.a[1]) * dir[1]) / (c.len || 1); // от конца a исходного отрезка
       const along = c.rev ? c.len - t : t;
-      out.push({ wallIndex: i, kind, w: cm(o.w), h: cm(o.h), x: cm(Math.max(0, along - o.w / 2)), y: cm(Math.max(0, o.cy - o.h / 2 - floorY)) });
+      out.push({ wallIndex: i, kind, ...(passage ? { passage: true } : {}), w: cm(o.w), h: cm(o.h), x: cm(Math.max(0, along - o.w / 2)), y: cm(Math.max(0, o.cy - o.h / 2 - floorY)) });
     }
   }
   return out;
@@ -291,7 +291,7 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
       if (keep.length) merged[k] = keep;
     }
     room.openings = merged;
-    for (const o of openings) { const k = wallIds[o.wallIndex]; (room.openings[k] = room.openings[k] || []).push({ kind: o.kind, w: o.w, h: o.h, x: o.x, y: o.y }); }
+    for (const o of openings) { const k = wallIds[o.wallIndex]; (room.openings[k] = room.openings[k] || []).push({ kind: o.kind, ...(o.passage ? { passage: true } : {}), w: o.w, h: o.h, x: o.x, y: o.y }); }
     await dbPut('rooms', room);
   } else {
     if (opts.keepCoords) {
@@ -329,7 +329,7 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
       pts, wallIds, labels: {}, ceil: res.ceil, openings: {}, measured: 'lidar', measuredAt: Date.now(), created: Date.now(),
       objects: scanObjects(scan, toPlan, turn),
     };
-    for (const o of openings) { const k = wallIds[o.wallIndex]; (room.openings[k] = room.openings[k] || []).push({ kind: o.kind, w: o.w, h: o.h, x: o.x, y: o.y }); }
+    for (const o of openings) { const k = wallIds[o.wallIndex]; (room.openings[k] = room.openings[k] || []).push({ kind: o.kind, ...(o.passage ? { passage: true } : {}), w: o.w, h: o.h, x: o.x, y: o.y }); }
     await dbPut('rooms', room);
   }
   res.chain.forEach((c, i) => { idMap[c.id] = wallIds[c.__to != null ? c.__to : i]; });

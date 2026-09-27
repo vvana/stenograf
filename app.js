@@ -736,6 +736,27 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
           if (ws) s += `<text class="wall-len" x="${e.mid[0] + e.nx * 0.3}" y="${e.mid[1] + e.ny * 0.3}">${e.len.toFixed(2).replace('.', ',')} м</text>`;
         }
       }
+      // проёмы как на архитектурном плане: окно — вставка в стене, дверь — разрыв, полотно и дуга открывания, проход — разрыв
+      for (const e of edges) {
+        for (const o of ((r.openings || {})[e.id] || [])) {
+          if (o.kind === 'mirror' || !(o.w > 0)) continue;
+          const t0 = Math.max(0, o.x != null ? o.x : (e.len - o.w) / 2), t1 = Math.min(e.len, t0 + o.w);
+          if (t1 - t0 < 0.05) continue;
+          const P = t => [e.a[0] + e.ux * t, e.a[1] + e.uy * t];
+          const [ax, ay] = P(t0), [bx, by] = P(t1);
+          const deg = Math.atan2(e.uy, e.ux) * 180 / Math.PI;
+          const gap = `<rect class="op-gap" x="0" y="-0.075" width="${t1 - t0}" height="0.15" transform="translate(${ax} ${ay}) rotate(${deg})"/>`;
+          if (o.kind === 'window') {
+            s += `<g transform="translate(${ax} ${ay}) rotate(${deg})"><rect class="op-win" x="0" y="-0.075" width="${t1 - t0}" height="0.15"/><line class="op-win-l" x1="0" y1="0" x2="${t1 - t0}" y2="0"/></g>`;
+          } else if (o.passage) {
+            s += gap + `<line class="op-jamb" x1="${ax - e.nx * 0.08}" y1="${ay - e.ny * 0.08}" x2="${ax + e.nx * 0.08}" y2="${ay + e.ny * 0.08}"/><line class="op-jamb" x1="${bx - e.nx * 0.08}" y1="${by - e.ny * 0.08}" x2="${bx + e.nx * 0.08}" y2="${by + e.ny * 0.08}"/>`;
+          } else {
+            const w = t1 - t0, lx = ax + e.nx * w, ly = ay + e.ny * w;
+            const sweep = (e.nx * e.uy - e.ny * e.ux) > 0 ? 1 : 0;
+            s += gap + `<line class="op-leaf" x1="${ax}" y1="${ay}" x2="${lx}" y2="${ly}"/><path class="op-arc" d="M${lx} ${ly} A${w} ${w} 0 0 ${sweep} ${bx} ${by}"/>`;
+          }
+        }
+      }
       // размеры стен — снаружи комнаты вдоль стены; у стен со своей высотой — ещё и высота
       for (const e of edges) {
         if (planState.edit && sel && planState.sel && planState.sel.type === 'wall' && planState.sel.i === e.i) continue;
