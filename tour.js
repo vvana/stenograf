@@ -114,7 +114,7 @@ async function viewTour(pid, roomId = null) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   const dark = false; // приложение всегда светлое
-  renderer.setClearColor(0xf1efea);
+  renderer.setClearColor(0xe3e7ec); // светло-серый холодный фон — белые стены на нём читаются (как у RoomSketcher/Floorplanner)
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
@@ -139,8 +139,12 @@ async function viewTour(pid, roomId = null) {
   sun.shadow.bias = -0.0005;
   Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 0.5, far: span * 5 });
   scene.add(sun);
-  const wallSolid = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x8c8c8c, side: THREE.DoubleSide }); // почти белые, светотень мягкая
-  const wallCap = new THREE.MeshLambertMaterial({ color: 0xe9dcc4 });
+  // мягкая тень под моделью — квартира «стоит» на фоне, а не сливается с ним
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(span * 6, span * 6), new THREE.ShadowMaterial({ opacity: 0.18 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(centerAll.x, -0.02, centerAll.z); ground.receiveShadow = true;
+  scene.add(ground);
+  const wallSolid = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x6e6e6e, side: THREE.DoubleSide }); // белые, наружные грани чуть затенены
+  const wallCap = new THREE.MeshBasicMaterial({ color: 0x3d4248 }); // верх стены — тёмный «разрез», как на чертеже
   const doorMat = new THREE.MeshLambertMaterial({ color: 0xdcc3a0 });
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xe4f1f8, transparent: true, opacity: 0.6 });
   const plainFloors = [], solidWalls = [];
