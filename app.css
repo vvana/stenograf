@@ -9,23 +9,13 @@
   --line: #e3dfd7;
   --acc: #d95f18;
   --acc-ink: #ffffff;
-  --top: #20323c;
-  --top-ink: #f2f5f7;
+  --top: #ffffff;
+  --top-ink: #20323c;
+  color-scheme: light;
   --ok: #2e8b57;
   --warn: #c9a227;
   --danger: #c0392b;
   --shadow: 0 1px 3px rgba(30, 25, 15, .08);
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181b;
-    --card: #212429;
-    --ink: #e8e6e1;
-    --mut: #9a958c;
-    --line: #33373d;
-    --top: #10181d;
-    --shadow: 0 1px 3px rgba(0, 0, 0, .4);
-  }
 }
 
 html, body { height: 100%; }
@@ -43,6 +33,7 @@ body {
   display: flex; align-items: center; gap: 10px;
   background: var(--top); color: var(--top-ink);
   padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  border-bottom: 1px solid var(--line);
 }
 .topbar h1 {
   font-size: 17px; font-weight: 600; flex: 1;

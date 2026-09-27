@@ -2,7 +2,7 @@
 'use strict';
 
 const tourState = { mode: 'house', stage: 'all', roomId: null, photos: false };
-const FLOOR_COLORS = [0x6fbf73, 0xe8875f, 0xe6b84a, 0x7fb3d5, 0xb58fd4, 0x8fc9b8, 0xd98fa8, 0xa8b86a];
+const FLOOR_COLORS = [0x5cb85c, 0xe36b52, 0xf0a04b, 0x6aa8dc, 0xa98ad6, 0x62c2a8, 0xe58aa6, 0xb5c25a];
 const WALL_T = 0.12; // толщина стен на «домике», м
 const TEX_W = 768;
 
@@ -113,8 +113,10 @@ async function viewTour(pid, roomId = null) {
   const canvas = $('#tour-canvas');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-  renderer.setClearColor(dark ? 0x1b1d21 : 0xe6e2da);
+  const dark = false; // приложение всегда светлое
+  renderer.setClearColor(0xf1efea);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
   const panoScene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 500);
@@ -126,19 +128,28 @@ async function viewTour(pid, roomId = null) {
   const centerAll = new THREE.Vector3((minX + maxX) / 2, 0.6, (minZ + maxZ) / 2);
   const span = Math.max(maxX - minX, maxZ - minZ, 4);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8078, dark ? 0.9 : 1.15));
-  const sun = new THREE.DirectionalLight(0xffffff, dark ? 0.55 : 0.8);
-  sun.position.set(-4, 10, 6); scene.add(sun);
-  const wallSolid = new THREE.MeshLambertMaterial({ color: dark ? 0xd8d4cc : 0xf6f3ec });
-  const wallCap = new THREE.MeshLambertMaterial({ color: dark ? 0xc9bfae : 0xe8dcc6 });
-  const doorMat = new THREE.MeshLambertMaterial({ color: dark ? 0x8a6a4e : 0xb98a63 });
-  const glassMat = new THREE.MeshLambertMaterial({ color: 0x9fd0ee, transparent: true, opacity: 0.55 });
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d2c8, 1.3));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+  sun.position.set(centerAll.x - span * 0.5, span * 1.6, centerAll.z + span * 0.7);
+  sun.target.position.copy(centerAll); scene.add(sun.target);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.radius = 4;
+  sun.shadow.bias = -0.0005;
+  Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 0.5, far: span * 5 });
+  scene.add(sun);
+  const wallSolid = new THREE.MeshLambertMaterial({ color: 0xfbfaf8, side: THREE.DoubleSide });
+  const wallCap = new THREE.MeshLambertMaterial({ color: 0xe9dcc4 });
+  const doorMat = new THREE.MeshLambertMaterial({ color: 0xdcc3a0 });
+  const glassMat = new THREE.MeshLambertMaterial({ color: 0xe4f1f8, transparent: true, opacity: 0.6 });
   const plainFloors = [], solidWalls = [];
   const greyMat = new THREE.MeshBasicMaterial({ color: dark ? 0x3a3d43 : 0xcfc9bf, side: THREE.FrontSide });
   const floorMat = new THREE.MeshBasicMaterial({ color: dark ? 0x2b2e33 : 0xb9b2a6, side: THREE.FrontSide });
   const ceilMat = new THREE.MeshBasicMaterial({ color: dark ? 0x44474d : 0xe9e5dd, side: THREE.FrontSide });
-  const lineMat = new THREE.LineBasicMaterial({ color: dark ? 0x9a9a9a : 0x555555 });
-  const furnMat = new THREE.MeshLambertMaterial({ color: dark ? 0xb8b4ac : 0xfbfaf7, transparent: true, opacity: 0.92 });
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xd6cfc3 });
+  const furnMat = new THREE.MeshLambertMaterial({ color: 0xd9d8e6 });
+  const furnLine = new THREE.LineBasicMaterial({ color: 0xb4b2c6 });
 
   const surfaces = []; // { key, mesh, w, h }
   const ceilings = [], mirrors = [];
@@ -172,6 +183,7 @@ async function viewTour(pid, roomId = null) {
     ceilings.push(ceiling);
     // цветной пол «как на плане» (чуть ниже фото-пола, чтобы не мерцать)
     const plain = new THREE.Mesh(mkPoly(() => -0.004, true), new THREE.MeshLambertMaterial({ color: FLOOR_COLORS[rooms.indexOf(r) % FLOOR_COLORS.length] }));
+    plain.receiveShadow = true;
     scene.add(plain); plainFloors.push(plain);
 
     // ориентация по стене: X вдоль стены (a→b), Y вверх, Z = X×Y (горизонтальная нормаль)
@@ -219,6 +231,7 @@ async function viewTour(pid, roomId = null) {
       const zOut = (-e.uy * outN[0] + e.ux * outN[1]) > 0;
       geo.translate(0, 0, zOut ? 0.003 : -(WALL_T + 0.003));
       const wall = new THREE.Mesh(geo, wallSolid);
+      wall.castShadow = true;
       wall.position.set(e.a[0], 0, e.a[1]);
       wall.quaternion.copy(basisQ(e.ux, e.uy));
       scene.add(wall); solidWalls.push(wall);
@@ -324,7 +337,8 @@ async function viewTour(pid, roomId = null) {
       const box = new THREE.Mesh(geo, furnMat);
       box.position.set(o.x, o.z + o.h / 2, o.y);
       box.rotation.y = -o.ang;
-      box.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), lineMat));
+      box.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), furnLine));
+      box.castShadow = true; box.receiveShadow = true;
       scene.add(box);
     }
     const c = roomCenter(r);
@@ -424,6 +438,8 @@ async function viewTour(pid, roomId = null) {
     renderer.setSize(w, h, false);
     camera.aspect = w / h; camera.updateProjectionMatrix();
     panoCam.aspect = w / h; panoCam.updateProjectionMatrix();
+    // узкий (портретный) экран: отодвигаем камеру «домика», чтобы квартира помещалась по ширине
+    if (!orbit.userZoom) orbit.radius = span * 1.55 * Math.max(1, 0.85 / (w / h));
   }
   const pointers = new Map();
   let lastPinch = 0;
@@ -436,7 +452,7 @@ async function viewTour(pid, roomId = null) {
       const [a, b] = [...pointers.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       if (lastPinch) {
-        if (tourState.mode === 'house' || tourState.mode === 'final') orbit.radius = Math.max(span * 0.3, Math.min(span * 4, orbit.radius * lastPinch / d));
+        if (tourState.mode === 'house' || tourState.mode === 'final') { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * lastPinch / d)); }
         else { const cam = tourState.mode === 'pano' ? panoCam : camera; cam.fov = Math.max(30, Math.min(100, cam.fov * lastPinch / d)); cam.updateProjectionMatrix(); }
       }
       lastPinch = d; return;
@@ -451,7 +467,7 @@ async function viewTour(pid, roomId = null) {
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    if (tourState.mode === 'house' || tourState.mode === 'final') orbit.radius = Math.max(span * 0.3, Math.min(span * 4, orbit.radius * (e.deltaY > 0 ? 1.1 : 0.9)));
+    if (tourState.mode === 'house' || tourState.mode === 'final') { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * (e.deltaY > 0 ? 1.1 : 0.9))); }
   }, { passive: false });
 
   /* ---------- мини-план ---------- */
