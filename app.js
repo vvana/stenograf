@@ -437,11 +437,16 @@ async function viewPlan(pid) {
   });
 
   app.innerHTML = `
-    ${header(project.name, '#/',
-      `<button class="iconbtn hidden" id="lidar-walk" title="Обход этапа: автосъёмка стен лидаром">🚶</button>
-       <button class="iconbtn hidden" id="lidar-apt" title="Квартира целиком: обмер / финальный скан">🏢</button>
-       <button class="iconbtn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">✎</button>`)}
+    ${header(project.name, '#/')}
     <div class="plan-wrap">
+      <div class="plan-actions">
+        <button class="pa-btn hidden" id="lidar-walk" title="Обход этапа: автосъёмка стен лидаром">
+          <svg viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="M11 21l2-6-2.5-3 1-4 3 3h3M12.5 8l-3 2-1 3M13 15l3 2v4"/></svg><span>Обход этапа</span></button>
+        <button class="pa-btn hidden" id="lidar-apt" title="Квартира целиком: обмер / финальный скан">
+          <svg viewBox="0 0 24 24"><path d="M4 21V6l8-3v18M12 21V9l8 3v9M2.5 21h19M7 8.5h2M7 12.5h2M7 16.5h2M15 14h2M15 17.5h2"/></svg><span>Вся квартира</span></button>
+        <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
+          <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
+      </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <span id="create-tools" class="tools">
           <button class="btn small-btn" id="add-room">+ Комната</button>
@@ -472,7 +477,7 @@ async function viewPlan(pid) {
         </span>
         <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
       </div>
-      <div id="lidar-row" class="lidar-row hidden"><button class="btn primary wide" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)">📡 Обмер комнаты лидаром</button></div>
+      <div id="lidar-row" class="lidar-row hidden"><button class="btn primary wide" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)"><span class="btn-ico">${ICONS.scan}</span>Обмер комнаты лидаром</button></div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
         ${rooms.length || (project.plan && project.plan.blob) ? '<button class="plan-trash" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">🗑</button>' : ''}
@@ -653,15 +658,25 @@ async function createRoom(pid, rooms, pts, name) {
   return room;
 }
 
+// линейные значки (цвет — currentColor), читаются лучше эмодзи
+const svgIco = d => `<svg viewBox="0 0 24 24">${d}</svg>`;
+const ICONS = {
+  plan: svgIco('<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 12h8v8M11 4v4M15 12h6"/>'),
+  stages: svgIco('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11"/><circle cx="5" cy="18" r="1.3"/>'),
+  tour: svgIco('<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>'),
+  more: svgIco('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'),
+  scan: svgIco('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8M12 8v8" opacity=".9"/>'),
+};
+
 function bottomNav(pid, active) {
   const item = (key, hash, ico, label) =>
     `<button class="nav-item ${active === key ? 'active' : ''}" data-nav="${hash}">
       <span class="nav-ico">${ico}</span>${label}</button>`;
   return `<nav class="bottomnav">
-    ${item('plan', `#/p/${pid}`, '📐', 'Схема')}
-    ${item('stages', `#/p/${pid}/stages`, '☑', 'Этапы')}
-    ${item('tour', `#/p/${pid}/tour`, '🏠', '3D-тур')}
-    ${item('more', `#/p/${pid}/more`, '⋯', 'Ещё')}
+    ${item('plan', `#/p/${pid}`, ICONS.plan, 'Схема')}
+    ${item('stages', `#/p/${pid}/stages`, ICONS.stages, 'Этапы')}
+    ${item('tour', `#/p/${pid}/tour`, ICONS.tour, '3D-тур')}
+    ${item('more', `#/p/${pid}/more`, ICONS.more, 'Ещё')}
   </nav>`;
 }
 
@@ -1249,7 +1264,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       aptBtn.classList.remove('hidden');
       aptBtn.onclick = () => showSheet(`<div class="sh-title">Квартира целиком</div>
         <p class="mut small">Комнаты сканируются подряд в одной сессии: закончили комнату — «Следующая», перешли в другую. Существующие комнаты обновятся, новые добавятся.</p>
-        <button class="btn primary wide" id="apt-measure">📡 Обмер всей квартиры</button>
+        <button class="btn primary wide" id="apt-measure"><span class="btn-ico">${ICONS.scan}</span>Обмер всей квартиры</button>
         <button class="btn wide" id="apt-final">🏁 Финальный скан (3D с текстурами)</button>`, sh => {
         sh.querySelector('#apt-measure').onclick = async () => { hideSheet(); try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); } };
         sh.querySelector('#apt-final').onclick = async () => {
@@ -1263,7 +1278,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     if (measBtn) {
       $('#lidar-row').classList.remove('hidden');
       const empty = $('.empty .mut');
-      if (empty) empty.textContent = 'Нажмите «📡 Обмер комнаты лидаром» и обойдите комнату вдоль стен — или ✎ сверху, чтобы нарисовать схему вручную.';
+      if (empty) empty.textContent = 'Нажмите «Обмер комнаты лидаром» и обойдите комнату вдоль стен — или «Редактор», чтобы нарисовать схему вручную.';
       measBtn.onclick = async () => {
         const room = selRoom();
         if (room && !confirm(`Переобмерить «${room.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;

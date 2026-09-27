@@ -117,7 +117,10 @@ body {
   padding: 8px 0 6px; cursor: pointer;
 }
 .nav-item.active { color: var(--acc); }
-.nav-ico { font-size: 19px; }
+.nav-ico { font-size: 19px; line-height: 0; }
+.nav-ico svg, .btn-ico svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.nav-item.active .nav-ico svg { stroke-width: 2.2; }
+.btn-ico { display: inline-flex; vertical-align: middle; margin: -4px 8px -4px 0; line-height: 0; }
 
 /* ---------- план ---------- */
 .plan-wrap { display: flex; flex-direction: column; }
@@ -537,4 +540,13 @@ body {
 .about #diag { margin-top: 8px; }
 .proj-name-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .proj-name-row b { font-size: 17px; overflow-wrap: anywhere; }
-.proj-name-row .iconbtn { font-size: 18px; padding: 4px 6px; margin: -4px -6px -4px 0; }
+.proj-name-row .iconbtn { font-size: 14px; padding: 4px 6px; margin: -4px -6px -4px 0; }
+/* панель действий схемы: крупные значки с подписями */
+.plan-actions { display: flex; gap: 8px; padding: 10px 10px 0; }
+.pa-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px 7px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--top-ink);
+  font: 600 12px/1.15 system-ui, -apple-system, sans-serif; cursor: pointer; box-shadow: var(--shadow);
+}
+.pa-btn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pa-btn.active { background: var(--acc); border-color: var(--acc); color: #fff; }
