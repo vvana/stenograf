@@ -1820,10 +1820,9 @@ async function viewMore(pid) {
           <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
-        <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
       </div>
-      <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия сохраняет всё (схемы, этапы, фото) в один файл, который можно импортировать на другом телефоне.</p>
+      <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия всех объектов — на главном экране; копия этого объекта — «Отправить объект с фото».</p>
       <details class="about"><summary>ℹ️ О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
     </div>
     ${bottomNav(pid, 'more')}`;
@@ -1838,7 +1837,6 @@ async function viewMore(pid) {
     project.name = name.trim();
     await dbPut('projects', project); render();
   };
-  $('#export-all2').onclick = exportBackup;
   $('#share-plan').onclick = () => exportProject(pid, false);
   $('#share-project').onclick = () => exportProject(pid, true);
   $('#import-here').onclick = importBackup;
