@@ -424,6 +424,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         return [
             "id": o.identifier.uuidString,
             "cat": String(describing: o.category),
+            "attrs": o.attributes.map { String(describing: $0) },
             "w": o.dimensions.x, "h": o.dimensions.y, "d": o.dimensions.z,
             "cx": c.x, "cy": c.y, "cz": c.z,
             "ax": ax.x, "az": ax.z,

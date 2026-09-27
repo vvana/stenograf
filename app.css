@@ -141,6 +141,16 @@ body {
   stroke: none;
 }
 #plan .room-h { font-size: 0.26px; }
+#plan .furn2 { fill: #f4f3f9; stroke: #8e8aa8; stroke-width: 0.02; pointer-events: none; }
+#plan .furn3 { fill: #e4e2ef; stroke: #8e8aa8; stroke-width: 0.015; pointer-events: none; }
+#plan .furn4 { fill: #8e8aa8; stroke: none; pointer-events: none; }
+#plan .furn5 { fill: #4a4a55; stroke: none; pointer-events: none; }
+#plan .furn-l { fill: none; stroke: #8e8aa8; stroke-width: 0.015; pointer-events: none; }
+#plan .furn-t { fill: #6f6b8a; font-weight: 600; text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none; }
+#plan .furn-num { fill: #fff; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; paint-order: stroke; stroke: var(--acc); stroke-width: 0.12px; }
+.furn-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.furn-row b { width: 22px; text-align: center; color: var(--acc); }
+.furn-row select { flex: 1; min-width: 0; }
 #plan .furn { fill: color-mix(in srgb, var(--mut) 10%, transparent); stroke: var(--mut); stroke-width: 0.02; stroke-dasharray: 0.06 0.05; pointer-events: none; }
 #plan .room.sel { fill: color-mix(in srgb, var(--acc) 20%, var(--card)); }
 #plan .wall-outline { fill: none; stroke: var(--ink); stroke-width: 0.12; stroke-linejoin: round; pointer-events: none; }
@@ -506,3 +516,5 @@ body {
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .cards.selecting { margin-bottom: 72px; }
+.plan-sheet.furn-sheet { max-height: 46vh; overflow-y: auto; }
+.furn-row .small { line-height: 1.2; min-width: 72px; }

@@ -162,6 +162,8 @@ let viewCleanup = null; // экран может оставить функцию
 
 async function render() {
   freeURLs();
+  app.style.paddingBottom = '';
+  planState.furnList = false;
   if (viewCleanup) { try { viewCleanup(); } catch {} viewCleanup = null; }
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   try {
@@ -456,6 +458,7 @@ async function viewPlan(pid) {
         <span id="room-tools" class="tools hidden">
           <input id="room-name" class="inp" placeholder="Название комнаты">
           <input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="h, м" title="Высота потолка, м">
+          <button class="btn small-btn hidden" id="room-furn">🛋 Мебель</button>
           <button class="btn small-btn danger" id="del-room">Удалить</button>
         </span>
         <span id="vertex-tools" class="tools hidden">
@@ -512,6 +515,117 @@ function freeSpot(rooms, w, h) {
 }
 
 // 4 угла, все стены горизонтальны/вертикальны → стандартный прямоугольник n/e/s/w (обход по часовой с верхнего левого)
+/* ---------- мебель из скана на схеме: условные знаки ---------- */
+const FURN_TYPES = ['bed', 'sofa', 'chair', 'table', 'storage', 'refrigerator', 'stove', 'oven', 'dishwasher', 'washerDryer', 'sink', 'toilet', 'bathtub', 'television', 'fireplace', 'stairs'];
+const furnAttr = (o, re) => re.test((o.attrs || []).join(' '));
+function furnName(o) {
+  const base = (typeof OBJECT_NAMES !== 'undefined' && OBJECT_NAMES[o.cat]) || o.cat || 'Предмет';
+  if (o.cat === 'table') return furnAttr(o, /coffee/i) ? 'Журнальный стол' : furnAttr(o, /circular|elliptic/i) ? 'Стол круглый' : base;
+  if (o.cat === 'chair') return furnAttr(o, /stool/i) ? 'Табурет' : furnAttr(o, /swivel/i) ? 'Кресло офисное' : base;
+  if (o.cat === 'sofa') return furnAttr(o, /l.?shaped/i) ? 'Диван угловой' : furnAttr(o, /single/i) ? 'Кресло' : base;
+  if (o.cat === 'storage') return furnAttr(o, /shelf/i) ? 'Стеллаж' : base;
+  return base;
+}
+// какая длинная сторона предмета у стены — там «спинка» (изголовье, спинка дивана, бачок унитаза)
+function furnBackFlip(o, r) {
+  const yd = [-Math.sin(o.ang), Math.cos(o.ang)];
+  const side = s => {
+    const p = [o.x + yd[0] * s * o.d / 2, o.y + yd[1] * s * o.d / 2];
+    let m = Infinity;
+    for (const e of roomEdges(r)) {
+      const t = Math.max(0, Math.min(e.len, (p[0] - e.a[0]) * e.ux + (p[1] - e.a[1]) * e.uy));
+      m = Math.min(m, Math.hypot(p[0] - (e.a[0] + e.ux * t), p[1] - (e.a[1] + e.uy * t)));
+    }
+    return m;
+  };
+  return side(1) < side(-1); // true — спинка со стороны +y, зеркалим знак
+}
+// знак в локальных координатах: x вдоль ширины w, y вдоль глубины d, спинка при y = -d/2
+function furnSymbol(o) {
+  const w = o.w, d = o.d, x0 = -w / 2, y0 = -d / 2;
+  const R = (x, y, ww, hh, cls = 'furn2', rx = 0.03) => `<rect class="${cls}" x="${x}" y="${y}" width="${Math.max(0.01, ww)}" height="${Math.max(0.01, hh)}" rx="${rx}"/>`;
+  const L = (xa, ya, xb, yb) => `<line class="furn-l" x1="${xa}" y1="${ya}" x2="${xb}" y2="${yb}"/>`;
+  const E = (cx, cy, rx, ry, cls = 'furn-l') => `<ellipse class="${cls}" cx="${cx}" cy="${cy}" rx="${Math.max(0.01, rx)}" ry="${Math.max(0.01, ry)}"/>`;
+  let s = '';
+  switch (o.cat) {
+    case 'bed': {
+      s += R(x0, y0, w, d);
+      const ph = Math.min(0.3, d * 0.18), m = 0.08;
+      if (w > 1.2) { const pw = (w - 3 * m) / 2; s += R(x0 + m, y0 + m, pw, ph, 'furn3') + R(x0 + 2 * m + pw, y0 + m, pw, ph, 'furn3'); }
+      else s += R(x0 + m, y0 + m, w - 2 * m, ph, 'furn3');
+      const by = y0 + m + ph + Math.min(0.25, d * 0.12);
+      s += L(x0, by, x0 + w, by) + L(x0 + w * 0.55, by, x0 + w, by + Math.min(0.35, d * 0.2));
+      break;
+    }
+    case 'sofa': {
+      const bt = Math.min(0.25, d * 0.28), aw = Math.min(0.2, w * 0.12);
+      s += R(x0, y0, w, d) + R(x0, y0, w, bt, 'furn3', 0.02) + R(x0, y0 + bt, aw, d - bt, 'furn3', 0.02) + R(x0 + w - aw, y0 + bt, aw, d - bt, 'furn3', 0.02);
+      const n = w - 2 * aw > 1.5 ? 3 : 2, sw = (w - 2 * aw) / n;
+      for (let k = 1; k < n; k++) s += L(x0 + aw + sw * k, y0 + bt, x0 + aw + sw * k, y0 + d);
+      break;
+    }
+    case 'chair':
+      if (furnAttr(o, /stool/i)) s += E(0, 0, w / 2, d / 2, 'furn2');
+      else s += R(x0, y0, w, d, 'furn2', 0.05) + R(x0, y0, w, Math.min(0.1, d * 0.2), 'furn3', 0.02);
+      break;
+    case 'table':
+      s += furnAttr(o, /circular|elliptic/i) ? E(0, 0, w / 2, d / 2, 'furn2') : R(x0, y0, w, d, 'furn2', 0.02);
+      break;
+    case 'storage':
+      s += R(x0, y0, w, d, 'furn2', 0.01);
+      if (furnAttr(o, /shelf/i)) { s += L(x0, y0 + d / 3, x0 + w, y0 + d / 3) + L(x0, y0 + 2 * d / 3, x0 + w, y0 + 2 * d / 3); }
+      else s += L(x0, y0, x0 + w, y0 + d) + L(x0 + w, y0, x0, y0 + d);
+      break;
+    case 'stove': {
+      s += R(x0, y0, w, d, 'furn2', 0.01);
+      const rr = Math.min(w, d) * 0.16;
+      for (const [fx, fy] of [[-0.25, -0.22], [0.25, -0.22], [-0.25, 0.22], [0.25, 0.22]]) s += E(fx * w, fy * d, rr, rr);
+      break;
+    }
+    case 'washerDryer':
+      s += R(x0, y0, w, d, 'furn2', 0.01) + E(0, 0.05 * d, Math.min(w, d) * 0.32, Math.min(w, d) * 0.32);
+      break;
+    case 'sink':
+      s += R(x0, y0, w, d, 'furn2', 0.02) + E(0, d * 0.08, w * 0.34, d * 0.3) + E(0, y0 + d * 0.12, 0.025, 0.025, 'furn4');
+      break;
+    case 'toilet': {
+      const th = Math.min(0.2, d * 0.3);
+      s += R(x0, y0, w, th, 'furn2', 0.02) + E(0, y0 + th + (d - th) / 2, w * 0.42, (d - th) / 2 * 0.95, 'furn2');
+      break;
+    }
+    case 'bathtub':
+      s += R(x0, y0, w, d, 'furn2', 0.04) + R(x0 + 0.07, y0 + 0.07, w - 0.14, d - 0.14, 'furn3', Math.min(w, d) * 0.25) + E(x0 + w * 0.12, 0, 0.03, 0.03, 'furn4');
+      break;
+    case 'television':
+      s += R(x0, y0, w, d, 'furn5', 0.01);
+      break;
+    case 'stairs': {
+      s += R(x0, y0, w, d, 'furn2', 0.01);
+      for (let y = y0 + 0.28; y < y0 + d - 0.05; y += 0.28) s += L(x0, y, x0 + w, y);
+      break;
+    }
+    default:
+      s += R(x0, y0, w, d, 'furn2', 0.02);
+      if (o.cat === 'oven' || o.cat === 'fireplace' || o.cat === 'refrigerator' || o.cat === 'dishwasher') s += R(x0 + w * 0.12, y0 + d * 0.15, w * 0.76, d * 0.7, 'furn3', 0.02);
+  }
+  return s;
+}
+const FURN_SHORT = { refrigerator: 'Хол.', oven: 'Дух.', dishwasher: 'ПММ', washerDryer: 'СМ', fireplace: 'Камин', television: 'ТВ' };
+function furnSvg(o, r, num) {
+  const deg = o.ang * 180 / Math.PI;
+  const flip = furnBackFlip(o, r) ? ' scale(1 -1)' : '';
+  let s = `<g class="furn-g" transform="translate(${o.x} ${o.y}) rotate(${deg})"><g transform="${flip.trim() || 'translate(0 0)'}">${furnSymbol(o)}</g></g>`;
+  let label = num != null ? String(num) : FURN_SHORT[o.cat] || (o.cat === 'storage' && !furnAttr(o, /shelf/i) ? '' : '');
+  if (label) {
+    let td = deg % 360; if (td < 0) td += 360;
+    if (td > 90 && td < 270) td -= 180;
+    if (num != null) td = 0; // номера — всегда ровно
+    const fs = num != null ? 0.26 : Math.min(0.16, Math.max(0.09, Math.min(o.w, o.d) * 0.35));
+    s += `<text class="${num != null ? 'furn-num' : 'furn-t'}" style="font-size:${fs}px" transform="translate(${o.x} ${o.y}) rotate(${td})">${esc(label)}</text>`;
+  }
+  return s;
+}
+
 function standardizeRect(pts) {
   if (pts.length !== 4) return null;
   const axis = pts.every((p, i) => { const q = pts[(i + 1) % 4]; return Math.abs(p[0] - q[0]) < 0.05 || Math.abs(p[1] - q[1]) < 0.05; });
@@ -596,7 +710,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       s += `<g>
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
-        ${(r.objects || []).map(o => `<rect class="furn" x="${-o.w / 2}" y="${-o.d / 2}" width="${o.w}" height="${o.d}" rx="0.04" transform="translate(${o.x} ${o.y}) rotate(${o.ang * 180 / Math.PI})"><title>${esc((typeof OBJECT_NAMES !== 'undefined' && OBJECT_NAMES[o.cat]) || o.cat)}</title></rect>`).join('')}
+        ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
         <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}${r.measured === 'lidar' ? ' 📡' : ''}</text>
         ${r.wallTop && Object.keys(r.wallTop).length ? `<text class="room-label room-h" x="${cx}" y="${planState.edit ? cy + 0.5 : cy - 1.05}">${roomHeightText(r)}</text>` : ''}`;
       for (const e of edges) {
@@ -918,6 +1032,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         if (v > 0) room.ceil = v; else delete room.ceil;
         clearTimeout(ceilInp._t); ceilInp._t = setTimeout(() => dbPut('rooms', room), 400);
       };
+      const furnBtn = $('#room-furn');
+      furnBtn.classList.toggle('hidden', !(room.objects && room.objects.length));
+      furnBtn.textContent = `🛋 Мебель (${(room.objects || []).length})`;
+      furnBtn.onclick = () => furnitureSheet(room);
       $('#del-room').onclick = async () => {
         const photos = (await dbAll('photos', 'projectId', pid)).filter(p => p.wallKey.startsWith(room.id + ':'));
         const msg = photos.length
@@ -979,7 +1097,37 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     sheet.querySelector('#ps-cancel').onclick = hideSheet;
     if (wire) wire(sheet);
   }
-  function hideSheet() { sheet.classList.add('hidden'); sheet.innerHTML = ''; }
+  function hideSheet() { sheet.classList.add('hidden'); sheet.classList.remove('furn-sheet'); sheet.innerHTML = ''; app.style.paddingBottom = ''; if (planState.furnList) { planState.furnList = false; draw(); } }
+
+  // мебель комнаты: номера на схеме, смена типа (если RoomPlan ошибся) и удаление
+  function furnitureSheet(room) {
+    planState.furnList = true; draw();
+    sheet.classList.add('furn-sheet');
+    // комната должна быть видна над списком: даём странице запас снизу и прокручиваем к комнате
+    app.style.paddingBottom = '60vh';
+    const el = document.querySelector('#plan path.room.sel') || $('#plan-box'), top = document.querySelector('.topbar');
+    window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + scrollY - (top ? top.offsetHeight : 0) - 12) });
+    const list = room.objects || [];
+    showSheet(`<div class="sh-title">Мебель: ${esc(room.name)}</div>
+      <p class="mut small">Распознано лидаром (RoomPlan). Номера — на схеме. Если тип определён неверно — выберите правильный.</p>
+      ${list.map((o, k) => `<div class="furn-row">
+        <b>${k + 1}</b>
+        <select class="inp" data-ft="${k}">${FURN_TYPES.map(t => `<option value="${t}" ${t === o.cat ? 'selected' : ''}>${esc(OBJECT_NAMES[t] || t)}</option>`).join('')}</select>
+        <span class="mut small">${fmtM(o.w)}×${fmtM(o.d)}${furnName(o) !== (OBJECT_NAMES[o.cat] || o.cat) ? `<br>${esc(furnName(o).toLowerCase())}` : ''}</span>
+        <button class="iconbtn danger" data-fdel="${k}" title="Удалить">🗑</button>
+      </div>`).join('') || '<p class="mut">Мебели нет.</p>'}`, sh => {
+      sh.querySelectorAll('[data-ft]').forEach(s => s.onchange = async () => {
+        const o = list[+s.dataset.ft]; o.cat = s.value; o.attrs = [];
+        await dbPut('rooms', room); draw();
+      });
+      sh.querySelectorAll('[data-fdel]').forEach(b => b.onclick = async () => {
+        const k = +b.dataset.fdel;
+        if (!confirm(`Удалить «${furnName(list[k])}» со схемы и из 3D?`)) return;
+        list.splice(k, 1); room.objects = list;
+        await dbPut('rooms', room); hideSheet(); render();
+      });
+    });
+  }
 
   function underlaySheet() {
     showSheet(`

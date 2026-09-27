@@ -174,7 +174,7 @@ function scanObjects(scan, toPlan, turn) {
   return (scan.objects || []).filter(o => o.w > 0.05 && o.d > 0.05).map(o => {
     const [x, y] = toPlan([o.cx, o.cz]);
     return {
-      cat: o.cat, x: cm(x), y: cm(y), w: cm(o.w), d: cm(o.d), h: cm(o.h),
+      cat: o.cat, attrs: (o.attrs || []).map(String), x: cm(x), y: cm(y), w: cm(o.w), d: cm(o.d), h: cm(o.h),
       z: cm(Math.max(0, o.cy - o.h / 2 - floorY)), ang: +(Math.atan2(o.az, o.ax) + turn).toFixed(4),
     };
   });
