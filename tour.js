@@ -144,7 +144,7 @@ async function viewTour(pid, roomId = null) {
   ground.rotation.x = -Math.PI / 2; ground.position.set(centerAll.x, -0.02, centerAll.z); ground.receiveShadow = true;
   scene.add(ground);
   const wallSolid = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x6e6e6e, side: THREE.DoubleSide }); // белые, наружные грани чуть затенены
-  const wallCap = new THREE.MeshBasicMaterial({ color: 0x3d4248 }); // верх стены — тёмный «разрез», как на чертеже
+  const wallCap = new THREE.MeshBasicMaterial({ color: 0x6b7178 }); // верх стены — тёмный «разрез», как на чертеже
   const doorMat = new THREE.MeshLambertMaterial({ color: 0xdcc3a0 });
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xe4f1f8, transparent: true, opacity: 0.6 });
   const plainFloors = [], solidWalls = [];
