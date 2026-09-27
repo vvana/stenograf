@@ -448,7 +448,6 @@ async function viewPlan(pid) {
           <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">✏ Обвести</button>
           <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">📏 По обмеру</button>
           <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">🗺 Подложка</button>
-          ${rooms.length ? '<button class="btn small-btn danger" id="clear-plan" title="Удалить все комнаты схемы">🗑 Очистить схему</button>' : ''}
         </span>
         <span id="mode-tools" class="tools hidden">
           <span id="mode-text" class="small"></span>
@@ -474,7 +473,10 @@ async function viewPlan(pid) {
         <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
       </div>
       <div id="lidar-row" class="lidar-row hidden"><button class="btn primary wide" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)">📡 Обмер комнаты лидаром</button></div>
-      <div id="plan-box" class="plan-box"></div>
+      <div class="plan-frame">
+        <div id="plan-box" class="plan-box"></div>
+        ${rooms.length || (project.plan && project.plan.blob) ? '<button class="plan-trash" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">🗑</button>' : ''}
+      </div>
       <div id="plan-sheet" class="plan-sheet hidden"></div>
       <input type="file" id="underlay-file" accept="image/*" class="hidden-input">
       ${rooms.length === 0 && !planState.edit ? `
@@ -1804,7 +1806,6 @@ async function viewMore(pid) {
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
-        <button class="btn danger wide" id="clear-plan2">🗑 Удалить схему (комнаты и их фото)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
       </div>
       <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия сохраняет всё (схемы, этапы, фото) в один файл, который можно импортировать на другом телефоне.</p>
@@ -1832,7 +1833,6 @@ async function viewMore(pid) {
     try { localStorage.setItem('stenograf.user', t.trim()); } catch {}
     render();
   };
-  $('#clear-plan2').onclick = async () => { if (await clearPlan(pid)) render(); };
   $('#del-project').onclick = async () => { if (await deleteProject(pid)) nav(''); };
 }
 
