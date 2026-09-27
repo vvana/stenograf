@@ -1235,7 +1235,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
   // лидар (только нативная iOS-версия на iPhone Pro)
   lidarAvailable().then(ok => {
     if (!ok) {
-      if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → Диагностика»');
+      if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → О приложении»');
       return;
     }
     const walkBtn = $('#lidar-walk'), measBtn = $('#lidar-measure'), aptBtn = $('#lidar-apt');
@@ -1803,30 +1803,19 @@ async function viewMore(pid) {
           <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
-        <div class="card" id="diag-card"><b>Диагностика</b><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div>
-          <button class="btn wide hidden" id="diag-force">📡 Попробовать обмер без проверки</button></div>
         <button class="btn wide" id="rename-project">Переименовать объект</button>
         <button class="btn wide" id="export-all2">⬇ Резервная копия (все объекты)</button>
         <button class="btn danger wide" id="clear-plan2">🗑 Удалить схему (комнаты и их фото)</button>
         <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
       </div>
       <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия сохраняет всё (схемы, этапы, фото) в один файл, который можно импортировать на другом телефоне.</p>
+      <details class="about"><summary>ℹ️ О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
     </div>
     ${bottomNav(pid, 'more')}`;
 
   nativeDiagnostics().then(d => {
     const el = $('#diag');
     if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
-    const fb = $('#diag-force');
-    if (fb && Native.RP) {
-      fb.classList.remove('hidden');
-      fb.onclick = async () => {
-        try {
-          const scan = await Native.RP.scan({ mode: 'measure', force: true });
-          alert('Скан получен: стен ' + ((scan && scan.walls) || []).length + ', дверей ' + ((scan && scan.doors) || []).length + ', окон ' + ((scan && scan.windows) || []).length);
-        } catch (err) { alert('Обмер не запустился: ' + ((err && err.message) || err)); }
-      };
-    }
   }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
   $('#rename-project').onclick = async () => {
     const name = prompt('Название объекта:', project.name);

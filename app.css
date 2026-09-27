@@ -525,3 +525,6 @@ body {
 .cards.selecting { margin-bottom: 72px; }
 .plan-sheet.furn-sheet { max-height: 46vh; overflow-y: auto; }
 .furn-row .small { line-height: 1.2; min-width: 72px; }
+.about { margin-top: 14px; }
+.about summary { color: var(--mut); font-size: 13px; cursor: pointer; }
+.about #diag { margin-top: 8px; }
