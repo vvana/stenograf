@@ -271,7 +271,7 @@ async function viewProjects() {
       <button class="btn primary wide" id="add-project">+ Новый объект</button>
       <div class="backup-row">
         <button class="btn ghost" id="export-all">⬇ Резервная копия</button>
-        <button class="btn ghost" id="import-all">⬆ Импорт копии</button>
+        <button class="btn ghost" id="import-all">⬆ Импорт файла</button>
       </div>
       <p class="mut small center">Данные хранятся только на этом устройстве.<br>Периодически сохраняйте резервную копию.</p>
     </div>`;
@@ -1814,13 +1814,11 @@ async function viewMore(pid) {
         <button class="btn wide" data-nav="#/p/${pid}/calc">🧮 Площади и материалы</button>
         <div class="card">
           <b>Команда объекта</b>
-          <p class="mut small">Пока без сервера: обмен файлами. Владелец отправляет схему, рабочие снимают и отправляют фото обратно — при импорте всё сливается без дублей.</p>
+          <p class="mut small">Пока без сервера: обмен файлами. Владелец отправляет схему, рабочие снимают и отправляют фото обратно. Полученный файл открывайте через «Импорт файла» на главном экране — всё сольётся без дублей.</p>
           <button class="btn wide" id="share-plan">📤 Отправить схему коллегам (без фото)</button>
           <button class="btn wide" id="share-project">📤 Отправить объект с фото</button>
-          <button class="btn wide" id="import-here">⬆ Импорт: схема или фото от коллег</button>
           <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
-        <button class="btn danger wide" id="del-project">Удалить объект и все его данные</button>
       </div>
       <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия всех объектов — на главном экране; копия этого объекта — «Отправить объект с фото».</p>
       <details class="about"><summary>ℹ️ О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
@@ -1839,14 +1837,12 @@ async function viewMore(pid) {
   };
   $('#share-plan').onclick = () => exportProject(pid, false);
   $('#share-project').onclick = () => exportProject(pid, true);
-  $('#import-here').onclick = importBackup;
   $('#set-name').onclick = () => {
     const t = prompt('Ваше имя и роль (подпись на фото и пометках):', userName());
     if (t === null) return;
     try { localStorage.setItem('stenograf.user', t.trim()); } catch {}
     render();
   };
-  $('#del-project').onclick = async () => { if (await deleteProject(pid)) nav(''); };
 }
 
 /* ---------- резервная копия ---------- */
