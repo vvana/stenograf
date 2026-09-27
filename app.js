@@ -484,7 +484,7 @@ async function viewPlan(pid) {
           <p class="mut">Нажмите ✎ сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
         </div>` : `<p class="mut small center pad-h">${planState.edit
           ? 'Режим редактора: комната — многоугольник до 10 углов. По умолчанию углы 90°, любой можно изменить.'
-          : 'Тапните по стене или по плашке «Потолок»/«Пол» внутри комнаты. Цифра — сколько фото уже есть.'}</p>`}
+          : 'Тап по стене — её фото по этапам. Тап внутри комнаты — потолок, пол, панорама 360°.'}</p>`}
     </div>
     ${bottomNav(pid, 'plan')}`;
 
@@ -711,8 +711,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
-        <text class="room-label" x="${cx}" y="${planState.edit ? cy : cy - 0.55}">${esc(r.name)}${r.measured === 'lidar' ? ' 📡' : ''}</text>
-        ${r.wallTop && Object.keys(r.wallTop).length ? `<text class="room-label room-h" x="${cx}" y="${planState.edit ? cy + 0.5 : cy - 1.05}">${roomHeightText(r)}</text>` : ''}`;
+        <text class="room-label" x="${cx}" y="${cy}">${esc(r.name)}</text>
+        ${r.wallTop && Object.keys(r.wallTop).length ? `<text class="room-label room-h" x="${cx}" y="${cy - 0.45}">${roomHeightText(r)}</text>` : ''}`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
@@ -784,38 +784,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         s += `<text class="wall-dim" style="font-size:0.2px" x="${V[0] + bx * d}" y="${V[1] + by * d}">R ${fmtM(V[2])}</text>`;
       });
       if (!planState.edit) {
-        const compact = bb.w < 3.2 || bb.h < 2.8;
-        const chips = [['c', 'Потолок', '⬆'], ['f', 'Пол', '⬇'], ['p', 'Панорама', '🌐']];
-        chips.forEach(([sf, name, ico], i) => {
-          const key = `${r.id}:${sf}`;
-          const cnt = counts[key] || 0;
-          const ptsMark = points[key] ? ' ⚡' : '';
-          if (compact) {
-            const label = (cnt ? `${ico}${cnt}` : ico) + ptsMark;
-            const cw2 = cnt ? 0.95 : 0.7;
-            const chx = cx + (i - 1) * 0.85;
-            s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
-              <rect x="${chx - cw2 / 2}" y="${cy + 0.2}" width="${cw2}" height="0.6" rx="0.3"/>
-              <text x="${chx}" y="${cy + 0.5}">${label}</text>
-              <rect class="surf-hit" x="${chx - 0.42}" y="${cy + 0.05}" width="0.84" height="0.9"/></g>`;
-          } else if (sf === 'p') {
-            // панорама — круглая кнопка справа от плашки «Пол»
-            const cw = Math.min(2.4, bb.w - 0.8);
-            const chx = cx + cw / 2 - 0.3, chy = cy + 0.85;
-            s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
-              <rect x="${chx - 0.3}" y="${chy - 0.3}" width="0.6" height="0.6" rx="0.3"/>
-              <text x="${chx}" y="${chy}">${ico}${cnt ? cnt : ''}</text>
-              <rect class="surf-hit" x="${chx - 0.45}" y="${chy - 0.45}" width="0.9" height="0.9"/></g>`;
-          } else {
-            const label = (cnt ? `${name} · ${cnt}` : name) + ptsMark;
-            const cw = Math.min(2.4, bb.w - 0.8);
-            const chy = cy + (i === 0 ? 0.1 : 0.85);
-            const cw2 = i === 0 ? cw : cw - 0.75, chx = i === 0 ? cx : cx - 0.375;
-            s += `<g class="surf ${cnt ? 'has' : ''}" data-wall="${key}">
-              <rect x="${chx - cw2 / 2}" y="${chy - 0.3}" width="${cw2}" height="0.6" rx="0.3"/>
-              <text x="${chx}" y="${chy}">${esc(label)}</text></g>`;
-          }
-        });
+        // пол, потолок, панорама — в меню по тапу внутри комнаты; здесь только счётчик, если фото уже есть
+        const extra = [['c', '⬆'], ['f', '⬇'], ['p', '360°']]
+          .map(([sf, ico]) => { const n = counts[`${r.id}:${sf}`] || 0; return n ? `${ico} ${n}` : ''; }).filter(Boolean);
+        if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.42}">${extra.join('   ')}</text>`;
       }
       if (planState.edit && sel) {
         if (r.pts.length < MAX_CORNERS) {
@@ -859,6 +831,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     if (!planState.edit) {
       const wallEl = e.target.closest('[data-wall]');
       if (wallEl) drag = { kind: 'tap-wall', key: wallEl.dataset.wall, sx: e.clientX, sy: e.clientY, moved: false };
+      else {
+        const roomEl = e.target.closest('[data-room]');
+        if (roomEl) drag = { kind: 'tap-room', id: roomEl.dataset.room, sx: e.clientX, sy: e.clientY, moved: false };
+      }
       return;
     }
     e.preventDefault();
@@ -924,6 +900,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     if (!drag) return;
     const d = drag; drag = null;
     if (d.kind === 'tap-wall') { if (!d.moved) nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`); return; }
+    if (d.kind === 'tap-room') { if (!d.moved) roomMenu(d.id); return; }
     if (d.kind === 'tap-mode') { if (!d.moved) await modeTap(d.world); return; }
     if (d.kind === 'underlay') { if (d.moved) await dbPut('projects', project); return; }
     const room = selRoom();
@@ -1119,6 +1096,19 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     if (wire) wire(sheet);
   }
   function hideSheet() { sheet.classList.add('hidden'); sheet.classList.remove('furn-sheet'); sheet.innerHTML = ''; app.style.paddingBottom = ''; if (planState.furnList) { planState.furnList = false; draw(); } }
+
+  // тап внутри комнаты: поверхности без стен — потолок, пол, панорама
+  function roomMenu(roomId) {
+    const r = rooms.find(x => x.id === roomId);
+    if (!r) return;
+    const cnt = sf => counts[`${r.id}:${sf}`] || 0;
+    const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico} ${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
+    showSheet(`<div class="sh-title">${esc(r.name)}</div>
+      <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
+      ${item('c', '⬆', 'Потолок')}${item('f', '⬇', 'Пол')}${item('p', '🌐', 'Панорама 360°')}`, sh => {
+      sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
+    });
+  }
 
   // мебель комнаты: номера на схеме, смена типа (если RoomPlan ошибся) и удаление
   function furnitureSheet(room) {

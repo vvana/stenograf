@@ -2,7 +2,7 @@
 'use strict';
 
 const tourState = { mode: 'house', stage: 'all', roomId: null, photos: false };
-const FLOOR_COLORS = [0x5cb85c, 0xe36b52, 0xf0a04b, 0x6aa8dc, 0xa98ad6, 0x62c2a8, 0xe58aa6, 0xb5c25a];
+const FLOOR_COLORS = [0xe3cfae, 0xd8d6d0, 0xead9bd, 0xcfc6b6, 0xe6dfd2, 0xdcc7a4]; // светлое дерево и светло-серый — спокойные полы, как в планировщиках
 const WALL_T = 0.12; // толщина стен на «домике», м
 const TEX_W = 768;
 

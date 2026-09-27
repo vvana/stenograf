@@ -141,6 +141,7 @@ body {
   stroke: none;
 }
 #plan .room-h { font-size: 0.26px; }
+#plan .room-cnt { font-size: 0.24px; fill: var(--mut); text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none; }
 #plan .furn2 { fill: #f4f3f9; stroke: #8e8aa8; stroke-width: 0.02; pointer-events: none; }
 #plan .furn3 { fill: #e4e2ef; stroke: #8e8aa8; stroke-width: 0.015; pointer-events: none; }
 #plan .furn4 { fill: #8e8aa8; stroke: none; pointer-events: none; }
