@@ -1492,7 +1492,7 @@ async function viewStages(pid) {
     if (!h) return;
     e.preventDefault();
     const row = h.closest('.swipe');
-    h.setPointerCapture(e.pointerId);
+    try { h.setPointerCapture(e.pointerId); } catch {}
     drag = { row, h, startY: e.clientY, dy: 0 };
     row.classList.add('dragging');
   });
