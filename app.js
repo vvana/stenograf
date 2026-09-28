@@ -160,17 +160,21 @@ function nav(hash) { location.hash = hash; }
 
 let viewCleanup = null; // экран может оставить функцию уборки (остановить камеру и т.п.)
 
+let lastRenderedHash = null;
 async function render() {
   freeURLs();
   app.style.paddingBottom = '';
   planState.furnList = false;
   if (viewCleanup) { try { viewCleanup(); } catch {} viewCleanup = null; }
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  // новый экран открывается с начала, иначе шапка схемы оказывается «под» верхней панелью
+  if (location.hash !== lastRenderedHash) { lastRenderedHash = location.hash; window.scrollTo(0, 0); }
   try {
     if (parts.length === 0) return await viewProjects();
     if (parts[0] === 'p' && parts[1]) {
       const pid = parts[1];
       if (parts[2] === 'stages') return await viewStages(pid);
+      if (parts[2] === 'st' && parts[3]) return await viewStageAlbum(pid, parts[3]);
       if (parts[2] === 'more') return await viewMore(pid);
       if (parts[2] === 'w' && parts[3]) return await viewWall(pid, parts[3]);
       if (parts[2] === 'cmp' && parts[3]) return await viewCompare(pid, parts[3]);
@@ -203,6 +207,61 @@ app.addEventListener('click', e => {
   if (t) nav(t.dataset.nav);
 });
 
+/* ---------- свайп влево по строке открывает кнопку «Удалить» ---------- */
+// разметка: <div class="swipe" data-id><button class="swipe-del">Удалить</button><div class="swipe-body">…</div></div>
+function attachSwipe(container, onDelete) {
+  const W = 96;
+  let cur = null;
+  const close = row => { if (!row) return; row.classList.remove('open'); const b = row.querySelector('.swipe-body'); if (b) b.style.transform = ''; };
+  container.addEventListener('pointerdown', e => {
+    if (e.target.closest('.drag-handle, .swipe-del')) return;
+    const row = e.target.closest('.swipe');
+    if (!row) return;
+    container.querySelectorAll('.swipe.open').forEach(r => { if (r !== row) close(r); });
+    cur = { row, body: row.querySelector('.swipe-body'), x0: e.clientX, y0: e.clientY, base: row.classList.contains('open') ? -W : 0, dx: 0, mode: null, id: e.pointerId };
+  });
+  container.addEventListener('pointermove', e => {
+    if (!cur || e.pointerId !== cur.id) return;
+    const dx = e.clientX - cur.x0, dy = e.clientY - cur.y0;
+    if (!cur.mode) {
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+        cur.mode = 'h';
+        try { cur.row.setPointerCapture(e.pointerId); } catch {}
+        cur.body.style.transition = 'none';
+      } else if (Math.abs(dy) > 8) { cur = null; return; }
+      else return;
+    }
+    cur.dx = dx;
+    cur.body.style.transform = `translateX(${Math.min(0, Math.max(-W * 1.4, cur.base + dx))}px)`;
+  });
+  const end = () => {
+    if (!cur) return;
+    const c = cur; cur = null;
+    if (c.mode !== 'h') return;
+    c.body.style.transition = '';
+    if (c.base + c.dx < -W / 2) { c.body.style.transform = `translateX(${-W}px)`; c.row.classList.add('open'); }
+    else close(c.row);
+    c.row.dataset.swiped = Date.now();
+  };
+  container.addEventListener('pointerup', end);
+  container.addEventListener('pointercancel', end);
+  // клик сразу после свайпа или по открытой строке — только закрыть; «Удалить» — удалить
+  container.addEventListener('click', e => {
+    const del = e.target.closest('.swipe-del');
+    if (del) {
+      e.stopPropagation(); e.preventDefault();
+      const row = del.closest('.swipe');
+      Promise.resolve(onDelete(row.dataset.id, row)).then(done => { if (!done) close(row); });
+      return;
+    }
+    const row = e.target.closest('.swipe');
+    if (!row) return;
+    if (Date.now() - (+row.dataset.swiped || 0) < 400 || row.classList.contains('open')) {
+      e.stopPropagation(); e.preventDefault(); close(row);
+    }
+  }, true);
+}
+
 /* ---------- удаление объекта и схемы ---------- */
 
 async function deleteProject(pid) {
@@ -210,9 +269,7 @@ async function deleteProject(pid) {
   if (!project) return false;
   const photos = await dbAll('photos', 'projectId', pid);
   const rooms = await dbAll('rooms', 'projectId', pid);
-  if (!confirm(`Удалить объект «${project.name}»?
-Комнат: ${rooms.length}, фото: ${photos.length}. Удалятся схема, этапы и все фото.`)) return false;
-  if (!confirm('Точно удалить? Восстановить будет нельзя (только из резервной копии).')) return false;
+  if (!confirm(`Удалить объект «${project.name}»?\nКомнат: ${rooms.length}, фото: ${photos.length}. Удалятся схема, этапы и все фото — восстановить можно только из резервной копии.`)) return false;
   await dbDelWhere('photos', 'projectId', pid);
   await dbDelWhere('rooms', 'projectId', pid);
   await dbDelWhere('stages', 'projectId', pid);
@@ -262,10 +319,12 @@ async function viewProjects() {
         </div>` : ''}
       <div class="cards">
         ${projects.map(p => `
-          <div class="card project-card" data-nav="#/p/${p.id}">
-            <button class="card-del" data-nonav data-del="${p.id}" title="Удалить объект" aria-label="Удалить объект">🗑</button>
-            <div class="project-name">${esc(p.name)}</div>
-            <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
+          <div class="swipe" data-id="${p.id}">
+            <button class="swipe-del">Удалить</button>
+            <div class="card project-card swipe-body" data-nav="#/p/${p.id}">
+              <div class="project-name">${esc(p.name)}</div>
+              <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
+            </div>
           </div>`).join('')}
       </div>
       <button class="btn primary wide" id="add-project">+ Новый объект</button>
@@ -279,16 +338,17 @@ async function viewProjects() {
   $('#add-project').onclick = async () => {
     const name = prompt('Название объекта (например, «Квартира на Ленина»):');
     if (!name || !name.trim()) return;
-    templateSheet(async tpl => {
-      const p = { id: uid(), name: name.trim(), created: Date.now(), template: tpl ? tpl.id : 'custom' };
-      await dbPut('projects', p);
-      await createStagesFromTemplate(p.id, tpl);
-      nav(`#/p/${p.id}`);
-    });
+    // без выбора шаблона: один этап «Исходное состояние», дальше пользователь добавляет свои
+    const p = { id: uid(), name: name.trim(), created: Date.now(), template: 'custom' };
+    await dbPut('projects', p);
+    const first = STAGE_TEMPLATES[0].stages[0];
+    await dbPut('stages', { id: uid(), projectId: p.id, name: first[0], ord: 0, status: 0, hint: first[1] });
+    nav(`#/p/${p.id}`);
   };
   $('#export-all').onclick = exportBackup;
   $('#import-all').onclick = importBackup;
-  app.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (await deleteProject(b.dataset.del)) render(); });
+  const list = app.querySelector('.cards');
+  if (list) attachSwipe(list, async id => { if (await deleteProject(id)) { render(); return true; } return false; });
 }
 
 /* ---------- экран: план квартиры ---------- */
@@ -1327,14 +1387,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
 
 /* ---------- экран: этапы ---------- */
 
-// режим выбора этапов (удаление нескольких); сбрасывается при уходе с экрана
-const stageSel = { pid: null, on: false, ids: new Set() };
-
 async function viewStages(pid) {
   const { project, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
-  if (stageSel.pid !== pid) { stageSel.pid = pid; stageSel.on = false; stageSel.ids.clear(); }
-  for (const id of [...stageSel.ids]) if (!stages.some(s => s.id === id)) stageSel.ids.delete(id);
   const counts = {};
   photos.forEach(p => { counts[p.stageId] = (counts[p.stageId] || 0) + 1; });
 
@@ -1342,68 +1397,74 @@ async function viewStages(pid) {
     ${header('Этапы ремонта', `#/p/${pid}`)}
     <div class="pad">
       <div class="stage-toolbar">
-        <p class="mut small">${stageSel.on ? 'Отметьте этапы, которые нужно удалить.' : 'Порядок — перетаскивайте за ⠿. Статус — тап по плашке. Название — тап по нему.'}</p>
-        ${stages.length ? `<button class="btn small-btn" id="stage-select">${stageSel.on ? 'Готово' : '☑ Выбрать'}</button>` : ''}
+        <p class="mut small">Тап — фото этапа. Порядок — за ⠿. Удалить — свайп влево.</p>
+        <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
       </div>
-      <div class="cards ${stageSel.on ? 'selecting' : ''}" id="stage-list">
+      <div class="cards" id="stage-list">
         ${stages.map(s => `
-          <div class="card stage-row ${stageSel.ids.has(s.id) ? 'picked' : ''}" data-id="${s.id}">
-            ${stageSel.on
-              ? `<span class="stage-check" data-pick="${s.id}">${stageSel.ids.has(s.id) ? '☑' : '☐'}</span>`
-              : `<span class="drag-handle" title="Перетащите, чтобы поменять порядок" aria-label="Переместить">⠿</span>`}
-            <div class="stage-main" ${stageSel.on ? `data-pick="${s.id}"` : ''}>
-              <div class="stage-name" ${stageSel.on ? '' : `data-rename="${s.id}"`}>${esc(s.name)}</div>
-              <div class="mut small stage-sub">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
+          <div class="swipe" data-id="${s.id}">
+            <button class="swipe-del">Удалить</button>
+            <div class="card stage-row swipe-body" data-open="${s.id}">
+              <span class="drag-handle" title="Перетащите, чтобы поменять порядок" aria-label="Переместить">⠿</span>
+              <div class="stage-main">
+                <div class="stage-name">${esc(s.name)}</div>
+                <div class="mut small stage-sub">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
+              </div>
+              <button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
             </div>
-            ${stageSel.on ? '' : `<button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>`}
           </div>`).join('')}
       </div>
-      ${stageSel.on ? '' : `<button class="btn primary wide" id="add-stage">+ Добавить этап</button>
-      <button class="btn wide" id="apply-template">📋 Взять этапы из шаблона</button>`}
+      ${stages.length ? '' : '<p class="mut center">Этапов пока нет. Нажмите «Добавить».</p>'}
     </div>
-    ${stageSel.on ? `<div class="sel-bar">
-      <button class="btn small-btn" id="sel-all">${stageSel.ids.size === stages.length ? 'Снять все' : 'Все'}</button>
-      <button class="btn small-btn danger" id="sel-del" ${stageSel.ids.size ? '' : 'disabled'}>🗑 Удалить${stageSel.ids.size ? ` (${stageSel.ids.size})` : ''}</button>
-      <button class="btn small-btn" id="sel-cancel">Отмена</button>
-    </div>` : ''}
     ${bottomNav(pid, 'stages')}`;
 
-  const selBtn = $('#stage-select');
-  if (selBtn) selBtn.onclick = () => { stageSel.on = !stageSel.on; stageSel.ids.clear(); render(); };
-  if (stageSel.on) {
-    $('#sel-cancel').onclick = () => { stageSel.on = false; stageSel.ids.clear(); render(); };
-    $('#sel-all').onclick = () => {
-      if (stageSel.ids.size === stages.length) stageSel.ids.clear(); else stages.forEach(s => stageSel.ids.add(s.id));
-      render();
-    };
-    $('#sel-del').onclick = async () => {
-      const chosen = stages.filter(s => stageSel.ids.has(s.id));
-      if (!chosen.length) return;
-      const ph = photos.filter(p => stageSel.ids.has(p.stageId));
-      const names = chosen.slice(0, 6).map(s => '• ' + s.name).join('\n') + (chosen.length > 6 ? `\n… и ещё ${chosen.length - 6}` : '');
-      if (!confirm(`Удалить этапы (${chosen.length})?\n${names}${ph.length ? `\n\nВместе с ними удалятся ${ph.length} фото!` : ''}`)) return;
-      if (ph.length && !confirm(`Точно удалить ${ph.length} фото? Восстановить будет нельзя (только из резервной копии).`)) return;
-      for (const p of ph) await dbDel('photos', p.id);
-      for (const s of chosen) await dbDel('stages', s.id);
-      const rest = stages.filter(s => !stageSel.ids.has(s.id));
-      for (let i = 0; i < rest.length; i++) if (rest[i].ord !== i) { rest[i].ord = i; await dbPut('stages', rest[i]); }
-      stageSel.on = false; stageSel.ids.clear();
-      toast(`Удалено этапов: ${chosen.length}`);
-      render();
-    };
-  }
+  $('#add-stage').onclick = async () => {
+    const name = prompt('Название этапа (например, «Электрика», «Штукатурка»):');
+    if (!name || !name.trim()) return;
+    const maxOrd = stages.length ? Math.max(...stages.map(s => s.ord)) : -1;
+    await dbPut('stages', { id: uid(), projectId: pid, name: name.trim(), ord: maxOrd + 1, status: 0 });
+    render();
+  };
+
+  const list = $('#stage-list');
+  // удаление свайпом
+  attachSwipe(list, async id => {
+    const s = stages.find(x => x.id === id);
+    if (!s) return false;
+    const ph = photos.filter(p => p.stageId === id);
+    if (!confirm(ph.length ? `Удалить этап «${s.name}»? Вместе с ним удалятся ${ph.length} фото!` : `Удалить этап «${s.name}»?`)) return false;
+    for (const p of ph) await dbDel('photos', p.id);
+    await dbDel('stages', id);
+    const rest = stages.filter(x => x.id !== id);
+    for (let k = 0; k < rest.length; k++) if (rest[k].ord !== k) { rest[k].ord = k; await dbPut('stages', rest[k]); }
+    render();
+    return true;
+  });
+
+  // тап: статус — по плашке, остальное — альбом этапа
+  list.addEventListener('click', async e => {
+    const st = e.target.closest('[data-status]');
+    if (st) {
+      const s = stages.find(x => x.id === st.dataset.status);
+      s.status = ((s.status || 0) + 1) % 3;
+      await dbPut('stages', s); render();
+      return;
+    }
+    if (e.target.closest('.drag-handle')) return;
+    const row = e.target.closest('[data-open]');
+    if (row) nav(`#/p/${pid}/st/${row.dataset.open}`);
+  });
 
   // перетаскивание этапов за ⠿
-  const list = $('#stage-list');
   let drag = null;
   const rowTop = row => row.getBoundingClientRect().top - (drag && drag.row === row ? drag.dy : 0);
   list.addEventListener('pointerdown', e => {
     const h = e.target.closest('.drag-handle');
     if (!h) return;
     e.preventDefault();
-    const row = h.closest('.stage-row');
+    const row = h.closest('.swipe');
     h.setPointerCapture(e.pointerId);
-    drag = { row, h, startY: e.clientY, dy: 0, scroll: 0 };
+    drag = { row, h, startY: e.clientY, dy: 0 };
     row.classList.add('dragging');
   });
   const moveDrag = clientY => {
@@ -1416,7 +1477,6 @@ async function viewStages(pid) {
       const t1 = row.getBoundingClientRect().top;
       drag.startY += t1 - t0; drag.dy = 0;
     };
-    // быстрый рывок — проскакиваем сразу несколько этапов
     for (let guard = 0; guard < 50; guard++) {
       const dy = clientY - drag.startY;
       const prev = row.previousElementSibling, next = row.nextElementSibling;
@@ -1431,7 +1491,6 @@ async function viewStages(pid) {
     if (!drag) return;
     drag.lastY = e.clientY;
     moveDrag(e.clientY);
-    // автопрокрутка у краёв экрана
     const edge = e.clientY < 110 ? -1 : e.clientY > innerHeight - 130 ? 1 : 0;
     if (edge && !drag.timer) {
       drag.timer = setInterval(() => {
@@ -1448,76 +1507,98 @@ async function viewStages(pid) {
     if (drag.timer) clearInterval(drag.timer);
     row.classList.remove('dragging'); row.style.transform = '';
     drag = null;
-    const order = [...list.querySelectorAll('.stage-row')].map(r => r.dataset.id);
+    const order = [...list.querySelectorAll('.swipe')].map(r => r.dataset.id);
     let changed = 0;
-    for (let i = 0; i < order.length; i++) {
-      const s = stages.find(x => x.id === order[i]);
-      if (s && s.ord !== i) { s.ord = i; await dbPut('stages', s); changed++; }
+    for (let k = 0; k < order.length; k++) {
+      const s = stages.find(x => x.id === order[k]);
+      if (s && s.ord !== k) { s.ord = k; await dbPut('stages', s); changed++; }
     }
     if (changed) render();
   };
   list.addEventListener('pointerup', endDrag);
   list.addEventListener('pointercancel', endDrag);
+}
 
-  if (!stageSel.on) $('#apply-template').onclick = () => templateSheet(async tpl => {
-    const withPhotos = stages.filter(s => counts[s.id]);
-    const msg = withPhotos.length
-      ? `Этапы без фото заменятся шаблоном, ${withPhotos.length} этапов с фото останутся в конце списка. Продолжить?`
-      : 'Заменить текущий список этапов шаблоном?';
-    if (!confirm(msg)) return;
-    for (const s of stages) if (!counts[s.id]) await dbDel('stages', s.id);
-    await createStagesFromTemplate(pid, tpl);
-    const list = tpl && tpl.stages ? tpl.stages.length : DEFAULT_STAGES.length;
-    withPhotos.forEach(async (s, i) => { s.ord = list + i; await dbPut('stages', s); });
-    setTimeout(render, 200);
-  });
-  if (!stageSel.on) $('#add-stage').onclick = async () => {
-    const name = prompt('Название этапа:');
+/* ---------- экран: альбом этапа — все фото этапа по комнатам и стенам ---------- */
+
+async function viewStageAlbum(pid, stageId) {
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  if (!project) return nav('');
+  const stage = stages.find(s => s.id === stageId);
+  if (!stage) return nav(`#/p/${pid}/stages`);
+  const mine = photos.filter(p => p.stageId === stageId).sort((a, b) => a.created - b.created);
+  const byKey = {};
+  mine.forEach(p => { (byKey[p.wallKey] = byKey[p.wallKey] || []).push(p); });
+  // порядок: комнаты как в схеме, внутри — стены по кругу, потом потолок, пол, панорама
+  const groups = [];
+  for (const r of rooms) {
+    const sides = [...roomEdges(r).map(e => e.id), 'c', 'f', 'p'];
+    for (const side of sides) {
+      const key = `${r.id}:${side}`;
+      if (byKey[key]) { groups.push({ key, room: r, side, list: byKey[key] }); delete byKey[key]; }
+    }
+  }
+  const orphans = Object.values(byKey).flat();
+
+  const thumbs = list => `<div class="thumbs">${list.map(p => {
+    const n = (p.marks || []).length;
+    return `<div class="thumb-wrap" data-view="${p.id}">
+      <img class="thumb" src="${newURL(p.blob)}" alt="">
+      ${p.calib ? '<span class="thumb-badge calib">📏</span>' : ''}
+      ${n ? `<span class="thumb-badge">${n}</span>` : ''}
+    </div>`;
+  }).join('')}</div>`;
+
+  app.innerHTML = `
+    ${header(stage.name, `#/p/${pid}/stages`, `<button class="iconbtn" id="rename-stage" title="Переименовать этап">✏️</button>`)}
+    <div class="pad">
+      <div class="album-head">
+        <span class="mut small">${mine.length} фото</span>
+        <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
+      </div>
+      ${stage.hint ? `<p class="mut small">${esc(stage.hint)}</p>` : ''}
+      ${mine.length ? '' : `<div class="empty"><div class="empty-ico">📷</div><p><b>Фото этого этапа пока нет.</b></p>
+        <p class="mut">Снимайте на схеме: тап по стене → «📷 Снять» у этапа «${esc(stage.name)}». Или «Обход этапа» — лидар снимет стены сам.</p>
+        <button class="btn primary" data-nav="#/p/${pid}">Открыть схему</button></div>`}
+      ${groups.map(g => `<div class="album-group">
+        <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side))} <span class="mut small">· ${g.list.length}</span> ›</div>
+        ${thumbs(g.list)}
+      </div>`).join('')}
+      ${orphans.length ? `<div class="album-group"><div class="album-title">Без привязки к стене <span class="mut small">· ${orphans.length}</span></div>${thumbs(orphans)}</div>` : ''}
+    </div>
+    <div id="viewer" class="viewer hidden"></div>
+    ${bottomNav(pid, 'stages')}`;
+
+  $('#rename-stage').onclick = async () => {
+    const name = prompt('Название этапа:', stage.name);
     if (!name || !name.trim()) return;
-    const maxOrd = stages.length ? Math.max(...stages.map(s => s.ord)) : -1;
-    await dbPut('stages', { id: uid(), projectId: pid, name: name.trim(), ord: maxOrd + 1, status: 0 });
-    render();
+    stage.name = name.trim();
+    await dbPut('stages', stage); render();
   };
-
-  $('#stage-list').addEventListener('click', async e => {
-    if (stageSel.on) {
-      const row = e.target.closest('.stage-row');
-      if (!row) return;
-      const id = row.dataset.id;
-      if (stageSel.ids.has(id)) stageSel.ids.delete(id); else stageSel.ids.add(id);
-      render();
-      return;
-    }
-    const b = e.target.closest('button, [data-rename]');
-    if (!b) return;
-    const find = id => stages.find(s => s.id === id);
-    if (b.dataset.status) {
-      const s = find(b.dataset.status);
-      s.status = ((s.status || 0) + 1) % 3;
-      await dbPut('stages', s); render();
-    } else if (b.dataset.up || b.dataset.down) {
-      const id = b.dataset.up || b.dataset.down;
-      const i = stages.findIndex(s => s.id === id);
-      const j = b.dataset.up ? i - 1 : i + 1;
-      if (j < 0 || j >= stages.length) return;
-      [stages[i].ord, stages[j].ord] = [stages[j].ord, stages[i].ord];
-      await dbPut('stages', stages[i]); await dbPut('stages', stages[j]); render();
-    } else if (b.dataset.del) {
-      const s = find(b.dataset.del);
-      const cnt = photos.filter(p => p.stageId === s.id).length;
-      const msg = cnt
-        ? `Удалить этап «${s.name}»? Вместе с ним удалятся ${cnt} фото!`
-        : `Удалить этап «${s.name}»?`;
-      if (!confirm(msg)) return;
-      for (const p of photos.filter(p => p.stageId === s.id)) await dbDel('photos', p.id);
-      await dbDel('stages', s.id); render();
-    } else if (b.dataset.rename) {
-      const s = find(b.dataset.rename);
-      const name = prompt('Название этапа:', s.name);
-      if (!name || !name.trim()) return;
-      s.name = name.trim();
-      await dbPut('stages', s); render();
-    }
+  $('#album-status').onclick = async () => {
+    stage.status = ((stage.status || 0) + 1) % 3;
+    await dbPut('stages', stage); render();
+  };
+  app.querySelectorAll('[data-view]').forEach(el => {
+    el.onclick = () => {
+      const photo = mine.find(p => p.id === el.dataset.view);
+      if (!photo) return;
+      const { roomId, side } = parseWallKey(photo.wallKey);
+      const room = rooms.find(r => r.id === roomId);
+      openPhotoEditor(photo, {
+        stages,
+        wallTitle: room ? wallLabel(room, side) : '',
+        wallSize: room ? wallSizeOf(room, side) : { w: null, h: null },
+        onClose: render,
+        onGhost: async p => {
+          if (room && await lidarAvailable()) {
+            try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { alert('AR-призрак не удался: ' + err.message); }
+            return;
+          }
+          nav(`#/p/${pid}/ghost/${encodeURIComponent(photo.wallKey)}/${p.id}`);
+        },
+      });
+    };
   });
 }
 
