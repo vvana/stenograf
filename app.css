@@ -553,9 +553,13 @@ body {
 /* свайп влево → «Удалить» */
 .swipe { position: relative; border-radius: 14px; overflow: hidden; touch-action: pan-y; }
 .swipe-del {
-  position: absolute; top: 0; right: 0; bottom: 0; width: 96px; border: 0;
-  background: var(--danger); color: #fff; font: 600 14px/1 system-ui, -apple-system, sans-serif; cursor: pointer;
+  position: absolute; top: 0; right: 0; bottom: 0; width: 84px; border: 0; border-radius: 14px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: var(--danger); color: #fff; font: 600 12px/1 system-ui, -apple-system, sans-serif; cursor: pointer;
 }
+.swipe .swipe-del { opacity: 0; transition: opacity .15s; }
+.swipe.swiping .swipe-del, .swipe.open .swipe-del { opacity: 1; }
+.swipe-del svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .swipe-body { position: relative; z-index: 1; transition: transform .2s ease; margin: 0; }
 .swipe.dragging { z-index: 5; box-shadow: 0 10px 28px rgba(0,0,0,.22); overflow: visible; }
 .stage-row { cursor: pointer; }

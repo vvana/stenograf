@@ -208,11 +208,11 @@ app.addEventListener('click', e => {
 });
 
 /* ---------- свайп влево по строке открывает кнопку «Удалить» ---------- */
-// разметка: <div class="swipe" data-id><button class="swipe-del">Удалить</button><div class="swipe-body">…</div></div>
+// разметка: <div class="swipe" data-id><button class="swipe-del">…Удалить</button><div class="swipe-body">…</div></div>
 function attachSwipe(container, onDelete) {
-  const W = 96;
+  const W = 92; // ширина кнопки 84 + зазор 8
   let cur = null;
-  const close = row => { if (!row) return; row.classList.remove('open'); const b = row.querySelector('.swipe-body'); if (b) b.style.transform = ''; };
+  const close = row => { if (!row) return; row.classList.remove('open', 'swiping'); const b = row.querySelector('.swipe-body'); if (b) b.style.transform = ''; };
   container.addEventListener('pointerdown', e => {
     if (e.target.closest('.drag-handle, .swipe-del')) return;
     const row = e.target.closest('.swipe');
@@ -226,6 +226,7 @@ function attachSwipe(container, onDelete) {
     if (!cur.mode) {
       if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.3) {
         cur.mode = 'h';
+        cur.row.classList.add('swiping');
         try { cur.row.setPointerCapture(e.pointerId); } catch {}
         cur.body.style.transition = 'none';
       } else if (Math.abs(dy) > 8) { cur = null; return; }
@@ -239,7 +240,7 @@ function attachSwipe(container, onDelete) {
     const c = cur; cur = null;
     if (c.mode !== 'h') return;
     c.body.style.transition = '';
-    if (c.base + c.dx < -W / 2) { c.body.style.transform = `translateX(${-W}px)`; c.row.classList.add('open'); }
+    if (c.base + c.dx < -W / 2) { c.body.style.transform = `translateX(${-W}px)`; c.row.classList.add('open'); c.row.classList.remove('swiping'); }
     else close(c.row);
     c.row.dataset.swiped = Date.now();
   };
@@ -342,7 +343,7 @@ async function viewProjects() {
       <div class="cards">
         ${projects.map(p => `
           <div class="swipe" data-id="${p.id}">
-            <button class="swipe-del">Удалить</button>
+            <button class="swipe-del">${ICONS.trash}<span>Удалить</span></button>
             <div class="card project-card swipe-body" data-nav="#/p/${p.id}">
               <div class="project-name">${esc(p.name)}</div>
               <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
@@ -747,6 +748,7 @@ const ICONS = {
   stages: svgIco('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11"/><circle cx="5" cy="18" r="1.3"/>'),
   tour: svgIco('<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>'),
   more: svgIco('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'),
+  trash: svgIco('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
   scan: svgIco('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8M12 8v8" opacity=".9"/>'),
 };
 
@@ -1425,7 +1427,7 @@ async function viewStages(pid) {
       <div class="cards" id="stage-list">
         ${stages.map(s => `
           <div class="swipe" data-id="${s.id}">
-            <button class="swipe-del">Удалить</button>
+            <button class="swipe-del">${ICONS.trash}<span>Удалить</span></button>
             <div class="card stage-row swipe-body" data-open="${s.id}">
               <span class="drag-handle" title="Перетащите, чтобы поменять порядок" aria-label="Переместить">⠿</span>
               <div class="stage-main">
