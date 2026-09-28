@@ -264,17 +264,39 @@ function attachSwipe(container, onDelete) {
 
 /* ---------- удаление объекта и схемы ---------- */
 
+// полоса «Удалено · Отменить» на ms миллисекунд — защита от случайного удаления
+function undoBar(text, onUndo, ms = 3000) {
+  document.querySelectorAll('.undo-bar').forEach(e => e.remove());
+  const el = document.createElement('div');
+  el.className = 'undo-bar';
+  el.innerHTML = `<span>${esc(text)}</span><button>Отменить</button><i style="animation-duration:${ms}ms"></i>`;
+  document.body.appendChild(el);
+  let done = false;
+  const t = setTimeout(() => { done = true; el.remove(); }, ms);
+  el.querySelector('button').onclick = async () => {
+    if (done) return;
+    done = true; clearTimeout(t); el.remove();
+    await onUndo();
+    toast('Восстановлено');
+    render();
+  };
+}
+
+// удаление объекта: без вопроса, но 3 секунды на отмену (всё держим в памяти и при отмене пишем обратно)
 async function deleteProject(pid) {
   const project = await dbGet('projects', pid);
   if (!project) return false;
-  const photos = await dbAll('photos', 'projectId', pid);
-  const rooms = await dbAll('rooms', 'projectId', pid);
-  if (!confirm(`Удалить объект «${project.name}»?\nКомнат: ${rooms.length}, фото: ${photos.length}. Удалятся схема, этапы и все фото — восстановить можно только из резервной копии.`)) return false;
+  const [rooms, stages, photos] = await Promise.all([dbAll('rooms', 'projectId', pid), dbAll('stages', 'projectId', pid), dbAll('photos', 'projectId', pid)]);
   await dbDelWhere('photos', 'projectId', pid);
   await dbDelWhere('rooms', 'projectId', pid);
   await dbDelWhere('stages', 'projectId', pid);
   await dbDel('projects', pid);
-  toast(`Объект «${project.name}» удалён`);
+  undoBar(`Объект «${project.name}» удалён`, async () => {
+    await dbPut('projects', project);
+    for (const r of rooms) await dbPut('rooms', r);
+    for (const st of stages) await dbPut('stages', st);
+    for (const ph of photos) await dbPut('photos', ph);
+  });
   return true;
 }
 
@@ -1432,12 +1454,17 @@ async function viewStages(pid) {
     const s = stages.find(x => x.id === id);
     if (!s) return false;
     const ph = photos.filter(p => p.stageId === id);
-    if (!confirm(ph.length ? `Удалить этап «${s.name}»? Вместе с ним удалятся ${ph.length} фото!` : `Удалить этап «${s.name}»?`)) return false;
+    const ords = stages.map(x => ({ ...x })); // порядок до удаления — для отмены
     for (const p of ph) await dbDel('photos', p.id);
     await dbDel('stages', id);
     const rest = stages.filter(x => x.id !== id);
     for (let k = 0; k < rest.length; k++) if (rest[k].ord !== k) { rest[k].ord = k; await dbPut('stages', rest[k]); }
     render();
+    // этап с фото — 3 секунды на отмену; пустой удаляется сразу
+    if (ph.length) undoBar(`Этап «${s.name}» и ${ph.length} фото удалены`, async () => {
+      for (const x of ords) await dbPut('stages', x);
+      for (const p of ph) await dbPut('photos', p);
+    });
     return true;
   });
 
