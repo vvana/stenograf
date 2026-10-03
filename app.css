@@ -620,3 +620,13 @@ select.inp {
 .tour-plan .tp-dot { fill: var(--acc); stroke: #fff; stroke-width: 0.05; }
 .backup-row .btn { white-space: nowrap; padding-left: 8px; padding-right: 8px; font-size: 15px; }
 .stage-toolbar { justify-content: flex-end; }
+/* этапы по помещениям */
+.room-tags { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
+.room-tag { font-size: 11px; line-height: 1.5; padding: 0 7px; border-radius: 8px; background: #e6f1fb; color: #0c447c; }
+.room-tag.all { background: var(--line); color: var(--mut); }
+.where-card { margin: 10px 0 4px; }
+.where-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 6px; }
+.where-quick .btn.on { background: color-mix(in srgb, var(--acc) 14%, var(--card)); border-color: var(--acc); color: var(--acc); }
+.where-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--line); font-size: 15px; }
+.where-row input { width: 20px; height: 20px; accent-color: var(--acc); }
+.where-src { margin-left: auto; }

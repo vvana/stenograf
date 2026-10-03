@@ -1454,10 +1454,35 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
   }
 }
 
+/* ---------- этапы по помещениям ---------- */
+// тип помещения: санузел / кухня / комната — по мебели из лидара, иначе по названию
+function roomKind(r) {
+  const cats = new Set((r.objects || []).map(o => o.cat));
+  if (cats.has('toilet') || cats.has('bathtub')) return { kind: 'bath', src: 'по лидару' };
+  if (cats.has('stove') || cats.has('oven') || cats.has('dishwasher') || cats.has('refrigerator')) return { kind: 'kitchen', src: 'по лидару' };
+  const n = String(r.name || '').toLowerCase();
+  if (/сануз|ванн|туалет|душ|с\/у|\bwc\b/.test(n)) return { kind: 'bath', src: 'по названию' };
+  if (/кухн/.test(n)) return { kind: 'kitchen', src: 'по названию' };
+  return { kind: 'room', src: null };
+}
+// помещения этапа: null — все; иначе только существующие из списка
+function stageRoomIds(st, rooms) {
+  if (!Array.isArray(st.rooms)) return null;
+  const ids = st.rooms.filter(id => rooms.some(r => r.id === id));
+  return ids.length && ids.length < rooms.length ? ids : null;
+}
+function stageRoomTags(st, rooms) {
+  const ids = stageRoomIds(st, rooms);
+  if (!ids) return rooms.length ? '<span class="room-tag all">все помещения</span>' : '';
+  const names = ids.map(id => rooms.find(r => r.id === id).name);
+  const shown = names.slice(0, 3).map(n => `<span class="room-tag">${esc(n)}</span>`).join('');
+  return shown + (names.length > 3 ? `<span class="room-tag">+${names.length - 3}</span>` : '');
+}
+
 /* ---------- экран: этапы ---------- */
 
 async function viewStages(pid) {
-  const { project, stages, photos } = await loadProjectData(pid);
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
   const counts = {};
   photos.forEach(p => { counts[p.stageId] = (counts[p.stageId] || 0) + 1; });
@@ -1477,6 +1502,7 @@ async function viewStages(pid) {
               <div class="stage-main">
                 <div class="stage-name">${esc(s.name)}</div>
                 <div class="mut small stage-sub">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
+                <div class="room-tags">${stageRoomTags(s, rooms)}</div>
               </div>
               <button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
             </div>
@@ -1649,6 +1675,20 @@ async function viewStageAlbum(pid, stageId) {
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
       ${stage.hint ? `<p class="mut small">${esc(stage.hint)}</p>` : ''}
+      ${rooms.length ? `<div class="card where-card">
+        <b>Где нужен этап</b>
+        <div class="where-quick">
+          <button class="btn small-btn" data-q="all">Все</button>
+          <button class="btn small-btn" data-q="bath">Санузлы</button>
+          <button class="btn small-btn" data-q="kitchen">Кухня</button>
+          <button class="btn small-btn" data-q="room">Комнаты</button>
+        </div>
+        ${rooms.map(r => { const k = roomKind(r); const ids = stageRoomIds(stage, rooms); return `<label class="where-row">
+          <input type="checkbox" data-room="${r.id}" ${!ids || ids.includes(r.id) ? 'checked' : ''}>
+          <span>${esc(r.name)}</span>
+          ${k.src && k.kind !== 'room' ? `<span class="mut small where-src">${k.kind === 'bath' ? 'санузел' : 'кухня'} ${k.src}</span>` : ''}
+        </label>`; }).join('')}
+      </div>` : ''}
       ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p>
         <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Обход этапа» — лидар снимет стены сам.</p>
         <button class="btn primary" data-nav="#/p/${pid}">Открыть схему</button></div>`}
@@ -1667,6 +1707,31 @@ async function viewStageAlbum(pid, stageId) {
     stage.name = name.trim();
     await dbPut('stages', stage); render();
   };
+  // выбор помещений этапа: все отмечены (или ни одного) — значит «все помещения»
+  const saveRooms = async ids => {
+    stage.rooms = ids && ids.length && ids.length < rooms.length ? ids : null;
+    await dbPut('stages', stage);
+    app.querySelectorAll('.where-row input').forEach(cb => { cb.checked = !stage.rooms || stage.rooms.includes(cb.dataset.room); });
+    markQuick();
+  };
+  const markQuick = () => {
+    const ids = stageRoomIds(stage, rooms);
+    app.querySelectorAll('[data-q]').forEach(b => {
+      const want = b.dataset.q === 'all' ? null : rooms.filter(r => roomKind(r).kind === b.dataset.q).map(r => r.id);
+      const on = b.dataset.q === 'all' ? !ids : !!ids && want.length === ids.length && want.every(id => ids.includes(id));
+      b.classList.toggle('on', on);
+    });
+  };
+  app.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+    if (b.dataset.q === 'all') return saveRooms(null);
+    const ids = rooms.filter(r => roomKind(r).kind === b.dataset.q).map(r => r.id);
+    if (!ids.length) { toast(b.dataset.q === 'bath' ? 'Санузлов не найдено — отметьте помещения вручную' : b.dataset.q === 'kitchen' ? 'Кухни не найдено — отметьте вручную' : 'Жилых комнат не найдено'); return; }
+    saveRooms(ids);
+  });
+  app.querySelectorAll('.where-row input').forEach(cb => cb.onchange = () => {
+    saveRooms([...app.querySelectorAll('.where-row input')].filter(x => x.checked).map(x => x.dataset.room));
+  });
+  markQuick();
   $('#album-status').onclick = async () => {
     stage.status = ((stage.status || 0) + 1) % 3;
     await dbPut('stages', stage); render();
