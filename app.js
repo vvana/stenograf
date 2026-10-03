@@ -209,16 +209,17 @@ app.addEventListener('click', e => {
 
 /* ---------- свайп влево по строке открывает кнопку «Удалить» ---------- */
 // разметка: <div class="swipe" data-id><button class="swipe-del">…Удалить</button><div class="swipe-body">…</div></div>
-function attachSwipe(container, onDelete) {
+function attachSwipe(container, onDelete, onSend) {
   const W = 92; // ширина кнопки 84 + зазор 8
   let cur = null;
-  const close = row => { if (!row) return; row.classList.remove('open', 'swiping'); const b = row.querySelector('.swipe-body'); if (b) b.style.transform = ''; };
+  const close = row => { if (!row) return; row.classList.remove('open', 'open-l', 'swiping', 'swiping-l'); const b = row.querySelector('.swipe-body'); if (b) b.style.transform = ''; };
   container.addEventListener('pointerdown', e => {
-    if (e.target.closest('.drag-handle, .swipe-del')) return;
+    if (e.target.closest('.drag-handle, .swipe-del, .swipe-send')) return;
     const row = e.target.closest('.swipe');
     if (!row) return;
-    container.querySelectorAll('.swipe.open').forEach(r => { if (r !== row) close(r); });
-    cur = { row, body: row.querySelector('.swipe-body'), x0: e.clientX, y0: e.clientY, base: row.classList.contains('open') ? -W : 0, dx: 0, mode: null, id: e.pointerId };
+    container.querySelectorAll('.swipe.open, .swipe.open-l').forEach(r => { if (r !== row) close(r); });
+    const base = row.classList.contains('open') ? -W : row.classList.contains('open-l') ? W : 0;
+    cur = { row, body: row.querySelector('.swipe-body'), x0: e.clientX, y0: e.clientY, base, dx: 0, mode: null, id: e.pointerId, canSend: !!(onSend && row.querySelector('.swipe-send')) };
   });
   container.addEventListener('pointermove', e => {
     if (!cur || e.pointerId !== cur.id) return;
@@ -226,42 +227,49 @@ function attachSwipe(container, onDelete) {
     if (!cur.mode) {
       if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.3) {
         cur.mode = 'h';
-        cur.row.classList.add('swiping');
         try { cur.row.setPointerCapture(e.pointerId); } catch {}
         cur.body.style.transition = 'none';
       } else if (Math.abs(dy) > 8) { cur = null; return; }
       else return;
     }
     cur.dx = dx;
-    cur.body.style.transform = `translateX(${Math.min(0, Math.max(-W * 1.4, cur.base + dx))}px)`;
+    const x = Math.min(cur.canSend ? W * 1.4 : 0, Math.max(-W * 1.4, cur.base + dx));
+    cur.row.classList.toggle('swiping', x < 0);
+    cur.row.classList.toggle('swiping-l', x > 0);
+    cur.body.style.transform = `translateX(${x}px)`;
   });
   const end = () => {
     if (!cur) return;
     const c = cur; cur = null;
     if (c.mode !== 'h') return;
     c.body.style.transition = '';
-    if (c.base + c.dx < -W / 2) { c.body.style.transform = `translateX(${-W}px)`; c.row.classList.add('open'); c.row.classList.remove('swiping'); }
+    const x = c.base + c.dx;
+    if (x < -W / 2) { close(c.row); c.body.style.transform = `translateX(${-W}px)`; c.row.classList.add('open'); }
+    else if (c.canSend && x > W / 2) { close(c.row); c.body.style.transform = `translateX(${W}px)`; c.row.classList.add('open-l'); }
     else close(c.row);
     c.row.dataset.swiped = Date.now();
   };
   container.addEventListener('pointerup', end);
   container.addEventListener('pointercancel', end);
-  // клик сразу после свайпа или по открытой строке — только закрыть; «Удалить» — удалить
+  // клик сразу после свайпа или по открытой строке — только закрыть; «Удалить»/«Отправить» — действие
   container.addEventListener('click', e => {
-    const del = e.target.closest('.swipe-del');
-    if (del) {
+    const del = e.target.closest('.swipe-del'), send = e.target.closest('.swipe-send');
+    if (del || send) {
       e.stopPropagation(); e.preventDefault();
-      const row = del.closest('.swipe');
+      const row = (del || send).closest('.swipe');
+      if (send) { close(row); onSend(row.dataset.id, row); return; }
       Promise.resolve(onDelete(row.dataset.id, row)).then(done => { if (!done) close(row); });
       return;
     }
     const row = e.target.closest('.swipe');
     if (!row) return;
-    if (Date.now() - (+row.dataset.swiped || 0) < 400 || row.classList.contains('open')) {
+    if (Date.now() - (+row.dataset.swiped || 0) < 400 || row.classList.contains('open') || row.classList.contains('open-l')) {
       e.stopPropagation(); e.preventDefault(); close(row);
     }
   }, true);
 }
+// кнопки под строкой: слева «Отправить», справа «Удалить»
+const swipeButtons = (send = true) => `${send ? `<button class="swipe-send">${ICONS.share}<span>Отправить</span></button>` : ''}<button class="swipe-del">${ICONS.trash}<span>Удалить</span></button>`;
 
 /* ---------- удаление объекта и схемы ---------- */
 
@@ -336,14 +344,14 @@ async function viewProjects() {
     <div class="pad">
       ${projects.length === 0 ? `
         <div class="empty">
-          <div class="empty-ico">🏗️</div>
+          <div class="empty-ico">${ICONS.build}</div>
           <p><b>Пока нет ни одного объекта.</b></p>
           <p class="mut">Объект — это квартира или дом, где идёт ремонт. Добавьте первый, нарисуйте схему и фиксируйте каждую стену по этапам.</p>
         </div>` : ''}
       <div class="cards">
         ${projects.map(p => `
           <div class="swipe" data-id="${p.id}">
-            <button class="swipe-del">${ICONS.trash}<span>Удалить</span></button>
+            ${swipeButtons()}
             <div class="card project-card swipe-body" data-nav="#/p/${p.id}">
               <div class="project-name">${esc(p.name)}</div>
               <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
@@ -352,8 +360,8 @@ async function viewProjects() {
       </div>
       <button class="btn primary wide" id="add-project">+ Новый объект</button>
       <div class="backup-row">
-        <button class="btn ghost" id="export-all">⬇ Резервная копия</button>
-        <button class="btn ghost" id="import-all">⬆ Импорт файла</button>
+        <button class="btn ghost" id="export-all">${I('download')}Резервная копия</button>
+        <button class="btn ghost" id="import-all">${I('upload')}Импорт файла</button>
       </div>
       <p class="mut small center">Данные хранятся только на этом устройстве.<br>Периодически сохраняйте резервную копию.</p>
     </div>`;
@@ -371,7 +379,7 @@ async function viewProjects() {
   $('#export-all').onclick = exportBackup;
   $('#import-all').onclick = importBackup;
   const list = app.querySelector('.cards');
-  if (list) attachSwipe(list, async id => { if (await deleteProject(id)) { render(); return true; } return false; });
+  if (list) attachSwipe(list, async id => { if (await deleteProject(id)) { render(); return true; } return false; }, id => exportProject(id, true));
 }
 
 /* ---------- экран: план квартиры ---------- */
@@ -533,9 +541,9 @@ async function viewPlan(pid) {
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <span id="create-tools" class="tools">
           <button class="btn small-btn" id="add-room">+ Комната</button>
-          <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">✏ Обвести</button>
-          <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">📏 По обмеру</button>
-          <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">🗺 Подложка</button>
+          <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">${I('pen')}Обвести</button>
+          <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">${I('ruler')}По обмеру</button>
+          <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">${I('layers')}Подложка</button>
         </span>
         <span id="mode-tools" class="tools hidden">
           <span id="mode-text" class="small"></span>
@@ -545,7 +553,7 @@ async function viewPlan(pid) {
         <span id="room-tools" class="tools hidden">
           <input id="room-name" class="inp" placeholder="Название комнаты">
           <input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="h, м" title="Высота потолка, м">
-          <button class="btn small-btn hidden" id="room-furn">🛋 Мебель</button>
+          <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
           <button class="btn small-btn danger" id="del-room">Удалить</button>
         </span>
         <span id="vertex-tools" class="tools hidden">
@@ -563,15 +571,18 @@ async function viewPlan(pid) {
       <div id="lidar-row" class="lidar-row hidden"><button class="btn primary wide" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)"><span class="btn-ico">${ICONS.scan}</span>Обмер комнаты лидаром</button></div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
-        ${rooms.length || (project.plan && project.plan.blob) ? '<button class="plan-trash" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">🗑</button>' : ''}
+        <div class="plan-tools">
+          ${rooms.length ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
+          ${rooms.length || (project.plan && project.plan.blob) ? `<button class="plan-tool danger" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">${ICONS.trash}</button>` : ''}
+        </div>
       </div>
       <div id="plan-sheet" class="plan-sheet hidden"></div>
       <input type="file" id="underlay-file" accept="image/*" class="hidden-input">
       ${rooms.length === 0 && !planState.edit ? `
         <div class="empty">
-          <div class="empty-ico">📐</div>
+          <div class="empty-ico">${ICONS.plan}</div>
           <p><b>Схемы пока нет.</b></p>
-          <p class="mut">Нажмите ✎ сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
+          <p class="mut">Нажмите «Редактор» сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
         </div>` : `<p class="mut small center pad-h">${planState.edit
           ? 'Режим редактора: комната — многоугольник до 10 углов. По умолчанию углы 90°, любой можно изменить.'
           : 'Тап по стене — её фото по этапам. Тап внутри комнаты — потолок, пол, панорама 360°.'}</p>`}
@@ -581,6 +592,8 @@ async function viewPlan(pid) {
   $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; render(); };
   const clearBtn = $('#clear-plan');
   if (clearBtn) clearBtn.onclick = async () => { if (await clearPlan(pid)) render(); };
+  const sharePlanBtn = $('#share-plan');
+  if (sharePlanBtn) sharePlanBtn.onclick = () => exportProject(pid, false);
   if (planState.edit) {
     $('#add-room').onclick = async () => {
       const t = prompt('Размеры комнаты, м: ширина и глубина через пробел (например 4,2 3,1). Пусто — 4 × 3,5', '');
@@ -750,7 +763,39 @@ const ICONS = {
   more: svgIco('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'),
   trash: svgIco('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
   scan: svgIco('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8M12 8v8" opacity=".9"/>'),
+  eye: svgIco('<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  eyeOff: svgIco('<path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.6 6.6C3.7 8.4 2 12 2 12s3.5 6 10 6a9.8 9.8 0 0 0 4.4-1"/>'),
+  globe: svgIco('<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>'),
+  flag: svgIco('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
+  ar: svgIco('<path d="M12 7l5 2.8v5.4L12 18l-5-2.8V9.8L12 7z"/><path d="M7 9.8l5 2.8 5-2.8M12 12.6V18"/><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3"/>'),
+  camera: svgIco('<path d="M4 8h3.2l1.8-2.6h6l1.8 2.6H20v11H4z"/><circle cx="12" cy="13" r="3.6"/>'),
+  share: svgIco('<path d="M12 15V3M7.5 7.5L12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>'),
+  download: svgIco('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
+  upload: svgIco('<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>'),
+  pen: svgIco('<path d="M4 20l4.2-1L19 8.2 15.8 5 5 15.8 4 20z"/><path d="M13.8 7l3.2 3.2"/>'),
+  ruler: svgIco('<path d="M3 17L17 3l4 4L7 21z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/>'),
+  layers: svgIco('<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/>'),
+  sofa: svgIco('<path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"/><path d="M3 11h18v6H3zM5 17v2M19 17v2"/>'),
+  report: svgIco('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/>'),
+  lock: svgIco('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
+  calc: svgIco('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8.5 11h1M11.5 11h1M14.5 11h1M8.5 14.5h1M11.5 14.5h1M14.5 14.5h1M8.5 18h1M11.5 18h1M14.5 18h1"/>'),
+  user: svgIco('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'),
+  info: svgIco('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.4"/>'),
+  image: svgIco('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>'),
+  move: svgIco('<path d="M12 3v18M3 12h18M9.5 5.5L12 3l2.5 2.5M9.5 18.5L12 21l2.5-2.5M5.5 9.5L3 12l2.5 2.5M18.5 9.5L21 12l-2.5 2.5"/>'),
+  compare: svgIco('<path d="M7 7h13M16 3l4 4-4 4M17 17H4M8 13l-4 4 4 4"/>'),
+  ceiling: svgIco('<path d="M4 5h16"/><path d="M12 20V9M8 13l4-4 4 4"/>'),
+  floor: svgIco('<path d="M4 19h16"/><path d="M12 4v11M8 11l4 4 4-4"/>'),
+  building: svgIco('<path d="M4 21V6l8-3v18M12 21V9l8 3v9M2.5 21h19M7 8.5h2M7 12.5h2M7 16.5h2M15 14h2M15 17.5h2"/>'),
+  edit: svgIco('<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>'),
+  door: svgIco('<path d="M6 21V3h11v18M4 21h16"/><path d="M14 12h.01"/>'),
+  window: svgIco('<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/>'),
+  mirror: svgIco('<ellipse cx="12" cy="10.5" rx="6" ry="7.5"/><path d="M9 21h6M12 18v3M9.5 8l3-2M9.5 12l5-4"/>'),
+  build: svgIco('<path d="M3 21h18M5 21V10l7-5 7 5v11"/><path d="M9 21v-6h6v6"/>'),
+  photoEmpty: svgIco('<path d="M4 8h3.2l1.8-2.6h6l1.8 2.6H20v11H4z"/><circle cx="12" cy="13" r="3.6"/>'),
 };
+// значок перед подписью кнопки
+const I = name => `<span class="ic">${ICONS[name] || ''}</span>`;
 
 function bottomNav(pid, active) {
   const item = (key, hash, ico, label) =>
@@ -759,7 +804,7 @@ function bottomNav(pid, active) {
   return `<nav class="bottomnav">
     ${item('plan', `#/p/${pid}`, ICONS.plan, 'Схема')}
     ${item('stages', `#/p/${pid}/stages`, ICONS.stages, 'Этапы')}
-    ${item('tour', `#/p/${pid}/tour`, ICONS.tour, '3D-тур')}
+    ${item('tour', `#/p/${pid}/tour`, ICONS.tour, '3D')}
     ${item('more', `#/p/${pid}/more`, ICONS.more, 'Ещё')}
   </nav>`;
 }
@@ -1133,7 +1178,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       };
       const furnBtn = $('#room-furn');
       furnBtn.classList.toggle('hidden', !(room.objects && room.objects.length));
-      furnBtn.textContent = `🛋 Мебель (${(room.objects || []).length})`;
+      furnBtn.innerHTML = `${I('sofa')}Мебель (${(room.objects || []).length})`;
       furnBtn.onclick = () => furnitureSheet(room);
       $('#del-room').onclick = async () => {
         const photos = (await dbAll('photos', 'projectId', pid)).filter(p => p.wallKey.startsWith(room.id + ':'));
@@ -1203,10 +1248,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     const r = rooms.find(x => x.id === roomId);
     if (!r) return;
     const cnt = sf => counts[`${r.id}:${sf}`] || 0;
-    const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico} ${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
+    const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico}${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
     showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
-      ${item('c', '⬆', 'Потолок')}${item('f', '⬇', 'Пол')}${item('p', '🌐', 'Панорама 360°')}`, sh => {
+      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}${item('p', I('globe'), 'Панорама 360°')}`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
     });
   }
@@ -1226,7 +1271,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         <b>${k + 1}</b>
         <select class="inp" data-ft="${k}">${FURN_TYPES.map(t => `<option value="${t}" ${t === o.cat ? 'selected' : ''}>${esc(OBJECT_NAMES[t] || t)}</option>`).join('')}</select>
         <span class="mut small">${fmtM(o.w)}×${fmtM(o.d)}${furnName(o) !== (OBJECT_NAMES[o.cat] || o.cat) ? `<br>${esc(furnName(o).toLowerCase())}` : ''}</span>
-        <button class="iconbtn danger" data-fdel="${k}" title="Удалить">🗑</button>
+        <button class="iconbtn danger" data-fdel="${k}" title="Удалить">${I('trash')}</button>
       </div>`).join('') || '<p class="mut">Мебели нет.</p>'}`, sh => {
       sh.querySelectorAll('[data-ft]').forEach(s => s.onchange = async () => {
         const o = list[+s.dataset.ft]; o.cat = s.value; o.attrs = [];
@@ -1245,11 +1290,11 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     showSheet(`
       <div class="sh-title">Подложка: план БТИ, скан, фото плана</div>
       <p class="mut small">${plan ? `Загружена, масштаб ${(plan.w * plan.k).toFixed(1).replace('.', ',')} м по ширине.` : 'Загрузите план — и обводите комнаты по нему тапами.'}</p>
-      <button class="btn wide" id="ps-load">🖼 ${plan ? 'Заменить план' : 'Загрузить план'}</button>
+      <button class="btn wide" id="ps-load">${I('image')}${plan ? 'Заменить план' : 'Загрузить план'}</button>
       ${plan ? `
-        <button class="btn primary wide" id="ps-scale">📏 Задать масштаб (2 точки + длина)</button>
-        <button class="btn wide" id="ps-move">✥ Подвинуть подложку</button>
-        <button class="btn wide" id="ps-toggle">${planState.underlayHidden ? '👁 Показать' : '🙈 Скрыть'}</button>
+        <button class="btn primary wide" id="ps-scale">${I('ruler')}Задать масштаб (2 точки + длина)</button>
+        <button class="btn wide" id="ps-move">${I('move')}Подвинуть подложку</button>
+        <button class="btn wide" id="ps-toggle">${planState.underlayHidden ? I('eye') + 'Показать' : I('eyeOff') + 'Скрыть'}</button>
         <button class="btn danger wide" id="ps-del">Удалить подложку</button>` : ''}`, s => {
       s.querySelector('#ps-load').onclick = () => { hideSheet(); $('#underlay-file').click(); };
       const q = id => s.querySelector(id);
@@ -1349,7 +1394,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       aptBtn.onclick = () => showSheet(`<div class="sh-title">Квартира целиком</div>
         <p class="mut small">Комнаты сканируются подряд в одной сессии: закончили комнату — «Следующая», перешли в другую. Существующие комнаты обновятся, новые добавятся.</p>
         <button class="btn primary wide" id="apt-measure"><span class="btn-ico">${ICONS.scan}</span>Обмер всей квартиры</button>
-        <button class="btn wide" id="apt-final">🏁 Финальный скан (3D с текстурами)</button>`, sh => {
+        <button class="btn wide" id="apt-final">${I('flag')}Финальный скан (3D с текстурами)</button>`, sh => {
         sh.querySelector('#apt-measure').onclick = async () => { hideSheet(); try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); } };
         sh.querySelector('#apt-final').onclick = async () => {
           hideSheet();
@@ -1389,7 +1434,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     });
     if (rooms.length === 1) return step2();
     showSheet(`<div class="sh-title">Обход этапа: что снимаем?</div>
-      <button class="btn primary wide" data-room="*">🏢 Всю квартиру подряд</button>
+      <button class="btn primary wide" data-room="*">${I('building')}Всю квартиру подряд</button>
       ${rooms.map(r => `<button class="btn wide" data-room="${r.id}">${esc(r.name)}</button>`).join('')}`, sh => {
       sh.querySelectorAll('[data-room]').forEach(b => b.onclick = () => { roomSel = b.dataset.room === '*' ? null : rooms.find(r => r.id === b.dataset.room); step2(); });
     });
@@ -1421,13 +1466,13 @@ async function viewStages(pid) {
     ${header('Этапы ремонта', `#/p/${pid}`)}
     <div class="pad">
       <div class="stage-toolbar">
-        <p class="mut small">Тап — фото этапа. Порядок — за ⠿. Удалить — свайп влево.</p>
+        <p class="mut small">Тап — фото этапа. Порядок — за ⠿. Свайп влево — удалить, вправо — отправить.</p>
         <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
       </div>
       <div class="cards" id="stage-list">
         ${stages.map(s => `
           <div class="swipe" data-id="${s.id}">
-            <button class="swipe-del">${ICONS.trash}<span>Удалить</span></button>
+            ${swipeButtons(true)}
             <div class="card stage-row swipe-body" data-open="${s.id}">
               <span class="drag-handle" title="Перетащите, чтобы поменять порядок" aria-label="Переместить">⠿</span>
               <div class="stage-main">
@@ -1468,7 +1513,26 @@ async function viewStages(pid) {
       for (const p of ph) await dbPut('photos', p);
     });
     return true;
-  });
+  }, id => sendStage(id));
+
+  // свайп вправо: отправить этап — картинками (заказчику) или файлом для Стенографа (коллегам)
+  const sendStage = id => {
+    const st = stages.find(x => x.id === id);
+    const ph = photos.filter(p => p.stageId === id);
+    if (!ph.length) { toast('В этом этапе пока нет фото'); return; }
+    const host = document.createElement('div');
+    host.className = 'plan-sheet tpl-sheet';
+    host.innerHTML = `<div class="sh-title">Отправить «${esc(st.name)}» · ${ph.length} фото</div>
+      <button class="btn wide" data-how="img">${I('image')}Фото картинками — заказчику, в мессенджер</button>
+      <button class="btn wide" data-how="file">${I('share')}Файл для Стенографа — коллегам</button>
+      <button class="btn ghost wide" data-how="x">Отмена</button>`;
+    document.body.appendChild(host);
+    host.querySelectorAll('[data-how]').forEach(b => b.onclick = async () => {
+      host.remove();
+      if (b.dataset.how === 'img') await shareStageImages(project, st, ph);
+      else if (b.dataset.how === 'file') await exportStage(pid, id);
+    });
+  };
 
   // тап: статус — по плашке, остальное — альбом этапа
   list.addEventListener('click', async e => {
@@ -1579,15 +1643,15 @@ async function viewStageAlbum(pid, stageId) {
   }).join('')}</div>`;
 
   app.innerHTML = `
-    ${header(stage.name, `#/p/${pid}/stages`, `<button class="iconbtn" id="rename-stage" title="Переименовать этап">✏️</button>`)}
+    ${header(stage.name, `#/p/${pid}/stages`, `<button class="iconbtn" id="rename-stage" title="Переименовать этап">${ICONS.edit}</button>`)}
     <div class="pad">
       <div class="album-head">
         <span class="mut small">${mine.length} фото</span>
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
       ${stage.hint ? `<p class="mut small">${esc(stage.hint)}</p>` : ''}
-      ${mine.length ? '' : `<div class="empty"><div class="empty-ico">📷</div><p><b>Фото этого этапа пока нет.</b></p>
-        <p class="mut">Снимайте на схеме: тап по стене → «📷 Снять» у этапа «${esc(stage.name)}». Или «Обход этапа» — лидар снимет стены сам.</p>
+      ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p>
+        <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Обход этапа» — лидар снимет стены сам.</p>
         <button class="btn primary" data-nav="#/p/${pid}">Открыть схему</button></div>`}
       ${groups.map(g => `<div class="album-group">
         <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side))} <span class="mut small">· ${g.list.length}</span> ›</div>
@@ -1647,13 +1711,13 @@ async function viewWall(pid, wallKey) {
 
   app.innerHTML = `
     ${header(wallLabel(room, side), `#/p/${pid}`,
-      `<button class="iconbtn" id="rename-wall" title="Переименовать стену">✎</button>`)}
+      `<button class="iconbtn" id="rename-wall" title="Переименовать стену">${ICONS.edit}</button>`)}
     <div class="pad">
       ${side === 'p' ? `
         <p class="mut small">Снимите комнату из центра штатной камерой в режиме «Панорама» (или 360°-камерой) и добавьте снимок через «Галерея» на нужный этап. Смотреть — в 3D-туре.</p>
-        <button class="btn primary wide" id="open-pano" ${wallPhotos.length ? '' : 'disabled'}>🌐 Открыть панораму в туре</button>` : stagesWithPhotos.length >= 2 ? `
+        <button class="btn primary wide" id="open-pano" ${wallPhotos.length ? '' : 'disabled'}>${I('globe')}Открыть панораму в 3D</button>` : stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
-          ⇆ Сравнить «до / после»</button>` : `
+          ${I('compare')}Сравнить «до / после»</button>` : `
         <p class="mut small center">Добавьте фото минимум на двух этапах — появится сравнение «до/после».</p>`}
       ${isWallId(room, side) ? `
         <div class="card" style="margin-top:12px">
@@ -1675,8 +1739,8 @@ async function viewWall(pid, wallKey) {
             <div class="stage-photos-head">
               <b>${esc(s.name)}</b>${s.hint ? `<span class="hint-i" title="${esc(s.hint)}" data-hint="${esc(s.hint)}">ⓘ</span>` : ''}
               <span class="btn-pair">
-                <button class="btn small-btn" data-shoot="${s.id}">📷 Снять</button>
-                <button class="btn small-btn" data-pick="${s.id}">🖼 Галерея</button>
+                <button class="btn small-btn" data-shoot="${s.id}">${I('camera')}Снять</button>
+                <button class="btn small-btn" data-pick="${s.id}">${I('image')}Галерея</button>
               </span>
             </div>
             ${list.length ? `<div class="thumbs">
@@ -1797,9 +1861,9 @@ async function viewWall(pid, wallKey) {
 
 // проёмы и зеркала на стене: подпись, высота от пола по умолчанию, пример ввода
 const OPENING_KINDS = {
-  door: { label: '🚪 дверь', y: 0, example: '0,8 2,0' },
-  window: { label: '🪟 окно', y: 0.9, example: '1,4 1,4 0,6 0,9' },
-  mirror: { label: '🪞 зеркало', y: 1.0, example: '1,2 0,8 0,5 1,0' },
+  door: { label: 'дверь', y: 0, example: '0,8 2,0' },
+  window: { label: 'окно', y: 0.9, example: '1,4 1,4 0,6 0,9' },
+  mirror: { label: 'зеркало', y: 1.0, example: '1,2 0,8 0,5 1,0' },
 };
 
 // ожидаемые размеры поверхности из схемы: ширина × высота (для калибровки по 4 углам)
@@ -1916,22 +1980,20 @@ async function viewMore(pid) {
     <div class="pad">
       <div class="cards">
         <div class="card proj-name-card">
-          <div class="proj-name-row"><b>${esc(project.name)}</b><button class="iconbtn" id="rename-project" title="Переименовать объект" aria-label="Переименовать объект">✏️</button></div>
+          <div class="proj-name-row"><b>${esc(project.name)}</b><button class="iconbtn" id="rename-project" title="Переименовать объект" aria-label="Переименовать объект">${ICONS.edit}</button></div>
           <div class="mut small">${rooms.length} комн. · ${photos.length} фото</div>
         </div>
-        <button class="btn primary wide" data-nav="#/p/${pid}/report">📋 Задание для мастеров</button>
-        <button class="btn wide" data-nav="#/p/${pid}/verify">🔒 Подлинность фото</button>
-        <button class="btn wide" data-nav="#/p/${pid}/calc">🧮 Площади и материалы</button>
+        <button class="btn primary wide" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
+        <button class="btn wide" data-nav="#/p/${pid}/verify">${I('lock')}Подлинность фото</button>
+        <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
         <div class="card">
           <b>Команда объекта</b>
-          <p class="mut small">Пока без сервера: обмен файлами. Владелец отправляет схему, рабочие снимают и отправляют фото обратно. Полученный файл открывайте через «Импорт файла» на главном экране — всё сольётся без дублей.</p>
-          <button class="btn wide" id="share-plan">📤 Отправить схему коллегам (без фото)</button>
-          <button class="btn wide" id="share-project">📤 Отправить объект с фото</button>
-          <button class="btn ghost wide" id="set-name">👤 Подпись: ${esc(userName() || 'не задана')}</button>
+          <p class="mut small">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
+          <button class="btn ghost wide" id="set-name">${I('user')}Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
       </div>
-      <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия всех объектов — на главном экране; копия этого объекта — «Отправить объект с фото».</p>
-      <details class="about"><summary>ℹ️ О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
+      <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия всех объектов — на главном экране; копия этого объекта — свайп вправо по нему → «Отправить».</p>
+      <details class="about"><summary>${I('info')}О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
     </div>
     ${bottomNav(pid, 'more')}`;
 
@@ -1945,8 +2007,6 @@ async function viewMore(pid) {
     project.name = name.trim();
     await dbPut('projects', project); render();
   };
-  $('#share-plan').onclick = () => exportProject(pid, false);
-  $('#share-project').onclick = () => exportProject(pid, true);
   $('#set-name').onclick = () => {
     const t = prompt('Ваше имя и роль (подпись на фото и пометках):', userName());
     if (t === null) return;
@@ -2023,6 +2083,28 @@ async function exportProject(pid, withPhotos) {
   const base = slug(project.name);
   await deliverFile(blob, `${base}-${withPhotos ? 'photos' : 'plan'}.json`,
     withPhotos ? `${project.name} — фото` : `${project.name} — схема`);
+}
+
+// этап коллегам: файл с фото только этого этапа (при импорте добавится к объекту без дублей)
+async function exportStage(pid, stageId) {
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  const st = stages.find(x => x.id === stageId);
+  if (!project || !st) return;
+  toast('Готовлю этап…');
+  const blob = await buildExport('photos', [project], rooms, stages, photos.filter(p => p.stageId === stageId));
+  await deliverFile(blob, `${slug(project.name)}-${slug(st.name)}.json`, `${project.name} — ${st.name}`);
+}
+// этап заказчику: фото картинками через «Поделиться»
+async function shareStageImages(project, st, ph) {
+  const files = ph.map((p, k) => new File([p.blob], `${slug(st.name)}-${String(k + 1).padStart(2, '0')}.jpg`, { type: p.blob.type || 'image/jpeg' }));
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try { await navigator.share({ files, title: `${project.name} — ${st.name}` }); } catch (err) { if (!err || err.name !== 'AbortError') alert('Не удалось отправить: ' + (err && err.message)); }
+    return;
+  }
+  for (const f of files) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
 }
 
 function importBackup() {

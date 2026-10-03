@@ -77,21 +77,23 @@ async function viewTour(pid, roomId = null) {
   if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
 
   app.innerHTML = `
-    ${header('3D-тур', `#/p/${pid}`)}
+    ${header('3D', `#/p/${pid}`)}
     <div class="tour">
       <canvas id="tour-canvas"></canvas>
       <div class="tour-top">
-        <select class="inp" id="tour-stage">
-          <option value="all" ${tourState.stage === 'all' ? 'selected' : ''}>Сейчас — последние фото</option>
-          ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-        </select>
+        <div class="tour-row">
+          <select class="inp" id="tour-stage">
+            <option value="all" ${tourState.stage === 'all' ? 'selected' : ''}>Сейчас — последние фото</option>
+            ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          </select>
+          <button id="tour-photos" class="tour-ico ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото на стенах">${ICONS.camera}</button>
+        </div>
         <div class="tour-modes">
-          <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">🏠 Домик</button>
-          <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">👁 Внутри</button>
-          <button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">🌐 360°</button>
-          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">🏁 Финал</button>` : ''}
-          ${Native.isNative && roomPlanModels(project, rooms).length ? `<button id="tour-rp" title="Оригинальная модель RoomPlan: 3D и AR">📐 RoomPlan</button>` : ''}
-          <button id="tour-photos" class="${tourState.photos ? 'active' : ''}" title="Фото на стенах">📷</button>
+          <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
+          <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('eye')}Внутри</button>
+          <button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">${I('globe')}360°</button>
+          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}Финал</button>` : ''}
+          ${Native.isNative && roomPlanModels(project, rooms).length ? `<button id="tour-rp" title="Оригинальная модель RoomPlan: 3D и AR">${I('ar')}RoomPlan</button>` : ''}
         </div>
       </div>
       <div class="tour-bottom">
@@ -261,6 +263,29 @@ async function viewTour(pid, roomId = null) {
         scene.add(cap); solidWalls.push(cap);
       }
     });
+    // внешние углы: стены выдавлены наружу от контура, в выпуклом углу остаётся «вырез» — закрываем столбиком
+    const area = polyArea(r.pts);
+    const T = WALL_T + 0.003;
+    edges.forEach((e2, i) => {
+      if (cs[i].t > 0) return; // скруглённый угол строится дугой
+      const e1 = edges[(i - 1 + edges.length) % edges.length];
+      const turn = e1.ux * e2.uy - e1.uy * e2.ux;
+      if (turn * area <= 0 || Math.abs(turn) < 1e-3) return; // вогнутый угол или прямая — стены и так сходятся
+      const V = r.pts[i], n1 = [-e1.nx, -e1.ny], n2 = [-e2.nx, -e2.ny];
+      const P1 = [V[0] + n1[0] * T, V[1] + n1[1] * T], P3 = [V[0] + n2[0] * T, V[1] + n2[1] * T];
+      // точка пересечения наружных граней (усовое соединение)
+      const den = e1.ux * e2.uy - e1.uy * e2.ux;
+      const t = ((P3[0] - P1[0]) * e2.uy - (P3[1] - P1[1]) * e2.ux) / den;
+      let M = [P1[0] + e1.ux * t, P1[1] + e1.uy * t];
+      if (Math.hypot(M[0] - V[0], M[1] - V[1]) > T * 4) M = [P1[0] + P3[0] - V[0], P1[1] + P3[1] - V[1]];
+      const h = Math.max(wallHAt(r, e1.id, 1), wallHAt(r, e2.id, 0)) + 0.012;
+      const shape = new THREE.Shape([V, P1, M, P3].map(q => new THREE.Vector2(q[0], -q[1])));
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);
+      const post = new THREE.Mesh(geo, [wallCap, wallSolid]);
+      post.castShadow = true;
+      scene.add(post); solidWalls.push(post);
+    });
     // скруглённые углы: стена по дуге из коротких сегментов
     cs.forEach((c, i) => {
       if (!(c.t > 0)) return;
@@ -428,7 +453,8 @@ async function viewTour(pid, roomId = null) {
       camera.lookAt(target);
     } else if (tourState.mode === 'inside') {
       const ri = roomInfo[tourState.roomId];
-      if (ri) camera.position.copy(ri.center);
+      if (tourState.eye && tourState.eye.room === tourState.roomId && ri) camera.position.set(tourState.eye.x, ri.center.y, tourState.eye.z);
+      else if (ri) camera.position.copy(ri.center);
       camera.rotation.set(0, 0, 0, 'YXZ');
       camera.rotation.y = look.yaw; camera.rotation.x = look.pitch;
     } else {
@@ -447,7 +473,7 @@ async function viewTour(pid, roomId = null) {
     if (!orbit.userZoom) orbit.radius = span * 1.55 * Math.max(1, 0.85 / (w / h));
   }
   const pointers = new Map();
-  let lastPinch = 0;
+  let lastPinch = 0, lastAng = null;
   canvas.addEventListener('pointerdown', e => { pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); try { canvas.setPointerCapture(e.pointerId); } catch {} });
   canvas.addEventListener('pointermove', e => {
     const p = pointers.get(e.pointerId); if (!p) return;
@@ -456,6 +482,14 @@ async function viewTour(pid, roomId = null) {
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
+      // поворот двумя пальцами
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      if (lastAng !== null) {
+        let da = ang - lastAng;
+        if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
+        if (tourState.mode === 'house' || tourState.mode === 'final') orbit.theta -= da; else look.yaw -= da;
+      }
+      lastAng = ang;
       if (lastPinch) {
         if (tourState.mode === 'house' || tourState.mode === 'final') { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * lastPinch / d)); }
         else { const cam = tourState.mode === 'pano' ? panoCam : camera; cam.fov = Math.max(30, Math.min(100, cam.fov * lastPinch / d)); cam.updateProjectionMatrix(); }
@@ -468,7 +502,7 @@ async function viewTour(pid, roomId = null) {
       look.yaw += dx * 0.005; look.pitch = Math.max(-1.3, Math.min(1.3, look.pitch + dy * 0.005));
     }
   });
-  const up = e => { pointers.delete(e.pointerId); if (pointers.size < 2) lastPinch = 0; };
+  const up = e => { pointers.delete(e.pointerId); if (pointers.size < 2) { lastPinch = 0; lastAng = null; } };
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
@@ -482,23 +516,62 @@ async function viewTour(pid, roomId = null) {
     $('#tour-plan').innerHTML = `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet">
       ${rooms.map(r => `<path class="tp-room ${r.id === tourState.roomId ? 'sel' : ''}" data-room="${r.id}" d="${roomPath(r)}"/>`).join('')}
       ${rooms.map(r => { const c = roomCenter(r); return `<text class="tp-label" x="${c[0]}" y="${c[1]}">${esc(r.name)}</text>`; }).join('')}
+      <g id="tp-eye" style="display:none"><path id="tp-cone" class="tp-cone"/><circle class="tp-dot" r="${Math.max(0.12, span * 0.025)}"/></g>
     </svg>`;
-    $('#tour-plan').querySelectorAll('[data-room]').forEach(el => {
-      el.onclick = () => {
-        tourState.roomId = el.dataset.room;
-        if (tourState.mode === 'house') tourState.mode = 'inside';
-        look.yaw = 0; look.pitch = 0;
-        setMode(tourState.mode);
-        applyPano();
-      };
-    });
+  }
+  // тап по мини-плану — встать в эту точку (в режиме «Объект» — зайти внутрь), тянуть — идти
+  const planBox = $('#tour-plan');
+  const planPt = e => {
+    const svg = planBox.querySelector('svg'); if (!svg) return null;
+    const m = svg.getScreenCTM(); if (!m) return null;
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const q = pt.matrixTransform(m.inverse());
+    return [q.x, q.y];
+  };
+  const roomAtPt = q => rooms.find(r => pointInPoly(q, r.pts));
+  function setEye(r, q) {
+    const changed = r.id !== tourState.roomId;
+    tourState.roomId = r.id;
+    tourState.eye = { room: r.id, x: q[0], z: q[1] };
+    if (tourState.mode === 'house' || tourState.mode === 'final') { look.pitch = 0; setMode('inside'); applyPano(); return; }
+    if (changed) { drawPlan(); updateHint(); applyPano(); }
+  }
+  let eyeDrag = false;
+  planBox.addEventListener('pointerdown', e => {
+    const q = planPt(e); const r = q && roomAtPt(q);
+    if (!r) return;
+    e.preventDefault();
+    eyeDrag = true;
+    try { planBox.setPointerCapture(e.pointerId); } catch {}
+    setEye(r, q);
+  });
+  planBox.addEventListener('pointermove', e => {
+    if (!eyeDrag) return;
+    const q = planPt(e); const r = q && roomAtPt(q);
+    if (r) setEye(r, q);
+  });
+  const stopEye = () => { eyeDrag = false; };
+  planBox.addEventListener('pointerup', stopEye);
+  planBox.addEventListener('pointercancel', stopEye);
+  // точка наблюдателя и конус взгляда — обновляются каждый кадр
+  function updateEye() {
+    const g = document.getElementById('tp-eye');
+    if (!g) return;
+    if (tourState.mode !== 'inside') { g.style.display = 'none'; return; }
+    g.style.display = '';
+    const pos = camera.position;
+    g.setAttribute('transform', `translate(${pos.x} ${pos.z}) rotate(${-look.yaw * 180 / Math.PI})`);
+    const half = Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect);
+    const L = Math.max(0.8, span * 0.22), sx = Math.sin(half) * L, sy = Math.cos(half) * L;
+    const cone = document.getElementById('tp-cone');
+    if (cone) cone.setAttribute('d', `M0 0 L${-sx} ${-sy} A${L} ${L} 0 0 1 ${sx} ${-sy} Z`);
   }
   function updateHint() {
     const ri = roomInfo[tourState.roomId];
     const name = ri ? ri.name : '';
-    if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем, щипок — масштаб. Тап по комнате на плане — зайти внутрь.';
-    else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Серые стены — фото ещё нет.`;
-    else hint.textContent = panoAvailable ? `${name}: панорама 360°` : `${name}: панорамы для этого этапа нет — снимите её штатной камерой (режим «Панорама») и добавьте на экране «🌐 Панорама» комнаты.`;
+    if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем или двумя, щипок — масштаб. Тап по плану — встать в эту точку внутри.';
+    else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Ведите точку на плане — чтобы перейти.`;
+    else hint.textContent = panoAvailable ? `${name}: панорама 360°` : `${name}: панорамы для этого этапа нет — снимите её штатной камерой (режим «Панорама») и добавьте: тап внутри комнаты на схеме → «Панорама 360°».`;
     if (tourState.mode === 'final') hint.textContent = `Финальный скан: ${project.finalScan ? (project.finalScan.vertices || 0) + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
     const pb = $('#tour-photos'); if (pb) pb.classList.toggle('active', tourState.photos);
@@ -515,7 +588,7 @@ async function viewTour(pid, roomId = null) {
     if (m === 'final') loadFinal().then(updateHint);
     updateHint(); drawPlan();
   }
-  app.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { look.yaw = 0; look.pitch = 0; setMode(b.dataset.mode); }; });
+  app.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { look.yaw = 0; look.pitch = 0; if (b.dataset.mode === 'inside') tourState.eye = null; setMode(b.dataset.mode); }; });
   const rpBtn = app.querySelector('#tour-rp');
   if (rpBtn) rpBtn.onclick = () => {
     const list = roomPlanModels(project, rooms);
@@ -539,6 +612,7 @@ async function viewTour(pid, roomId = null) {
   function frame() {
     if (!alive) return;
     placeCamera();
+    updateEye();
     if (tourState.mode === 'pano' && panoAvailable) renderer.render(panoScene, panoCam);
     else renderer.render(scene, camera);
     requestAnimationFrame(frame);
