@@ -487,7 +487,7 @@ async function viewTour(pid, roomId = null) {
       if (lastAng !== null) {
         let da = ang - lastAng;
         if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
-        if (tourState.mode === 'house' || tourState.mode === 'final') orbit.theta -= da; else look.yaw -= da;
+        if (tourState.mode === 'house' || tourState.mode === 'final') orbit.theta += da; else look.yaw += da; // модель следует за пальцами
       }
       lastAng = ang;
       if (lastPinch) {

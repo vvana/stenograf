@@ -1992,7 +1992,6 @@ async function viewMore(pid) {
           <button class="btn ghost wide" id="set-name">${I('user')}Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
       </div>
-      <p class="mut small">Приложение работает офлайн, все данные — на устройстве. Резервная копия всех объектов — на главном экране; копия этого объекта — свайп вправо по нему → «Отправить».</p>
       <details class="about"><summary>${I('info')}О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
     </div>
     ${bottomNav(pid, 'more')}`;
