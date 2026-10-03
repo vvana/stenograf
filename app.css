@@ -619,3 +619,4 @@ select.inp {
 .tour-plan .tp-cone { fill: color-mix(in srgb, var(--acc) 30%, transparent); stroke: var(--acc); stroke-width: 0.03; }
 .tour-plan .tp-dot { fill: var(--acc); stroke: #fff; stroke-width: 0.05; }
 .backup-row .btn { white-space: nowrap; padding-left: 8px; padding-right: 8px; font-size: 15px; }
+.stage-toolbar { justify-content: flex-end; }

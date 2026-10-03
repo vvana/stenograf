@@ -1466,7 +1466,6 @@ async function viewStages(pid) {
     ${header('Этапы ремонта', `#/p/${pid}`)}
     <div class="pad">
       <div class="stage-toolbar">
-        <p class="mut small">Тап — фото этапа. Порядок — за ⠿. Свайп влево — удалить, вправо — отправить.</p>
         <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
       </div>
       <div class="cards" id="stage-list">
