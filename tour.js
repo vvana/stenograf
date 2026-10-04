@@ -97,14 +97,13 @@ async function viewTour(pid, roomId = null) {
         </div>
       </div>
       <div class="tour-bottom">
-        <div class="tour-hint" id="tour-hint"></div>
         <div class="tour-plan" id="tour-plan"></div>
       </div>
       <div class="tour-msg hidden" id="tour-msg"></div>
     </div>
     ${bottomNav(pid, 'tour')}`;
 
-  const msg = $('#tour-msg'), hint = $('#tour-hint');
+  const msg = $('#tour-msg'), hint = document.createElement('div'); // поясняющий текст на экране не показываем (просьба пользователя)
   const say = t => { msg.textContent = t; msg.classList.toggle('hidden', !t); };
   if (!rooms.length) { say('Сначала нарисуйте схему — тур строится из комнат и их фото.'); return; }
 

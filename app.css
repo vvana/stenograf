@@ -637,3 +637,4 @@ select.inp {
 .pa-btn.pa-scan { flex: 1; background: var(--acc); border-color: var(--acc); color: #fff; font-size: 13px; }
 .stage-lidar { padding: 10px 0 0; }
 .pa-btn.pa-scan2 { flex: 1; border-color: var(--acc); color: var(--acc); font-size: 13px; }
+.tour-bottom { justify-content: flex-end; }
