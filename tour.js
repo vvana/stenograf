@@ -578,7 +578,7 @@ async function viewTour(pid, roomId = null) {
     const isFinal = tourState.mode === 'final', isInside = tourState.mode === 'inside';
     const photosOn = isInside || tourState.photos;
     for (const c of ceilings) c.visible = isInside;                              // потолки только изнутри
-    for (const s of surfaces) { const isFloor = s.key.endsWith(':f'), isCeil = s.key.endsWith(':c'); if (isCeil) continue; s.mesh.visible = !isFinal && photosOn && (!isFloor || s.mesh.material.map); }
+    for (const s of surfaces) { const isFloor = s.key.endsWith(':f'), isCeil = s.key.endsWith(':c'); if (isCeil) continue; s.mesh.visible = !!(!isFinal && photosOn && (!isFloor || s.mesh.material.map)); } // visible строго true/false: three.js прячет объект только при visible === false
     for (const f of plainFloors) f.visible = !isFinal;
     for (const w of solidWalls) w.visible = !isFinal;
     if (finalMesh) finalMesh.visible = isFinal;
