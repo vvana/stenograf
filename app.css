@@ -638,3 +638,6 @@ select.inp {
 .stage-lidar { padding: 10px 0 0; }
 .pa-btn.pa-scan2 { flex: 1; border-color: var(--acc); color: var(--acc); font-size: 13px; }
 .tour-bottom { justify-content: flex-end; }
+.topbar .logo { display: inline-flex; line-height: 0; }
+.topbar .logo svg { width: 34px; height: 34px; margin: -4px -2px -4px -4px; }
+.empty-ico.logo-big svg { width: 72px; height: 72px; stroke: none; }

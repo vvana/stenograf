@@ -193,9 +193,11 @@ async function render() {
   }
 }
 
+// знак приложения «Слои в скане» (как иконка): три слоя-этапа
+const LOGO = '<svg viewBox="0 0 120 120" aria-hidden="true"><path d="M60 89.9L99.1 73.8 60 57.7 20.9 73.8Z" fill="#c4cad6"/><path d="M60 76.1L99.1 60 60 43.9 20.9 60Z" fill="#8a97b0"/><path d="M60 62.3L99.1 46.2 60 30.1 20.9 46.2Z" fill="#3f4f73"/></svg>';
 function header(title, backHash, right = '') {
   return `<header class="topbar">
-    ${backHash !== null ? `<button class="iconbtn" data-nav="${esc(backHash)}" aria-label="Назад">←</button>` : '<span class="logo">⌂</span>'}
+    ${backHash !== null ? `<button class="iconbtn" data-nav="${esc(backHash)}" aria-label="Назад">←</button>` : `<span class="logo">${LOGO}</span>`}
     <h1>${esc(title)}</h1>
     <div class="topbar-right">${right}</div>
   </header>`;
@@ -344,7 +346,7 @@ async function viewProjects() {
     <div class="pad">
       ${projects.length === 0 ? `
         <div class="empty">
-          <div class="empty-ico">${ICONS.build}</div>
+          <div class="empty-ico logo-big">${LOGO}</div>
           <p><b>Пока нет ни одного объекта.</b></p>
           <p class="mut">Объект — это квартира или дом, где идёт ремонт. Добавьте первый, нарисуйте схему и фиксируйте каждую стену по этапам.</p>
         </div>` : ''}
