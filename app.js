@@ -2073,7 +2073,6 @@ async function viewMore(pid) {
           <div class="mut small">${rooms.length} комн. · ${photos.length} фото</div>
         </div>
         <button class="btn primary wide" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
-        <button class="btn wide" data-nav="#/p/${pid}/verify">${I('lock')}Подлинность фото</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
         <div class="card">
           <b>Команда объекта</b>
