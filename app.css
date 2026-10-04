@@ -630,3 +630,5 @@ select.inp {
 .where-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--line); font-size: 15px; }
 .where-row input { width: 20px; height: 20px; accent-color: var(--acc); }
 .where-src { margin-left: auto; }
+.stage-toolbar { gap: 8px; }
+#album-walk { margin: 8px 0 4px; }

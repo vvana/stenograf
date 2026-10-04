@@ -531,8 +531,6 @@ async function viewPlan(pid) {
     ${header(project.name, '#/')}
     <div class="plan-wrap">
       <div class="plan-actions">
-        <button class="pa-btn hidden" id="lidar-walk" title="Обход этапа: автосъёмка стен лидаром">
-          <svg viewBox="0 0 24 24"><circle cx="13" cy="4" r="2"/><path d="M11 21l2-6-2.5-3 1-4 3 3h3M12.5 8l-3 2-1 3M13 15l3 2v4"/></svg><span>Обход этапа</span></button>
         <button class="pa-btn hidden" id="lidar-apt" title="Квартира целиком: обмер / финальный скан">
           <svg viewBox="0 0 24 24"><path d="M4 21V6l8-3v18M12 21V9l8 3v9M2.5 21h19M7 8.5h2M7 12.5h2M7 16.5h2M15 14h2M15 17.5h2"/></svg><span>Вся квартира</span></button>
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
@@ -786,6 +784,7 @@ const ICONS = {
   compare: svgIco('<path d="M7 7h13M16 3l4 4-4 4M17 17H4M8 13l-4 4 4 4"/>'),
   ceiling: svgIco('<path d="M4 5h16"/><path d="M12 20V9M8 13l4-4 4 4"/>'),
   floor: svgIco('<path d="M4 19h16"/><path d="M12 4v11M8 11l4 4 4-4"/>'),
+  walk: svgIco('<circle cx="13" cy="4" r="2"/><path d="M11 21l2-6-2.5-3 1-4 3 3h3M12.5 8l-3 2-1 3M13 15l3 2v4"/>'),
   building: svgIco('<path d="M4 21V6l8-3v18M12 21V9l8 3v9M2.5 21h19M7 8.5h2M7 12.5h2M7 16.5h2M15 14h2M15 17.5h2"/>'),
   edit: svgIco('<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>'),
   door: svgIco('<path d="M6 21V3h11v18M4 21h16"/><path d="M14 12h.01"/>'),
@@ -1384,11 +1383,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → О приложении»');
       return;
     }
-    const walkBtn = $('#lidar-walk'), measBtn = $('#lidar-measure'), aptBtn = $('#lidar-apt');
-    if (walkBtn) {
-      walkBtn.classList.remove('hidden');
-      walkBtn.onclick = () => walkSheet();
-    }
+    const measBtn = $('#lidar-measure'), aptBtn = $('#lidar-apt');
     if (aptBtn) {
       aptBtn.classList.remove('hidden');
       aptBtn.onclick = () => showSheet(`<div class="sh-title">Квартира целиком</div>
@@ -1416,30 +1411,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       };
     }
   });
-  async function walkSheet() {
-    const stagesList = await dbAll('stages', 'projectId', pid);
-    stagesList.sort((a, b) => a.ord - b.ord);
-    let roomSel = rooms.length === 1 ? rooms[0] : null;
-    const step2 = () => showSheet(`<div class="sh-title">Обход этапа: ${roomSel ? esc(roomSel.name) : 'вся квартира'}</div>
-      <p class="mut small">Выберите этап — кадры стен снимутся сами и лягут на этот этап уже откалиброванными.</p>
-      ${stagesList.map(s => `<button class="btn wide" data-stage="${s.id}">${esc(s.name)}</button>`).join('')}`, sh => {
-      sh.querySelectorAll('[data-stage]').forEach(b => b.onclick = async () => {
-        hideSheet();
-        try {
-          if (roomSel) await lidarWalk(pid, roomSel, b.dataset.stage);
-          else await lidarApartment(pid, rooms, b.dataset.stage);
-          render();
-        } catch (err) { alert('Обход не удался: ' + err.message); }
-      });
-    });
-    if (rooms.length === 1) return step2();
-    showSheet(`<div class="sh-title">Обход этапа: что снимаем?</div>
-      <button class="btn primary wide" data-room="*">${I('building')}Всю квартиру подряд</button>
-      ${rooms.map(r => `<button class="btn wide" data-room="${r.id}">${esc(r.name)}</button>`).join('')}`, sh => {
-      sh.querySelectorAll('[data-room]').forEach(b => b.onclick = () => { roomSel = b.dataset.room === '*' ? null : rooms.find(r => r.id === b.dataset.room); step2(); });
-    });
-  }
-
   if (planState.edit) {
     $('#trace-room').onclick = () => setMode('trace');
     $('#wizard-room').onclick = wizardSheet;
@@ -1452,6 +1423,47 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
     $('#mode-cancel').onclick = () => { planState.mode = null; planState.tmp = []; render(); };
     updateTools();
   }
+}
+
+/* ---------- обход этапа (лидар): экран «Этапы» и альбом этапа ---------- */
+// простой лист выбора поверх экрана; resolve(значение) или null при отмене
+function pickSheet(title, note, items) {
+  return new Promise(resolve => {
+    const host = document.createElement('div');
+    host.className = 'plan-sheet tpl-sheet';
+    host.innerHTML = `<div class="sh-title">${esc(title)}</div>${note ? `<p class="mut small">${esc(note)}</p>` : ''}
+      ${items.map((it, k) => `<button class="btn wide ${it.primary ? 'primary' : ''}" data-k="${k}">${it.html}</button>`).join('')}
+      <button class="btn ghost wide" data-k="x">Отмена</button>`;
+    document.body.appendChild(host);
+    host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { host.remove(); resolve(b.dataset.k === 'x' ? null : items[+b.dataset.k].value); });
+  });
+}
+async function stageWalk(pid, stageId = null) {
+  const { rooms, stages } = await loadProjectData(pid);
+  if (!rooms.length) { alert('Сначала обмерьте помещения на схеме — обход снимает их стены.'); return; }
+  let st = stages.find(x => x.id === stageId);
+  if (!st) {
+    const id = await pickSheet('Обход этапа', 'Выберите этап — кадры стен снимутся сами и лягут на него уже откалиброванными.',
+      stages.map(x => ({ html: esc(x.name), value: x.id })));
+    if (!id) return;
+    st = stages.find(x => x.id === id);
+  }
+  const ids = stageRoomIds(st, rooms);
+  const own = ids ? rooms.filter(r => ids.includes(r.id)) : rooms;
+  let room = own.length === 1 ? own[0] : undefined;
+  if (room === undefined) {
+    const v = await pickSheet(`Обход: ${st.name}`, 'Что снимаем?', [
+      ...(ids ? [] : [{ html: `${I('building')}Всю квартиру подряд`, value: '*', primary: true }]),
+      ...own.map(r => ({ html: esc(r.name), value: r.id })),
+    ]);
+    if (!v) return;
+    room = v === '*' ? null : rooms.find(r => r.id === v);
+  }
+  try {
+    if (room) await lidarWalk(pid, room, st.id);
+    else await lidarApartment(pid, rooms, st.id);
+    render();
+  } catch (err) { alert('Обход не удался: ' + err.message); }
 }
 
 /* ---------- этапы по помещениям ---------- */
@@ -1491,6 +1503,7 @@ async function viewStages(pid) {
     ${header('Этапы ремонта', `#/p/${pid}`)}
     <div class="pad">
       <div class="stage-toolbar">
+        <button class="btn small-btn hidden" id="walk-stage">${I('walk')}Обход этапа</button>
         <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
       </div>
       <div class="cards" id="stage-list">
@@ -1512,6 +1525,7 @@ async function viewStages(pid) {
     </div>
     ${bottomNav(pid, 'stages')}`;
 
+  lidarAvailable().then(ok => { const b = $('#walk-stage'); if (ok && b && stages.length) { b.classList.remove('hidden'); b.onclick = () => stageWalk(pid); } });
   $('#add-stage').onclick = async () => {
     const name = prompt('Название этапа (например, «Электрика», «Штукатурка»):');
     if (!name || !name.trim()) return;
@@ -1674,6 +1688,7 @@ async function viewStageAlbum(pid, stageId) {
         <span class="mut small">${mine.length} фото</span>
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
+      <button class="btn wide hidden" id="album-walk">${I('walk')}Обход этого этапа — лидар снимет стены сам</button>
       ${stage.hint ? `<p class="mut small">${esc(stage.hint)}</p>` : ''}
       ${rooms.length ? `<div class="card where-card">
         <b>Где нужен этап</b>
@@ -1690,7 +1705,7 @@ async function viewStageAlbum(pid, stageId) {
         </label>`; }).join('')}
       </div>` : ''}
       ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p>
-        <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Обход этапа» — лидар снимет стены сам.</p>
+        <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Обход этого этапа» выше — лидар снимет стены сам.</p>
         <button class="btn primary" data-nav="#/p/${pid}">Открыть схему</button></div>`}
       ${groups.map(g => `<div class="album-group">
         <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side))} <span class="mut small">· ${g.list.length}</span> ›</div>
@@ -1732,6 +1747,7 @@ async function viewStageAlbum(pid, stageId) {
     saveRooms([...app.querySelectorAll('.where-row input')].filter(x => x.checked).map(x => x.dataset.room));
   });
   markQuick();
+  lidarAvailable().then(ok => { const b = $('#album-walk'); if (ok && b) { b.classList.remove('hidden'); b.onclick = () => stageWalk(pid, stage.id); } });
   $('#album-status').onclick = async () => {
     stage.status = ((stage.status || 0) + 1) % 3;
     await dbPut('stages', stage); render();
