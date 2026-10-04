@@ -1518,9 +1518,9 @@ async function viewStages(pid) {
                 <div class="stage-name">${esc(s.name)}</div>
                 <div class="mut small stage-sub">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
                 <div class="room-tags">${stageRoomTags(s, rooms)}</div>
-                <button class="btn small-btn walk-btn hidden" data-walk="${s.id}" title="Лидар сам снимет стены этого этапа">${I('walk')}Начать обход</button>
+                <button class="chip stage-chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
               </div>
-              <button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
+              <button class="walk-tile hidden" data-walk="${s.id}" title="Лидар сам снимет стены этого этапа">${ICONS.walk}<span>Начать<br>обход</span></button>
             </div>
           </div>`).join('')}
       </div>
@@ -1530,7 +1530,7 @@ async function viewStages(pid) {
 
   lidarAvailable().then(ok => {
     if (!ok) return;
-    app.querySelectorAll('.walk-btn').forEach(b => b.classList.remove('hidden'));
+    app.querySelectorAll('.walk-tile').forEach(b => b.classList.remove('hidden'));
     const fb = $('#final-stage');
     if (fb) { fb.classList.remove('hidden'); fb.onclick = () => finalScan(pid); }
   });

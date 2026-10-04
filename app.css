@@ -642,3 +642,15 @@ select.inp {
 .topbar .logo svg { width: 34px; height: 34px; margin: -4px -2px -4px -4px; }
 .empty-ico.logo-big svg { width: 72px; height: 72px; stroke: none; }
 .walk-btn { margin-top: 8px; padding: 6px 12px; border-color: var(--acc); color: var(--acc); }
+/* «Начать обход» — плитка в правой части карточки этапа, почти на всю высоту */
+.stage-row { align-items: stretch; }
+.stage-row .drag-handle { align-self: center; }
+.stage-row .stage-main { align-self: center; }
+.stage-chip { margin-top: 8px; }
+.walk-tile {
+  flex: 0 0 84px; margin: -5px -6px -5px 0; border: 1px solid var(--acc); border-radius: 12px; background: color-mix(in srgb, var(--acc) 7%, var(--card));
+  color: var(--acc); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  font: 600 12px/1.15 system-ui, -apple-system, sans-serif; text-align: center; cursor: pointer; padding: 6px 4px;
+}
+.walk-tile svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.walk-tile:active { background: color-mix(in srgb, var(--acc) 16%, var(--card)); }
