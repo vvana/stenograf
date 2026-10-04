@@ -1505,11 +1505,8 @@ async function viewStages(pid) {
     ${header('Этапы ремонта', `#/p/${pid}`)}
     <div class="pad">
       <div class="stage-toolbar">
+        <button class="btn small-btn hidden" id="final-stage" title="3D-модель квартиры с текстурами — в конце ремонта">${I('flag')}Финальный скан</button>
         <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
-      </div>
-      <div class="plan-actions stage-lidar hidden" id="stage-lidar">
-        <button class="pa-btn" id="walk-stage" title="Обход этапа: лидар сам снимет стены">${ICONS.walk}<span>Обход этапа</span></button>
-        <button class="pa-btn" id="final-stage" title="3D-модель квартиры с текстурами — в конце ремонта">${ICONS.flag}<span>Финальный скан</span></button>
       </div>
       <div class="cards" id="stage-list">
         ${stages.map(s => `
@@ -1521,6 +1518,7 @@ async function viewStages(pid) {
                 <div class="stage-name">${esc(s.name)}</div>
                 <div class="mut small stage-sub">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
                 <div class="room-tags">${stageRoomTags(s, rooms)}</div>
+                <button class="btn small-btn walk-btn hidden" data-walk="${s.id}" title="Лидар сам снимет стены этого этапа">${I('walk')}Начать обход</button>
               </div>
               <button class="chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
             </div>
@@ -1531,11 +1529,10 @@ async function viewStages(pid) {
     ${bottomNav(pid, 'stages')}`;
 
   lidarAvailable().then(ok => {
-    const row = $('#stage-lidar');
-    if (!ok || !row) return;
-    row.classList.remove('hidden');
-    $('#walk-stage').onclick = () => stageWalk(pid);
-    $('#final-stage').onclick = () => finalScan(pid);
+    if (!ok) return;
+    app.querySelectorAll('.walk-btn').forEach(b => b.classList.remove('hidden'));
+    const fb = $('#final-stage');
+    if (fb) { fb.classList.remove('hidden'); fb.onclick = () => finalScan(pid); }
   });
   $('#add-stage').onclick = async () => {
     const name = prompt('Название этапа (например, «Электрика», «Штукатурка»):');
@@ -1586,6 +1583,8 @@ async function viewStages(pid) {
 
   // тап: статус — по плашке, остальное — альбом этапа
   list.addEventListener('click', async e => {
+    const wb = e.target.closest('[data-walk]');
+    if (wb) { stageWalk(pid, wb.dataset.walk); return; }
     const st = e.target.closest('[data-status]');
     if (st) {
       const s = stages.find(x => x.id === st.dataset.status);
@@ -1699,7 +1698,7 @@ async function viewStageAlbum(pid, stageId) {
         <span class="mut small">${mine.length} фото</span>
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
-      <button class="btn wide hidden" id="album-walk">${I('walk')}Обход этого этапа — лидар снимет стены сам</button>
+      <button class="btn wide hidden" id="album-walk">${I('walk')}Начать обход</button>
       ${stage.hint ? `<p class="mut small">${esc(stage.hint)}</p>` : ''}
       ${rooms.length ? `<div class="card where-card">
         <b>Где нужен этап</b>
@@ -1716,7 +1715,7 @@ async function viewStageAlbum(pid, stageId) {
         </label>`; }).join('')}
       </div>` : ''}
       ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p>
-        <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Обход этого этапа» выше — лидар снимет стены сам.</p>
+        <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Начать обход» выше — лидар снимет стены сам.</p>
         <button class="btn primary" data-nav="#/p/${pid}">Открыть схему</button></div>`}
       ${groups.map(g => `<div class="album-group">
         <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side))} <span class="mut small">· ${g.list.length}</span> ›</div>

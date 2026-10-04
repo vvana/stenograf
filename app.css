@@ -641,3 +641,4 @@ select.inp {
 .topbar .logo { display: inline-flex; line-height: 0; }
 .topbar .logo svg { width: 34px; height: 34px; margin: -4px -2px -4px -4px; }
 .empty-ico.logo-big svg { width: 72px; height: 72px; stroke: none; }
+.walk-btn { margin-top: 8px; padding: 6px 12px; border-color: var(--acc); color: var(--acc); }
