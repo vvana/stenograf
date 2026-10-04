@@ -531,10 +531,9 @@ async function viewPlan(pid) {
     ${header(project.name, '#/')}
     <div class="plan-wrap">
       <div class="plan-actions">
-        <button class="pa-btn hidden" id="lidar-apt" title="Квартира целиком: обмер / финальный скан">
-          <svg viewBox="0 0 24 24"><path d="M4 21V6l8-3v18M12 21V9l8 3v9M2.5 21h19M7 8.5h2M7 12.5h2M7 16.5h2M15 14h2M15 17.5h2"/></svg><span>Вся квартира</span></button>
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
+        <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты лидаром</span></button>
       </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <span id="create-tools" class="tools">
@@ -566,7 +565,6 @@ async function viewPlan(pid) {
         </span>
         <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
       </div>
-      <div id="lidar-row" class="lidar-row hidden"><button class="btn primary wide" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)"><span class="btn-ico">${ICONS.scan}</span>Обмер комнаты лидаром</button></div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
         <div class="plan-tools">
@@ -1383,24 +1381,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → О приложении»');
       return;
     }
-    const measBtn = $('#lidar-measure'), aptBtn = $('#lidar-apt');
-    if (aptBtn) {
-      aptBtn.classList.remove('hidden');
-      aptBtn.onclick = () => showSheet(`<div class="sh-title">Квартира целиком</div>
-        <p class="mut small">Комнаты сканируются подряд в одной сессии: закончили комнату — «Следующая», перешли в другую. Существующие комнаты обновятся, новые добавятся.</p>
-        <button class="btn primary wide" id="apt-measure"><span class="btn-ico">${ICONS.scan}</span>Обмер всей квартиры</button>
-        <button class="btn wide" id="apt-final">${I('flag')}Финальный скан (3D с текстурами)</button>`, sh => {
-        sh.querySelector('#apt-measure').onclick = async () => { hideSheet(); try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); } };
-        sh.querySelector('#apt-final').onclick = async () => {
-          hideSheet();
-          if (!confirm('Финальный скан лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям. Начать?')) return;
-          try { await lidarFinal(pid, project, rooms); } catch (err) { alert('Скан не удался: ' + err.message); }
-          render();
-        };
-      });
-    }
+    const measBtn = $('#lidar-measure');
     if (measBtn) {
-      $('#lidar-row').classList.remove('hidden');
+      measBtn.classList.remove('hidden');
       const empty = $('.empty .mut');
       if (empty) empty.textContent = 'Нажмите «Обмер комнаты лидаром» и обойдите комнату вдоль стен — или «Редактор», чтобы нарисовать схему вручную.';
       measBtn.onclick = async () => {
@@ -1466,6 +1449,22 @@ async function stageWalk(pid, stageId = null) {
   } catch (err) { alert('Обход не удался: ' + err.message); }
 }
 
+async function apartmentScan(pid) {
+  const how = await pickSheet('Вся квартира',
+    'Комнаты сканируются подряд в одной сессии: закончили комнату — «Следующая», перешли в другую. Существующие комнаты обновятся, новые добавятся.',
+    [{ html: `<span class="btn-ico">${ICONS.scan}</span>Обмер всей квартиры`, value: 'measure', primary: true },
+     { html: `${I('flag')}Финальный скан (3D с текстурами)`, value: 'final' }]);
+  if (!how) return;
+  const { project, rooms } = await loadProjectData(pid);
+  if (how === 'measure') {
+    try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
+    return;
+  }
+  if (!confirm('Финальный скан лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям. Начать?')) return;
+  try { await lidarFinal(pid, project, rooms); } catch (err) { alert('Скан не удался: ' + err.message); }
+  render();
+}
+
 /* ---------- этапы по помещениям ---------- */
 // тип помещения: санузел / кухня / комната — по мебели из лидара, иначе по названию
 function roomKind(r) {
@@ -1503,8 +1502,11 @@ async function viewStages(pid) {
     ${header('Этапы ремонта', `#/p/${pid}`)}
     <div class="pad">
       <div class="stage-toolbar">
-        <button class="btn small-btn hidden" id="walk-stage">${I('walk')}Обход этапа</button>
         <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
+      </div>
+      <div class="plan-actions stage-lidar hidden" id="stage-lidar">
+        <button class="pa-btn" id="walk-stage" title="Обход этапа: лидар сам снимет стены">${ICONS.walk}<span>Обход этапа</span></button>
+        <button class="pa-btn" id="apt-stage" title="Квартира целиком: обмер / финальный скан">${ICONS.building}<span>Вся квартира</span></button>
       </div>
       <div class="cards" id="stage-list">
         ${stages.map(s => `
@@ -1525,7 +1527,13 @@ async function viewStages(pid) {
     </div>
     ${bottomNav(pid, 'stages')}`;
 
-  lidarAvailable().then(ok => { const b = $('#walk-stage'); if (ok && b && stages.length) { b.classList.remove('hidden'); b.onclick = () => stageWalk(pid); } });
+  lidarAvailable().then(ok => {
+    const row = $('#stage-lidar');
+    if (!ok || !row) return;
+    row.classList.remove('hidden');
+    $('#walk-stage').onclick = () => stageWalk(pid);
+    $('#apt-stage').onclick = () => apartmentScan(pid);
+  });
   $('#add-stage').onclick = async () => {
     const name = prompt('Название этапа (например, «Электрика», «Штукатурка»):');
     if (!name || !name.trim()) return;

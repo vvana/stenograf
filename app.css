@@ -632,3 +632,7 @@ select.inp {
 .where-src { margin-left: auto; }
 .stage-toolbar { gap: 8px; }
 #album-walk { margin: 8px 0 4px; }
+/* схема: «Редактор» + «Обмер лидаром» в одном ряду */
+.plan-actions:has(.pa-scan:not(.hidden)) #toggle-edit { flex: 0 0 96px; }
+.pa-btn.pa-scan { flex: 1; background: var(--acc); border-color: var(--acc); color: #fff; font-size: 13px; }
+.stage-lidar { padding: 10px 0 0; }
