@@ -1,4 +1,4 @@
-/* Стенограф — отчёт для мастеров, калькулятор материалов, «призрачная камера» */
+/* Fixpoint — отчёт для мастеров, калькулятор материалов, «призрачная камера» */
 'use strict';
 
 const roomSurfaces = r => [...(r.wallIds || []), 'c', 'f', 'p'];
@@ -114,7 +114,7 @@ async function viewReport(pid) {
     <div class="pad report" id="report">
       <div class="report-head">
         <h2>${esc(project.name)}</h2>
-        <div class="mut small">${reportTrade === 'all' ? 'Разметка стен и точек' : 'Задание: ' + tradeName(reportTrade)} · ${today} · Стенограф</div>
+        <div class="mut small">${reportTrade === 'all' ? 'Разметка стен и точек' : 'Задание: ' + tradeName(reportTrade)} · ${today} · Fixpoint</div>
       </div>
       <div class="trade-filter no-print">
         <button class="chip ${reportTrade === 'all' ? 'st1' : 'st0'}" data-trade="all">Всё</button>
@@ -224,7 +224,7 @@ function reportText(project, items, stages) {
       for (const m of cds) lines.push(`  ▬ ${conduitLabel(m, null)}`);
     }
   }
-  lines.push('', 'Фото с разметкой — во вложении. Сделано в Стенографе.');
+  lines.push('', 'Фото с разметкой — во вложении. Сделано в Fixpoint.');
   return lines.join('\n');
 }
 
@@ -242,7 +242,7 @@ async function viewVerify(pid) {
     <div class="pad report" id="verify">
       <div class="report-head">
         <h2>${esc(project.name)}</h2>
-        <div class="mut small">Реестр печатей · ${fmtDate(Date.now())} · Стенограф</div>
+        <div class="mut small">Реестр печатей · ${fmtDate(Date.now())} · Fixpoint</div>
       </div>
       <p class="mut small">Каждое фото при добавлении получает печать: хеш SHA-256 содержимого, время, геометку (если разрешена) и автора. Если файл потом изменён — хеш не совпадёт. Реестр можно распечатать или переслать вместе с фото как доказательство «что и когда было снято».</p>
       <div class="card"><b>Фото: ${photos.length}</b> · с печатью ${sealed.length}${unsealed ? ` · без печати ${unsealed} (добавлены до этой версии)` : ''}<br><span id="vf-sum" class="mut small">Проверяю…</span></div>

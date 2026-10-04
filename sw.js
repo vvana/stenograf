@@ -1,4 +1,4 @@
-/* Стенограф — service worker: офлайн-оболочка */
+/* Fixpoint — service worker: офлайн-оболочка */
 'use strict';
 
 const CACHE = 'stenograf-v1';

@@ -6,7 +6,7 @@ import ARKit
 import AVFoundation
 import QuickLook
 
-/// Мост Стенограф ↔ Apple RoomPlan.
+/// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
 ///   await RP.isSupported()
 ///   await RP.scan({ mode: 'measure' | 'walk' | 'multi' | 'final' | 'ghost', frames?: bool, overlay?: {...} })

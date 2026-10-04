@@ -99,7 +99,7 @@ jobs:
           cp -R build/Build/Products/Release-iphoneos/App.app Payload/
           # папка ru.lproj — iOS считает приложение русским, системные подсказки (RoomPlan, камера) идут по-русски
           mkdir -p Payload/App.app/ru.lproj
-          printf '"CFBundleDisplayName" = "Стенограф";\n"CFBundleName" = "Стенограф";\n' > Payload/App.app/ru.lproj/InfoPlist.strings
+          printf '"CFBundleDisplayName" = "Fixpoint";\n"CFBundleName" = "Fixpoint";\n' > Payload/App.app/ru.lproj/InfoPlist.strings
           rm -rf Payload/App.app/en.lproj
           ls Payload/App.app | grep lproj
           zip -qr Stenograf-unsigned.ipa Payload

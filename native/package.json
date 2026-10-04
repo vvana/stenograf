@@ -2,7 +2,7 @@
   "name": "stenograf-native",
   "private": true,
   "version": "0.1.0",
-  "description": "Capacitor-обёртка Стенографа (iOS, RoomPlan)",
+  "description": "Capacitor-обёртка Fixpoint (iOS, RoomPlan)",
   "scripts": {
     "www": "node scripts/www.js"
   },

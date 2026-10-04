@@ -1,4 +1,4 @@
-/* Стенограф — фотодневник ремонта: стены × этапы, слайдер «до/после» */
+/* Fixpoint — фотодневник ремонта: стены × этапы, слайдер «до/после» */
 'use strict';
 
 /* ---------- утилиты ---------- */
@@ -381,7 +381,7 @@ async function viewProjects() {
   photosAll.forEach(p => { counts[p.projectId] = (counts[p.projectId] || 0) + 1; });
 
   app.innerHTML = `
-    ${header('Стенограф', null)}
+    ${header('Fixpoint', null)}
     <div class="pad">
       ${projects.length === 0 ? `
         <div class="empty">
@@ -1651,7 +1651,7 @@ async function viewStages(pid) {
     return true;
   }, id => sendStage(id));
 
-  // свайп вправо: отправить этап — картинками (заказчику) или файлом для Стенографа (коллегам)
+  // свайп вправо: отправить этап — картинками (заказчику) или файлом для Fixpoint (коллегам)
   const sendStage = id => {
     const st = stages.find(x => x.id === id);
     const ph = photos.filter(p => p.stageId === id);
@@ -1660,7 +1660,7 @@ async function viewStages(pid) {
     host.className = 'plan-sheet tpl-sheet';
     host.innerHTML = `<div class="sh-title">Отправить «${esc(st.name)}» · ${ph.length} фото</div>
       <button class="btn wide" data-how="img">${I('image')}Фото картинками — заказчику, в мессенджер</button>
-      <button class="btn wide" data-how="file">${I('share')}Файл для Стенографа — коллегам</button>
+      <button class="btn wide" data-how="file">${I('share')}Файл для Fixpoint — коллегам</button>
       <button class="btn ghost wide" data-how="x">Отмена</button>`;
     document.body.appendChild(host);
     host.querySelectorAll('[data-how]').forEach(b => b.onclick = async () => {
@@ -2225,7 +2225,7 @@ async function buildExport(kind, projects, rooms, stages, photos) {
     const { usdz, ...rest } = r;
     roomsOut.push(usdz ? { ...rest, usdzData: await blobToDataURL(usdz) } : rest);
   }
-  const payload = { app: 'stenograf', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages, photos: photosOut };
+  const payload = { app: 'fixpoint', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages, photos: photosOut };
   return new Blob([JSON.stringify(payload)], { type: 'application/json' });
 }
 
@@ -2249,7 +2249,7 @@ async function exportBackup() {
     dbAll('projects'), dbAll('rooms'), dbAll('stages'), dbAll('photos'),
   ]);
   const blob = await buildExport('backup', projects, rooms, stages, photos);
-  await deliverFile(blob, `stenograf-backup-${new Date().toISOString().slice(0, 10)}.json`, 'Резервная копия Стенографа');
+  await deliverFile(blob, `fixpoint-backup-${new Date().toISOString().slice(0, 10)}.json`, 'Резервная копия Fixpoint');
 }
 
 async function exportProject(pid, withPhotos) {
@@ -2302,7 +2302,7 @@ function importBackup() {
 
 // слияние данных из файла обмена в локальную базу (см. buildExport про kind)
 async function importData(data) {
-      if (data.app !== 'stenograf' || !Array.isArray(data.projects)) throw new Error('Это не файл Стенографа');
+      if (!['fixpoint', 'stenograf'].includes(data.app) || !Array.isArray(data.projects)) throw new Error('Это не файл Fixpoint'); // stenograf — файлы до переименования
       const kind = data.kind || 'backup';
       const KIND_TEXT = { backup: 'резервную копию', plan: 'схему объекта', photos: 'фото от участника' };
       const who = data.by ? ` от «${data.by}»` : '';

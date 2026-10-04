@@ -1,4 +1,4 @@
-/* Стенограф — слой хранения (IndexedDB) */
+/* Fixpoint — слой хранения (IndexedDB) */
 'use strict';
 
 const DB_NAME = 'stenograf';

@@ -1,6 +1,6 @@
 {
   "appId": "ru.stenograf.app",
-  "appName": "Стенограф",
+  "appName": "Fixpoint",
   "webDir": "www",
   "ios": {
     "contentInset": "never",
