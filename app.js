@@ -533,7 +533,8 @@ async function viewPlan(pid) {
       <div class="plan-actions">
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
-        <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты лидаром</span></button>
+        <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
+        <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
       </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <span id="create-tools" class="tools">
@@ -1382,10 +1383,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       return;
     }
     const measBtn = $('#lidar-measure');
+    const aptBtn = $('#lidar-apt');
+    if (aptBtn) { aptBtn.classList.remove('hidden'); aptBtn.onclick = () => measureApartment(pid); }
     if (measBtn) {
       measBtn.classList.remove('hidden');
       const empty = $('.empty .mut');
-      if (empty) empty.textContent = 'Нажмите «Обмер комнаты лидаром» и обойдите комнату вдоль стен — или «Редактор», чтобы нарисовать схему вручную.';
+      if (empty) empty.textContent = 'Нажмите «Обмер квартиры» и обойдите комнаты подряд — они сразу встанут на схеме на свои места. Или «Обмер комнаты» для одной комнаты, или «Редактор», чтобы нарисовать вручную.';
       measBtn.onclick = async () => {
         const room = selRoom();
         if (room && !confirm(`Переобмерить «${room.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
@@ -1449,19 +1452,17 @@ async function stageWalk(pid, stageId = null) {
   } catch (err) { alert('Обход не удался: ' + err.message); }
 }
 
-async function apartmentScan(pid) {
-  const how = await pickSheet('Вся квартира',
-    'Комнаты сканируются подряд в одной сессии: закончили комнату — «Следующая», перешли в другую. Существующие комнаты обновятся, новые добавятся.',
-    [{ html: `<span class="btn-ico">${ICONS.scan}</span>Обмер всей квартиры`, value: 'measure', primary: true },
-     { html: `${I('flag')}Финальный скан (3D с текстурами)`, value: 'final' }]);
-  if (!how) return;
+// обмер всей квартиры: комнаты подряд в одной сессии, Apple сводит их в одну схему
+async function measureApartment(pid) {
+  if (!confirm('Обмер квартиры: сканируйте комнаты по очереди — закончили комнату, нажмите «Следующая» и перейдите в другую. Все комнаты встанут на схеме на свои места; уже обмеренные обновятся. Начать?')) return;
+  const { rooms } = await loadProjectData(pid);
+  try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
+}
+// финальный скан: 3D с текстурами в конце ремонта
+async function finalScan(pid) {
+  if (!confirm('Финальный скан — 3D-модель квартиры с настоящими текстурами, для заказчика и портфолио. Лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям. Начать?')) return;
   const { project, rooms } = await loadProjectData(pid);
-  if (how === 'measure') {
-    try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
-    return;
-  }
-  if (!confirm('Финальный скан лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям. Начать?')) return;
-  try { await lidarFinal(pid, project, rooms); } catch (err) { alert('Скан не удался: ' + err.message); }
+  try { await lidarFinal(pid, project, rooms); toast('Готово — смотрите в 3D, режим «Финал»'); } catch (err) { alert('Скан не удался: ' + err.message); }
   render();
 }
 
@@ -1506,7 +1507,7 @@ async function viewStages(pid) {
       </div>
       <div class="plan-actions stage-lidar hidden" id="stage-lidar">
         <button class="pa-btn" id="walk-stage" title="Обход этапа: лидар сам снимет стены">${ICONS.walk}<span>Обход этапа</span></button>
-        <button class="pa-btn" id="apt-stage" title="Квартира целиком: обмер / финальный скан">${ICONS.building}<span>Вся квартира</span></button>
+        <button class="pa-btn" id="final-stage" title="3D-модель квартиры с текстурами — в конце ремонта">${ICONS.flag}<span>Финальный скан</span></button>
       </div>
       <div class="cards" id="stage-list">
         ${stages.map(s => `
@@ -1532,7 +1533,7 @@ async function viewStages(pid) {
     if (!ok || !row) return;
     row.classList.remove('hidden');
     $('#walk-stage').onclick = () => stageWalk(pid);
-    $('#apt-stage').onclick = () => apartmentScan(pid);
+    $('#final-stage').onclick = () => finalScan(pid);
   });
   $('#add-stage').onclick = async () => {
     const name = prompt('Название этапа (например, «Электрика», «Штукатурка»):');
