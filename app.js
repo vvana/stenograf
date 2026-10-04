@@ -169,6 +169,7 @@ async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   // новый экран открывается с начала, иначе шапка схемы оказывается «под» верхней панелью
   if (location.hash !== lastRenderedHash) { lastRenderedHash = location.hash; window.scrollTo(0, 0); }
+  const slide = swipeNav.dir; swipeNav.dir = 0;
   try {
     if (parts.length === 0) return await viewProjects();
     if (parts[0] === 'p' && parts[1]) {
@@ -190,8 +191,46 @@ async function render() {
     console.error(err);
     app.innerHTML = `<div class="pad"><h2>Ошибка</h2><p class="mut">${esc(err.message)}</p>
       <button class="btn" onclick="location.hash=''">На главную</button></div>`;
+  } finally {
+    // после перехода свайпом — короткий въезд экрана с нужной стороны
+    if (slide) { app.classList.remove('slide-l', 'slide-r'); void app.offsetWidth; app.classList.add(slide > 0 ? 'slide-l' : 'slide-r'); }
   }
 }
+
+/* ---------- переключение вкладок нижнего меню свайпом ---------- */
+// по свободному месту экрана — всегда; поверх схемы, 3D и строк со своими свайпами — только от края экрана
+const swipeNav = { dir: 0 };
+(function () {
+  const EDGE = 28;
+  const BUSY = '.swipe, #plan-box, .tour, canvas, input, textarea, select, .plan-sheet, .tpl-sheet, .viewer, .undo-bar, .bottomnav, .drag-handle';
+  let st = null;
+  const start = (x, y, target) => {
+    st = null;
+    if (!document.querySelector('.bottomnav')) return;
+    if (document.querySelector('.plan-sheet:not(.hidden), .tpl-sheet, .viewer:not(.hidden)')) return;
+    const edge = x < EDGE || x > innerWidth - EDGE;
+    if (!edge && target.closest && target.closest(BUSY)) return;
+    st = { x, y, t: Date.now() };
+  };
+  const end = (x, y) => {
+    if (!st) return;
+    const dx = x - st.x, dy = y - st.y, dt = Date.now() - st.t;
+    st = null;
+    if (dt > 700 || Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+    const items = [...document.querySelectorAll('.bottomnav .nav-item')];
+    const i = items.findIndex(b => b.classList.contains('active'));
+    const k = dx < 0 ? i + 1 : i - 1;   // влево — следующая вкладка, вправо — предыдущая
+    if (i < 0 || k < 0 || k >= items.length) return;
+    swipeNav.dir = dx < 0 ? 1 : -1;
+    nav(items[k].dataset.nav);
+  };
+  // пальцем — через touch-события (на iPhone pointer-жест может быть перехвачен браузером), мышью/пером — через pointer
+  document.addEventListener('touchstart', e => { if (e.touches.length === 1) start(e.touches[0].clientX, e.touches[0].clientY, e.target); else st = null; }, { capture: true, passive: true });
+  document.addEventListener('touchend', e => { const t = e.changedTouches[0]; if (t) end(t.clientX, t.clientY); }, { capture: true, passive: true });
+  document.addEventListener('touchcancel', () => { st = null; }, { capture: true, passive: true });
+  document.addEventListener('pointerdown', e => { if (e.pointerType !== 'touch' && e.isPrimary) start(e.clientX, e.clientY, e.target); }, true);
+  document.addEventListener('pointerup', e => { if (e.pointerType !== 'touch') end(e.clientX, e.clientY); }, true);
+})();
 
 // знак приложения «Слои в скане» (как иконка): три слоя-этапа
 const LOGO = '<svg viewBox="0 0 120 120" aria-hidden="true"><path d="M60 89.9L99.1 73.8 60 57.7 20.9 73.8Z" fill="#c4cad6"/><path d="M60 76.1L99.1 60 60 43.9 20.9 60Z" fill="#8a97b0"/><path d="M60 62.3L99.1 46.2 60 30.1 20.9 46.2Z" fill="#3f4f73"/></svg>';

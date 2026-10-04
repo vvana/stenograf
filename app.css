@@ -654,3 +654,8 @@ select.inp {
 }
 .walk-tile svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .walk-tile:active { background: color-mix(in srgb, var(--acc) 16%, var(--card)); }
+/* въезд экрана при переключении вкладок свайпом */
+@keyframes slide-from-right { from { transform: translateX(36px); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes slide-from-left { from { transform: translateX(-36px); opacity: .4; } to { transform: none; opacity: 1; } }
+#app.slide-l > :not(.bottomnav) { animation: slide-from-right .22s ease-out; }
+#app.slide-r > :not(.bottomnav) { animation: slide-from-left .22s ease-out; }
