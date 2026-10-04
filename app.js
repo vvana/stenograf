@@ -856,7 +856,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
         <text class="room-label" x="${cx}" y="${cy}">${esc(r.name)}</text>
-        ${r.wallTop && Object.keys(r.wallTop).length ? `<text class="room-label room-h" x="${cx}" y="${cy - 0.45}">${roomHeightText(r)}</text>` : ''}`;
+        <text class="room-label room-h" x="${cx}" y="${cy + 0.42}">${roomHeightText(r)}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
@@ -931,7 +931,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
         // пол, потолок, панорама — в меню по тапу внутри комнаты; здесь только счётчик, если фото уже есть
         const extra = [['c', '⬆'], ['f', '⬇'], ['p', '360°']]
           .map(([sf, ico]) => { const n = counts[`${r.id}:${sf}`] || 0; return n ? `${ico} ${n}` : ''; }).filter(Boolean);
-        if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.42}">${extra.join('   ')}</text>`;
+        if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.8}">${extra.join('   ')}</text>`;
       }
       if (planState.edit && sel) {
         if (r.pts.length < MAX_CORNERS) {
