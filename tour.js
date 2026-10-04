@@ -27,6 +27,7 @@ function canvasTexture(THREE, canvas) {
   const t = new THREE.CanvasTexture(canvas);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 4;
+  t.userData.mimeType = 'image/jpeg'; // при экспорте в GLB — JPEG, а не PNG: файл в разы меньше
   return t;
 }
 
@@ -87,6 +88,7 @@ async function viewTour(pid, roomId = null) {
             ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
           </select>
           <button id="tour-photos" class="tour-ico ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото на стенах">${ICONS.camera}</button>
+          <button id="tour-glb" class="tour-ico" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}</button>
         </div>
         <div class="tour-modes">
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
@@ -605,6 +607,58 @@ async function viewTour(pid, roomId = null) {
   const photosBtn = $('#tour-photos');
   if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
   $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); };
+
+  /* ---------- экспорт в GLB: стены, полы, потолки, проёмы, мебель, фото выбранного этапа ---------- */
+  const glbBtn = $('#tour-glb');
+  if (glbBtn) glbBtn.onclick = async () => {
+    if (glbBtn.disabled) return;
+    glbBtn.disabled = true; say('Готовлю 3D-модель…');
+    const saved = [], temp = [];
+    const setVis = (o, v) => { saved.push([o, o.visible, o.name]); o.visible = v; };
+    let blob = null;
+    try {
+      const { GLTFExporter } = await import('./vendor/GLTFExporter.js');
+      await applyStage();
+      // свет, тень-подложка, финальный скан и зеркала-отражатели (свой шейдер) в файл не идут
+      scene.traverse(o => { if (o.isLight || o === ground || o === finalMesh || mirrors.includes(o)) setVis(o, false); });
+      for (const m of mirrors) { // вместо отражателя — простая серо-голубая плоскость
+        const p = new THREE.Mesh(m.geometry, new THREE.MeshBasicMaterial({ color: 0xb8c4c8 }));
+        p.position.copy(m.position); p.quaternion.copy(m.quaternion); p.name = 'Зеркало';
+        m.parent.add(p); temp.push(p);
+      }
+      for (const w of solidWalls) { setVis(w, true); w.name = w.name || 'Стена'; }
+      plainFloors.forEach((f, i) => { setVis(f, true); f.name = `${rooms[i].name} · пол`; });
+      for (const s of surfaces) {
+        const { roomId, side } = parseWallKey(s.key);
+        const room = rooms.find(r => r.id === roomId);
+        const isFloor = side === 'f', isCeil = side === 'c';
+        // стены — всегда (на них висят двери и окна), фото-пол — только если есть фото
+        setVis(s.mesh, isCeil || !isFloor || !!s.mesh.material.map);
+        s.mesh.name = room ? (isFloor ? `${room.name} · пол (фото)` : isCeil ? `${room.name} · потолок` : wallLabel(room, side)) : s.key;
+      }
+      const buf = await new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: true, maxTextureSize: 2048 });
+      blob = new Blob([buf], { type: 'model/gltf-binary' });
+    } catch (err) {
+      console.error(err); alert('Не удалось собрать модель: ' + err.message);
+    } finally {
+      temp.forEach(p => { p.parent.remove(p); p.material.dispose(); });
+      for (let i = saved.length - 1; i >= 0; i--) { saved[i][0].visible = saved[i][1]; saved[i][0].name = saved[i][2]; }
+      glbBtn.disabled = false; say(''); updateHint();
+    }
+    if (!blob) return;
+    // отправка — отдельным тапом: после долгой сборки браузер уже не считает это действием пользователя и не откроет «Поделиться»
+    const stageName = tourState.stage === 'all' ? 'последние фото' : (stages.find(s => s.id === tourState.stage) || {}).name || '';
+    const file = `${(project.name || 'model').replace(/[\\/:*?"<>|]+/g, '_')}.glb`;
+    const host = document.createElement('div');
+    host.className = 'plan-sheet tpl-sheet';
+    host.innerHTML = `<div class="sh-title">3D-модель готова</div>
+      <p class="mut small">${esc(file)} · ${(blob.size / 1048576).toFixed(1).replace('.', ',')} МБ · фото: ${esc(stageName)}.<br>Формат GLB открывается в Blender, SketchUp, онлайн-просмотрщиках и на сайтах.</p>
+      <button class="btn primary wide" data-glb="send">${I('share')}Отправить или сохранить</button>
+      <button class="btn ghost wide" data-glb="x">Закрыть</button>`;
+    document.body.appendChild(host);
+    host.querySelector('[data-glb="send"]').onclick = async () => { host.remove(); await deliverFile(blob, file, `3D-модель: ${project.name}`); };
+    host.querySelector('[data-glb="x"]').onclick = () => host.remove();
+  };
 
   /* ---------- цикл ---------- */
   let alive = true;

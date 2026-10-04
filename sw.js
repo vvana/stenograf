@@ -15,6 +15,7 @@ const ASSETS = [
   './vendor/three.module.min.js',
   './vendor/Reflector.js',
   './vendor/PLYLoader.js',
+  './vendor/GLTFExporter.js',
   './app.js',
   './manifest.webmanifest',
   './icon.svg',
