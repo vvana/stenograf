@@ -25,6 +25,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     private var prevPollT: simd_float4x4?
     let maxFrames = 300   // ≈ 250–350 МБ: хватает на квартиру, Brush на 12 ГБ видеопамяти справляется
     var count: Int { entries.count }
+    var last: Entry? { entries.last }
 
     init?() {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

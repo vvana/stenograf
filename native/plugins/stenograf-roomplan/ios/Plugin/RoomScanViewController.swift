@@ -51,6 +51,15 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private let hd: Bool                              // HD-скан: полные кадры + позы для обучения на компьютере
     private var hdCapture: HDCapture?
 
+    // покрытие финального скана: подсветка в камере, мини-карта, проверка перед завершением
+    private var coverage: CoverageModel?
+    private var coverageOverlay: CoverageOverlayView?
+    private var coverageMap: CoverageMapView?
+    private var coverageLink: CADisplayLink?
+    private var currentSurfaces: [CovSurface] = []
+    private var doneSurfaces: [CovSurface] = []      // комнаты, уже завершённые кнопкой «Следующая»
+    private var coverageChecked = false
+
     // AR-призрак
     private var ghostView: UIImageView?
     private var ghostQuad: [CGPoint] = []            // TL, TR, BR, BL в пикселях картинки
@@ -134,6 +143,91 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
         if mode == "ghost" { setupGhost(bar: bar) }
         if hd { hdCapture = HDCapture() }
+        if mode == "final" { setupCoverage() }
+    }
+
+    // MARK: покрытие
+
+    private func setupCoverage() {
+        let model = CoverageModel(need: hd ? 2 : 1)
+        coverage = model
+        let ov = CoverageOverlayView(frame: view.bounds)
+        ov.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.insertSubview(ov, aboveSubview: captureView)
+        coverageOverlay = ov
+        let map = CoverageMapView(frame: .zero)
+        map.model = model
+        map.translatesAutoresizingMaskIntoConstraints = false
+        map.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleOverlay)))
+        view.addSubview(map)
+        NSLayoutConstraint.activate([
+            map.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            map.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
+            map.widthAnchor.constraint(equalToConstant: 128),
+            map.heightAnchor.constraint(equalToConstant: 128),
+        ])
+        coverageMap = map
+        let link = CADisplayLink(target: self, selector: #selector(coverageTick))
+        link.preferredFramesPerSecond = 10
+        link.add(to: .main, forMode: .common)
+        coverageLink = link
+    }
+
+    /// Тап по мини-карте — спрятать/показать подсветку в камере.
+    @objc private func toggleOverlay() {
+        guard let ov = coverageOverlay else { return }
+        ov.isHidden.toggle()
+    }
+
+    @objc private func coverageTick() {
+        guard let model = coverage, let ov = coverageOverlay, !ov.isHidden,
+              let frame = sharedSession?.currentFrame, frame.camera.trackingState == .normal else { return }
+        ov.update(camera: frame.camera, surfaces: currentSurfaces, model: model)
+    }
+
+    private func refreshCoverageMap() {
+        guard let map = coverageMap else { return }
+        map.surfaces = doneSurfaces + currentSurfaces
+        if let T = sharedSession?.currentFrame?.camera.transform {
+            map.camPos = simd_float3(T.columns.3.x, T.columns.3.y, T.columns.3.z)
+            map.camFwd = -simd_float3(T.columns.2.x, T.columns.2.y, T.columns.2.z)
+        }
+        map.setNeedsDisplay()
+    }
+
+    private func stopCoverage() {
+        coverageLink?.invalidate(); coverageLink = nil
+        coverageOverlay?.clear()
+    }
+
+    /// Плохо снятые поверхности (меньше половины клеток): из всех комнат или только текущей.
+    private func weakSurfaces(currentOnly: Bool) -> [String] {
+        guard let model = coverage else { return [] }
+        let list = currentOnly ? currentSurfaces : doneSurfaces + currentSurfaces
+        return list.compactMap { (s: CovSurface) -> String? in
+            if s.cells.count < 3 { return nil }          // узкие простенки и короба — не придираемся
+            let f = model.fraction(s)
+            return f < 0.5 ? "\(s.name) — \(Int(f * 100))%" : nil
+        }
+    }
+
+    /// Предупредить о пропусках; true — можно продолжать действие.
+    private func confirmCoverage(currentOnly: Bool, proceed: @escaping () -> Void) -> Bool {
+        guard coverage != nil, !coverageChecked else { return true }
+        let weak = weakSurfaces(currentOnly: currentOnly)
+        guard !weak.isEmpty else { return true }
+        let shown = weak.prefix(8).joined(separator: "\n") + (weak.count > 8 ? "\n… и ещё \(weak.count - 8)" : "")
+        let ac = UIAlertController(title: "Снято не всё",
+                                   message: "Мало кадров на поверхностях (красные на мини-карте и в камере):\n\n\(shown)",
+                                   preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "Доснять", style: .cancel))
+        ac.addAction(UIAlertAction(title: currentOnly ? "Дальше всё равно" : "Завершить всё равно", style: .default) { [weak self] _ in
+            self?.coverageChecked = true
+            proceed()
+            self?.coverageChecked = false
+        })
+        present(ac, animated: true)
+        return false
     }
 
     private func initialHint() -> String {
@@ -143,8 +237,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             ? "Обход квартиры: пройдите комнату вдоль стен, затем «Следующая» и переходите в другую"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Завершить»"
         case "final": return hd
-            ? "HD-скан: идите медленно, останавливайтесь и плавно поворачивайте телефон — кадры снимаются, когда телефон неподвижен"
-            : "Финальный скан: медленно обойдите каждую комнату, поворачивая телефон ко всем поверхностям"
+            ? "HD-скан: идите медленно и замирайте — кадр снимается, когда телефон неподвижен. Красное — ещё не снято, жёлтое — мало кадров, зелёное — готово"
+            : "Финальный скан: наводите телефон на всё красное, пока не станет зелёным. Тап по карте — спрятать подсветку"
         case "ghost": return "Наведите телефон на стену — старое фото совместится само"
         default: return "Обмер: обойдите комнату вдоль стен, заглядывая в углы"
         }
@@ -211,6 +305,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         }
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        stopCoverage()   // CADisplayLink держит контроллер — отпускаем при любом закрытии экрана
+    }
+
     override var prefersStatusBarHidden: Bool { true }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .portrait }
 
@@ -220,12 +319,16 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         guard !finished else { return }
         finished = true
         pollTimer?.invalidate()
+        stopCoverage()
         captureView.captureSession.stop(pauseARSession: true)
         hdCapture?.discard()
         dismiss(animated: true) { self.completion(.failure(ScanError.cancelled)) }
     }
 
     @objc private func nextTapped() {
+        guard confirmCoverage(currentOnly: true, proceed: { [weak self] in self?.nextTapped() }) else { return }
+        doneSurfaces += currentSurfaces
+        currentSurfaces = []
         pendingAction = "next"
         nextButton.isEnabled = false; doneButton.isEnabled = false
         statusLabel.text = "Обрабатываю комнату…"
@@ -233,8 +336,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     }
 
     @objc private func doneTapped() {
+        guard confirmCoverage(currentOnly: false, proceed: { [weak self] in self?.doneTapped() }) else { return }
         pendingAction = "done"
         pollTimer?.invalidate(); pollTimer = nil
+        stopCoverage()
         if mode == "ghost" {
             finished = true
             captureView.captureSession.stop(pauseARSession: true)
@@ -390,6 +495,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
         latestRoom = room
+        if coverage != nil {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.currentSurfaces = coverageSurfaces(room: room, index: self.capturedRooms.count + 1)
+            }
+        }
     }
 
     func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
@@ -505,7 +616,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if mode == "final" { pollKeyFrame(frame: frame) }
         if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
             statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)"
+            if let e = hc.last {
+                let p = simd_float3(e.c2w.columns.3.x, e.c2w.columns.3.y, e.c2w.columns.3.z)
+                coverage?.add(CovView(inv: e.c2w.inverse, fx: e.fx, fy: e.fy, cx: e.cx, cy: e.cy, w: Float(e.w), h: Float(e.h), pos: p))
+            }
         }
+        if coverage != nil { refreshCoverageMap() }
         if wantFrames { pollWallFrame(frame: frame) }
     }
 
@@ -767,6 +883,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
               let rgba = rgbaBytes(of: cg, width: targetW, height: targetH) else { return }
         let k = Float(targetW) / Float(res.width)
         let K = cam.intrinsics
+        coverage?.add(CovView(inv: T.inverse, fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
+                              w: Float(targetW), h: Float(targetH), pos: pos))
         keyFrames.append(KeyFrame(transformInv: T.inverse,
                                   fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
                                   w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd))
