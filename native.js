@@ -352,14 +352,16 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
   });
   room.wallTop = tops;
   await dbPut('rooms', room);
-  return { room, idMap };
+  return { room, idMap, toPlan, turn };
 }
 
-// соответствие «стена скана → стена комнаты» без изменения схемы (для обхода этапа)
+// соответствие «стена скана → стена комнаты» без изменения схемы (для обхода этапа) + перевод координат скана в схему
 function matchScanToRoom(room, scan) {
   const res = scanToPolygon(scan);
-  if (!res) return {};
+  if (!res) return { idMap: {} };
   const al = alignScanToRoom(res.pts, room.pts, scanOpeningPts(scan, res), roomOpeningPts(room));
+  const sc0 = centroidOf(res.pts), rc0 = centroidOf(room.pts);
+  const toPlan = p => transformPts([p], al.ang, sc0[0], sc0[1], rc0[0], rc0[1])[0];
   const newE = edgesOf(al.pts), oldEdges = roomEdges(room);
   const idMap = {};
   res.chain.forEach((c, i) => {
@@ -371,13 +373,25 @@ function matchScanToRoom(room, scan) {
     }
     if (best) idMap[c.id] = best.id;
   });
-  return idMap;
+  return { idMap, toPlan, turn: al.ang };
+}
+
+// точка съёмки кадра на схеме: положение (м), направление взгляда (рад), высота камеры над полом.
+// ref — центр комнаты в момент съёмки: если комнату потом сдвинут в редакторе, точка поедет вместе с ней
+function shotOf(f, place, room) {
+  if (!place || !place.toPlan || !Array.isArray(f.cam) || !Array.isArray(f.dir)) return null;
+  const [x, y] = place.toPlan([f.cam[0], f.cam[2]]);
+  const ang = Math.atan2(f.dir[2], f.dir[0]) + (place.turn || 0);
+  const shot = { x: cm(x), y: cm(y), ang: +ang.toFixed(3), ref: centroidOf(room.pts).map(cm) };
+  if (place.floorY != null) shot.h = cm(f.cam[1] - place.floorY);
+  return shot;
 }
 
 /* ---------- кадры обхода → фото с автокалибровкой ---------- */
 
-async function framesToPhotos(pid, roomId, stageId, frames, idMap) {
+async function framesToPhotos(pid, roomId, stageId, frames, idMap, place = null) {
   const by = userName(true);
+  const room = place ? await dbGet('rooms', roomId) : null;
   const byWall = {};
   for (const f of frames || []) {
     const wid = idMap[f.wall];
@@ -394,6 +408,8 @@ async function framesToPhotos(pid, roomId, stageId, frames, idMap) {
         id: uid(), projectId: pid, wallKey: `${roomId}:${wid}`, stageId, blob, note: '', created: Date.now(), by,
         calib: { type: 'quad', pts: f.corners, w: cm(f.w), h: cm(f.h) }, marks: [], source: 'lidar',
       };
+      const shot = room ? shotOf(f, place, room) : null;
+      if (shot) rec.shot = shot;
       await sealPhoto(rec, { source: 'lidar' });
       await dbPut('photos', rec);
       n++;
@@ -510,11 +526,15 @@ async function applyStructure(pid, rooms, scan) {
     const name = target ? null : `Комната ${rooms.length + results.length + 1}`;
     const out = await applyScan(pid, rooms.concat(results.map(x => x.room)), target, sr, name, { keepCoords: true });
     out.res = res; out.scanRoom = sr;
+    // мир сессии → схема: общий поворот/сдвиг квартиры, затем совмещение комнаты
+    const ca = Math.cos(ang), sa = Math.sin(ang), toRoom = out.toPlan, t0 = out.turn;
+    out.place = { toPlan: p => toRoom([p[0] * ca - p[1] * sa + ox, p[0] * sa + p[1] * ca + oy]), turn: ang + t0, floorY: sr.floorY };
     results.push(out);
   }
   // общая таблица «стена скана → комната:стена» для кадров
   const wallMap = {};
   for (const r of results) for (const [sid, wid] of Object.entries(r.idMap)) wallMap[sid] = { roomId: r.room.id, wallId: wid };
+  for (const r of results) for (const sid of Object.keys(r.idMap)) wallMap[sid].place = r.place;
   return { results, wallMap, transform: { ang, ox, oy } };
 }
 
@@ -571,7 +591,7 @@ async function lidarApartment(pid, rooms, stageId) {
     for (const f of scan.frames || []) { const m = wallMap[f.wall]; if (!m) continue; (byRoom[m.roomId] = byRoom[m.roomId] || []).push(f); }
     for (const [roomId, list] of Object.entries(byRoom)) {
       const idMap = {}; for (const f of list) idMap[f.wall] = wallMap[f.wall].wallId;
-      const r = await framesToPhotos(pid, roomId, stageId, list, idMap);
+      const r = await framesToPhotos(pid, roomId, stageId, list, idMap, wallMap[list[0].wall].place);
       photos += r.photos;
     }
   }
@@ -611,8 +631,8 @@ async function lidarWalk(pid, room, stageId) {
   let scan;
   try { scan = await Native.RP.scan({ mode: 'walk' }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
-  const idMap = matchScanToRoom(room, scan);
-  const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap);
+  const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
+  const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap, toPlan ? { toPlan, turn, floorY: scan.floorY } : null);
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;
   toast(`Обход: ${r.photos} фото на ${r.walls} стен${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
   return r;

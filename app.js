@@ -559,8 +559,14 @@ function roomPath(r) {
 }
 
 async function viewPlan(pid) {
-  const { project, rooms, photos } = await loadProjectData(pid);
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
+  // точки съёмки (кадры обхода лидаром): показываются по одному этапу, по умолчанию — последнему с такими кадрами
+  const shotAll = photos.filter(p => p.shot && rooms.some(r => r.id === parseWallKey(p.wallKey).roomId));
+  const shotStages = stages.filter(s => shotAll.some(p => p.stageId === s.id));
+  if (!shotStages.some(s => s.id === planState.shotStage)) planState.shotStage = shotStages.length ? shotStages[shotStages.length - 1].id : null;
+  const showShots = planState.shots && shotStages.length && !planState.edit;
+  const shots = showShots ? shotAll.filter(p => p.stageId === planState.shotStage) : [];
   const counts = {}, points = {};
   photos.forEach(p => {
     counts[p.wallKey] = (counts[p.wallKey] || 0) + 1;
@@ -610,11 +616,17 @@ async function viewPlan(pid) {
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
         <div class="plan-tools">
+          ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${rooms.length ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
           ${rooms.length || (project.plan && project.plan.blob) ? `<button class="plan-tool danger" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">${ICONS.trash}</button>` : ''}
         </div>
       </div>
+      ${showShots ? `<div class="shot-bar">
+        <span class="mut small">${I('camera')}Точки съёмки:</span>
+        ${shotStages.map(s => `<button class="chip ${s.id === planState.shotStage ? 'on' : ''}" data-shot-stage="${s.id}">${esc(s.name)}</button>`).join('')}
+      </div>` : ''}
       <div id="plan-sheet" class="plan-sheet hidden"></div>
+      <div id="viewer" class="viewer hidden"></div>
       <input type="file" id="underlay-file" accept="image/*" class="hidden-input">
       ${rooms.length === 0 && !planState.edit ? `
         <div class="empty">
@@ -630,6 +642,28 @@ async function viewPlan(pid) {
   $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; render(); };
   const clearBtn = $('#clear-plan');
   if (clearBtn) clearBtn.onclick = async () => { if (await clearPlan(pid)) render(); };
+  const shotsBtn = $('#toggle-shots');
+  if (shotsBtn) shotsBtn.onclick = () => { planState.shots = !planState.shots; render(); };
+  app.querySelectorAll('[data-shot-stage]').forEach(b => b.onclick = () => { planState.shotStage = b.dataset.shotStage; render(); });
+  const openShot = id => {
+    const photo = shots.find(p => p.id === id);
+    if (!photo) return;
+    const { roomId, side } = parseWallKey(photo.wallKey);
+    const room = rooms.find(r => r.id === roomId);
+    openPhotoEditor(photo, {
+      stages,
+      wallTitle: room ? wallLabel(room, side) : '',
+      wallSize: room ? wallSizeOf(room, side) : { w: null, h: null },
+      onClose: render,
+      onGhost: async p => {
+        if (room && await lidarAvailable()) {
+          try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { alert('AR-призрак не удался: ' + err.message); }
+          return;
+        }
+        nav(`#/p/${pid}/ghost/${encodeURIComponent(photo.wallKey)}/${p.id}`);
+      },
+    });
+  };
   const sharePlanBtn = $('#share-plan');
   if (sharePlanBtn) sharePlanBtn.onclick = () => exportProject(pid, false);
   if (planState.edit) {
@@ -643,7 +677,7 @@ async function viewPlan(pid) {
       await createRoom(pid, rooms, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], null);
     };
   }
-  setupPlan(pid, rooms, counts, points, project);
+  setupPlan(pid, rooms, counts, points, project, shots, openShot);
 }
 
 // свободное место под новую комнату: справа от уже нарисованных
@@ -848,7 +882,7 @@ function bottomNav(pid, active) {
   </nav>`;
 }
 
-function setupPlan(pid, rooms, counts, points = {}, project = null) {
+function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], onShot = null) {
   const box = $('#plan-box');
   if (!box) return;
   const plan = project && project.plan && project.plan.blob ? project.plan : null;
@@ -906,7 +940,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
           if (showNums) {
             s += `<text class="wall-num" x="${e.mid[0] + e.nx * 0.22}" y="${e.mid[1] + e.ny * 0.22}">${e.i + 1}</text>`;
           }
-          if (cnt > 0) {
+          if (cnt > 0 && !shots.length) { // в режиме точек съёмки счётчики не мешают конусам
             const off = showNums ? 0.6 : 0.45;
             const bx = e.mid[0] + e.nx * off, by = e.mid[1] + e.ny * off;
             s += `<g class="badge" data-wall="${key}"><circle cx="${bx}" cy="${by}" r="0.32"/><text x="${bx}" y="${by}">${cnt}</text></g>`;
@@ -991,6 +1025,19 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
       }
       s += '</g>';
     }
+    // точки съёмки: камера и конус обзора (≈60°) в сторону снятой стены
+    if (!planState.edit) {
+      for (const p of shots) {
+        const r = rooms.find(x => x.id === parseWallKey(p.wallKey).roomId);
+        if (!r) continue;
+        const c = centroidOf(r.pts), ref = p.shot.ref || c;
+        const x = p.shot.x + c[0] - ref[0], y = p.shot.y + c[1] - ref[1];
+        const deg = p.shot.ang * 180 / Math.PI;
+        const h = p.shot.h != null ? `, камера на высоте ${fmtM(p.shot.h)} м` : '';
+        s += `<g class="shot" data-shot="${p.id}" transform="translate(${x} ${y}) rotate(${deg})"><title>${esc(wallLabel(r, parseWallKey(p.wallKey).side))}${h}</title>
+          <path class="shot-cone" d="M0 0L0.74 -0.43A0.85 0.85 0 0 1 0.74 0.43Z"/><circle class="shot-dot" r="0.17"/><circle class="shot-lens" cx="0.05" r="0.06"/></g>`;
+      }
+    }
     // временные точки режимов: обводка комнаты / масштаб подложки
     const tmp = planState.tmp;
     if (planState.mode === 'trace' && tmp.length) {
@@ -1014,8 +1061,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
 
   svg.addEventListener('pointerdown', e => {
     if (!planState.edit) {
+      const shotEl = e.target.closest('[data-shot]');
       const wallEl = e.target.closest('[data-wall]');
-      if (wallEl) drag = { kind: 'tap-wall', key: wallEl.dataset.wall, sx: e.clientX, sy: e.clientY, moved: false };
+      if (shotEl) drag = { kind: 'tap-shot', id: shotEl.dataset.shot, sx: e.clientX, sy: e.clientY, moved: false };
+      else if (wallEl) drag = { kind: 'tap-wall', key: wallEl.dataset.wall, sx: e.clientX, sy: e.clientY, moved: false };
       else {
         const roomEl = e.target.closest('[data-room]');
         if (roomEl) drag = { kind: 'tap-room', id: roomEl.dataset.room, sx: e.clientX, sy: e.clientY, moved: false };
@@ -1084,6 +1133,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null) {
   svg.addEventListener('pointerup', async e => {
     if (!drag) return;
     const d = drag; drag = null;
+    if (d.kind === 'tap-shot') { if (!d.moved && onShot) onShot(d.id); return; }
     if (d.kind === 'tap-wall') { if (!d.moved) nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`); return; }
     if (d.kind === 'tap-room') { if (!d.moved) roomMenu(d.id); return; }
     if (d.kind === 'tap-mode') { if (!d.moved) await modeTap(d.world); return; }

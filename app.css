@@ -139,6 +139,15 @@ body {
 }
 .plan-tool svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .plan-tool.danger { color: var(--danger); }
+.plan-tool.active { background: var(--acc); border-color: var(--acc); color: #fff; }
+.shot-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 12px 8px; }
+.shot-bar .chip { border: 1px solid var(--line); background: var(--card); cursor: pointer; font: inherit; font-size: 13px; }
+.shot-bar .chip.on { background: var(--acc); border-color: var(--acc); color: #fff; }
+.shot-bar svg { width: 15px; height: 15px; vertical-align: -3px; margin-right: 4px; }
+#plan .shot { cursor: pointer; }
+#plan .shot-cone { fill: color-mix(in srgb, var(--acc) 22%, transparent); stroke: var(--acc); stroke-width: 0.025; }
+#plan .shot-dot { fill: var(--acc); stroke: #fff; stroke-width: 0.04; }
+#plan .shot-lens { fill: #fff; }
 .plan-tool:active { background: color-mix(in srgb, var(--line) 50%, var(--card)); }
 .lidar-row { padding: 10px 10px 0; }
 .lidar-row .btn { font-size: 16px; padding: 12px; margin-top: 0; }

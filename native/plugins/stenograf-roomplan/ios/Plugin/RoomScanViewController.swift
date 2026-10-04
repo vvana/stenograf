@@ -59,6 +59,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let score: Float
         let full: Bool
         let camPos: simd_float3
+        let camDir: simd_float3  // направление взгляда камеры (мир)
         let jpeg: Data
         let corners: [[Float]]   // 4 × [u, v] в портретном кадре: TL, TR, BR, BL для зрителя
         let w: Float
@@ -467,6 +468,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                     "corners": f.corners,
                     "w": f.w, "h": f.h,
                     "full": f.full, "score": f.score,
+                    "cam": [f.camPos.x, f.camPos.y, f.camPos.z],
+                    "dir": [f.camDir.x, f.camDir.y, f.camDir.z],
                 ])
             }
         }
@@ -574,7 +577,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if existing.contains(where: { simd_length($0.camPos - camPos) < 0.7 && $0.score >= score }) { return }
         guard let jpeg = jpegData(from: frame.capturedImage) else { return }
         var list = existing.filter { simd_length($0.camPos - camPos) >= 0.7 || $0.score > score }
-        list.append(WallFrame(score: score, full: full, camPos: camPos, jpeg: jpeg, corners: pts, w: wall.dimensions.x, h: wall.dimensions.y))
+        let camDir: simd_float3 = -xyz(T.columns.2)
+        list.append(WallFrame(score: score, full: full, camPos: camPos, camDir: camDir, jpeg: jpeg, corners: pts, w: wall.dimensions.x, h: wall.dimensions.y))
         list.sort { $0.score > $1.score }
         if list.count > 2 { list = Array(list.prefix(2)) }
         frames[wall.identifier] = list
