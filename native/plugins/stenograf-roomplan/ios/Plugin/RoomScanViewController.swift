@@ -48,6 +48,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var lastKeyPos: simd_float3?
     private var lastKeyFwd: simd_float3?
     private var meshAnchors: [ARMeshAnchor] = []
+    private let hd: Bool                              // HD-скан: полные кадры + позы для обучения на компьютере
+    private var hdCapture: HDCapture?
 
     // AR-призрак
     private var ghostView: UIImageView?
@@ -66,9 +68,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let h: Float
     }
 
-    init(mode: String, maxDim: Int, wantFrames: Bool, overlay: [String: Any]?,
+    init(mode: String, maxDim: Int, wantFrames: Bool, overlay: [String: Any]?, hd: Bool = false,
          completion: @escaping (Result<[String: Any], Error>) -> Void) {
         self.mode = mode
+        self.hd = hd && mode == "final"
         self.maxDim = maxDim
         self.wantFrames = wantFrames
         self.overlayParams = overlay
@@ -130,6 +133,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         ])
 
         if mode == "ghost" { setupGhost(bar: bar) }
+        if hd { hdCapture = HDCapture() }
     }
 
     private func initialHint() -> String {
@@ -138,7 +142,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         case "multi": return wantFrames
             ? "Обход квартиры: пройдите комнату вдоль стен, затем «Следующая» и переходите в другую"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Завершить»"
-        case "final": return "Финальный скан: медленно обойдите каждую комнату, поворачивая телефон ко всем поверхностям"
+        case "final": return hd
+            ? "HD-скан: идите медленно, останавливайтесь и плавно поворачивайте телефон — кадры снимаются, когда телефон неподвижен"
+            : "Финальный скан: медленно обойдите каждую комнату, поворачивая телефон ко всем поверхностям"
         case "ghost": return "Наведите телефон на стену — старое фото совместится само"
         default: return "Обмер: обойдите комнату вдоль стен, заглядывая в углы"
         }
@@ -215,6 +221,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         finished = true
         pollTimer?.invalidate()
         captureView.captureSession.stop(pauseARSession: true)
+        hdCapture?.discard()
         dismiss(animated: true) { self.completion(.failure(ScanError.cancelled)) }
     }
 
@@ -295,6 +302,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let anchors = meshAnchors
         let keys = keyFrames
         let wantMesh = mode == "final"
+        let hdc = hdCapture
         statusLabel.text = wantMesh ? "Собираю квартиру и 3D-модель…" : "Собираю план квартиры…"
         Task { @MainActor in
             var finalRooms = rooms
@@ -318,6 +326,18 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                     return buildColoredMesh(meshInput)
                 }.value
                 for (k, v) in mesh { dict[k] = v }
+            }
+            if let hc = hdc {
+                self.statusLabel.text = "Упаковываю HD-кадры для компьютера…"
+                let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
+                let res = await Task.detached(priority: .userInitiated) { () -> (String?, String?) in
+                    do { return (try hc.finish(pointsPLY: ply).path, nil) } catch { return (nil, error.localizedDescription) }
+                }.value
+                if let path = res.0 {
+                    dict["hdZip"] = path
+                    dict["hdFrames"] = hc.count
+                    dict["hdBytes"] = ((try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? NSNumber)?.intValue ?? 0
+                } else if let err = res.1 { dict["hdError"] = err }
             }
             self.sharedSession?.pause()
             self.dismiss(animated: true) { self.completion(.success(dict)) }
@@ -483,6 +503,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         guard let frame = sharedSession?.currentFrame else { return }
         if mode == "ghost" { pollGhost(frame: frame); return }
         if mode == "final" { pollKeyFrame(frame: frame) }
+        if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
+            statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)"
+        }
         if wantFrames { pollWallFrame(frame: frame) }
     }
 

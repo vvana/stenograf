@@ -668,3 +668,8 @@ select.inp {
 @keyframes slide-from-left { from { transform: translateX(-36px); opacity: .4; } to { transform: none; opacity: 1; } }
 #app.slide-l > :not(.bottomnav) { animation: slide-from-right .22s ease-out; }
 #app.slide-r > :not(.bottomnav) { animation: slide-from-left .22s ease-out; }
+
+/* HD-скан */
+.hd-steps { margin: 6px 0; padding-left: 20px; }
+.hd-steps li { margin: 4px 0; }
+.check-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }

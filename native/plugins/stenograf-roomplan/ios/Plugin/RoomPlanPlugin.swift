@@ -9,7 +9,8 @@ import QuickLook
 /// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
 ///   await RP.isSupported()
-///   await RP.scan({ mode: 'measure' | 'walk' | 'multi' | 'final' | 'ghost', frames?: bool, overlay?: {...} })
+///   await RP.scan({ mode: 'measure' | 'walk' | 'multi' | 'final' | 'ghost', frames?: bool, overlay?: {...}, hd?: bool })
+///   await RP.shareFile({ path }) / RP.fileInfo({ path }) / RP.deleteFile({ path }) — файлы в Documents (HD-пакет)
 @objc(RoomPlanPlugin)
 public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "RoomPlanPlugin"
@@ -19,6 +20,9 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deviceInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "quickLook", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "shareFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "fileInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deleteFile", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -49,6 +53,43 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
             host.present(ql, animated: true)
             call.resolve()
         }
+    }
+
+    /// Файл из папки приложения (Documents) — только оттуда, чтобы JS не мог отдать чужой путь.
+    private func docFile(_ call: CAPPluginCall) -> URL? {
+        guard let path = call.getString("path") else { return nil }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].standardizedFileURL.path
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        return url.path.hasPrefix(docs + "/") ? url : nil
+    }
+
+    /// Системное меню «Поделиться» для файла (HD-пакет большой — через мост его не гоняем).
+    @objc func shareFile(_ call: CAPPluginCall) {
+        guard let url = docFile(call), FileManager.default.fileExists(atPath: url.path) else {
+            call.reject("Файл не найден")
+            return
+        }
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
+            let ac = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            if let pop = ac.popoverPresentationController {   // iPad
+                pop.sourceView = host.view
+                pop.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.maxY - 40, width: 1, height: 1)
+            }
+            ac.completionWithItemsHandler = { _, completed, _, _ in call.resolve(["completed": completed]) }
+            host.present(ac, animated: true)
+        }
+    }
+
+    @objc func fileInfo(_ call: CAPPluginCall) {
+        guard let url = docFile(call) else { call.resolve(["exists": false]); return }
+        let size = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue
+        call.resolve(["exists": size != nil, "size": size ?? 0])
+    }
+
+    @objc func deleteFile(_ call: CAPPluginCall) {
+        if let url = docFile(call) { try? FileManager.default.removeItem(at: url) }
+        call.resolve()
     }
 
     /// Подробно: что видит приложение — ARKit, сцена-реконструкция (лидар), RoomPlan, модель.
@@ -103,8 +144,9 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         let maxDim = call.getInt("maxDim") ?? 1600
         let wantFrames = call.getBool("frames") ?? (mode == "walk")
         let overlay = call.getObject("overlay")
+        let hd = call.getBool("hd") ?? false
         DispatchQueue.main.async {
-            let vc = RoomScanViewController(mode: mode, maxDim: maxDim, wantFrames: wantFrames, overlay: overlay) { result in
+            let vc = RoomScanViewController(mode: mode, maxDim: maxDim, wantFrames: wantFrames, overlay: overlay, hd: hd) { result in
                 switch result {
                 case .success(let dict): call.resolve(dict)
                 case .failure(let err): call.reject(err.localizedDescription)

@@ -12,7 +12,7 @@ const Native = (() => {
     if (typeof cap.nativePromise === 'function') {
       via = 'nativePromise';
       const call = m => (opts = {}) => cap.nativePromise('RoomPlan', m, opts);
-      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo'), quickLook: call('quickLook') };
+      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo'), quickLook: call('quickLook'), shareFile: call('shareFile'), fileInfo: call('fileInfo'), deleteFile: call('deleteFile') };
     } else if (cap.Plugins && cap.Plugins.RoomPlan) {
       via = 'Plugins.RoomPlan';
       RP = cap.Plugins.RoomPlan;
@@ -610,9 +610,9 @@ async function lidarGhost(photo, wallSize) {
 }
 
 // финальный скан: комнаты + окрашенная сетка квартиры → project.finalScan
-async function lidarFinal(pid, project, rooms) {
+async function lidarFinal(pid, project, rooms, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'final' }); }
+  try { scan = await Native.RP.scan({ mode: 'final', hd: !!opts.hd }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { results, transform } = await applyStructure(pid, rooms, scan);
   await saveProjectUsdz(pid, scan);
@@ -623,7 +623,17 @@ async function lidarFinal(pid, project, rooms) {
     project.finalScan = { blob, transform, vertices: scan.meshVertices || 0, faces: scan.meshFaces || 0, created: Date.now() };
     await dbPut('projects', project);
   }
-  toast(`Финальный скан: ${results.length} комн., ${scan.meshVertices || 0} вершин`);
+  if (scan.hdZip) {
+    // HD-пакет лежит файлом в Documents (сотни МБ — через мост не гоняем), в базе только путь; старый пакет удаляем
+    const p = await dbGet('projects', pid);
+    const old = p.hdCapture && p.hdCapture.path;
+    p.hdCapture = { path: scan.hdZip, frames: scan.hdFrames || 0, bytes: scan.hdBytes || 0, created: Date.now() };
+    await dbPut('projects', p);
+    if (old && old !== scan.hdZip) Native.RP.deleteFile({ path: old }).catch(() => {});
+  }
+  if (scan.hdError) alert('HD-пакет не собрался: ' + scan.hdError);
+  toast(`Финальный скан: ${results.length} комн., ${scan.meshVertices || 0} вершин${scan.hdZip ? `, HD-кадров: ${scan.hdFrames}` : ''}`);
+  results.hd = !!scan.hdZip;
   return results;
 }
 

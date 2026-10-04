@@ -182,6 +182,7 @@ async function render() {
       if (parts[2] === 'report') return await viewReport(pid);
       if (parts[2] === 'verify') return await viewVerify(pid);
       if (parts[2] === 'calc') return await viewCalc(pid);
+      if (parts[2] === 'hd') return await viewHD(pid);
       if (parts[2] === 'ghost' && parts[3] && parts[4]) return await viewGhost(pid, parts[3], parts[4]);
       if (parts[2] === 'tour') return await viewTour(pid, parts[3] || null);
       return await viewPlan(pid);
@@ -1551,10 +1552,82 @@ async function measureApartment(pid) {
 }
 // финальный скан: 3D с текстурами в конце ремонта
 async function finalScan(pid) {
-  if (!confirm('Финальный скан — 3D-модель квартиры с настоящими текстурами, для заказчика и портфолио. Лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям. Начать?')) return;
+  const kind = await pickSheet('Финальный скан', '3D-модель готовой квартиры для заказчика и портфолио. Лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям.', [
+    { html: `${I('tour')}Обычный — 3D сразу на телефоне`, value: 'std', primary: true },
+    { html: `${I('flag')}HD — обработка на компьютере`, value: 'hd' },
+  ]);
+  if (!kind) return;
+  if (kind === 'hd' && !confirm('HD-скан: кроме обычной модели телефон снимет до 300 кадров в полном разрешении (≈ 300 МБ) с положением камеры. Потом пакет переносится на компьютер с видеокартой и обучается в Brush — получится фотореалистичная модель. Идите медленно и замирайте на секунду: кадр снимается, когда телефон неподвижен. Начать?')) return;
   const { project, rooms } = await loadProjectData(pid);
-  try { await lidarFinal(pid, project, rooms); toast('Готово — смотрите в 3D, режим «Финал»'); } catch (err) { alert('Скан не удался: ' + err.message); }
+  try {
+    const res = await lidarFinal(pid, project, rooms, { hd: kind === 'hd' });
+    if (res && res.hd) { nav(`#/p/${pid}/hd`); return; }
+    if (res) toast('Готово — смотрите в 3D, режим «Финал»');
+  } catch (err) { alert('Скан не удался: ' + err.message); }
   render();
+}
+
+/* ---------- HD-скан: пакет для компьютера и загрузка обученной модели ---------- */
+const fmtMB = b => (b / 1048576).toFixed(b > 104857600 ? 0 : 1).replace('.', ',') + ' МБ';
+async function viewHD(pid) {
+  const { project } = await loadProjectData(pid);
+  if (!project) return nav('');
+  const cap = project.hdCapture, hd = project.hdScan;
+  let capOk = false;
+  if (cap && Native.RP && Native.RP.fileInfo) { try { capOk = !!(await Native.RP.fileInfo({ path: cap.path })).exists; } catch {} }
+  app.innerHTML = `
+    ${header('HD-скан', `#/p/${pid}/more`)}
+    <div class="pad"><div class="cards">
+      <div class="card">
+        <b>1. Пакет для компьютера</b>
+        ${cap && capOk ? `<p class="mut small">${fmtDate(cap.created)} · ${cap.frames} кадров · ${fmtMB(cap.bytes)}</p>
+          <button class="btn primary wide" id="hd-share">${I('share')}Отправить на компьютер</button>
+          <button class="btn ghost wide" id="hd-del-cap">${I('trash')}Удалить пакет с телефона</button>`
+        : `<p class="mut small">${cap ? 'Пакет уже удалён с телефона.' : 'Пакета пока нет.'} Снимите его: «Этапы» → «Финальный скан» → «HD — обработка на компьютере».</p>`}
+        <p class="mut small">Перенести можно через «Отправить» (Telegram, облако, AirDrop), по кабелю — Windows-приложение Apple Devices → Файлы → Fixpoint, или «Файлы» → «На iPhone» → Fixpoint.</p>
+      </div>
+      <div class="card">
+        <b>2. Обучение на компьютере</b>
+        <ol class="mut small hd-steps">
+          <li>Скачайте <b>Brush</b> (бесплатно, Windows): github.com/ArthurBrussee/brush → Releases.</li>
+          <li>Распакуйте пакет в папку, в Brush — Load → эта папка.</li>
+          <li>Ждите 20–30 тыс. шагов (на RTX 5070 — минут 10–20), затем Export → файл .ply.</li>
+        </ol>
+        <p class="mut small">Внутри пакета есть README.txt с той же инструкцией и вариантом для Nerfstudio.</p>
+      </div>
+      <div class="card">
+        <b>3. Загрузить результат</b>
+        ${hd ? `<p class="mut small">${esc(hd.name || 'модель')} · ${fmtMB(hd.size || 0)} · ${fmtDate(hd.created)}</p>
+          <button class="btn primary wide" id="hd-view">${I('tour')}Смотреть в 3D</button>
+          <label class="check-row"><input type="checkbox" id="hd-flip" ${hd.flip ? 'checked' : ''}> Модель вверх ногами — перевернуть</label>
+          <button class="btn ghost wide" id="hd-del">${I('trash')}Удалить HD-модель</button>` : ''}
+        <button class="btn wide" id="hd-load">${I('download')}${hd ? 'Заменить' : 'Загрузить'} модель (.ply / .spz)</button>
+        <input type="file" id="hd-file" accept=".ply,.spz,.splat,.ksplat" class="hidden-input">
+        <p class="mut small">Модель хранится только на этом телефоне и в резервную копию не попадает — слишком большая.</p>
+      </div>
+    </div></div>
+    ${bottomNav(pid, 'more')}`;
+  const on = (id, f) => { const el = $(id); if (el) el.onclick = f; };
+  on('#hd-share', async () => { try { await Native.RP.shareFile({ path: cap.path }); } catch (err) { alert('Не удалось отправить: ' + err.message); } });
+  on('#hd-del-cap', async () => {
+    if (!confirm('Удалить пакет с телефона? Если модель ещё не обучена, HD-скан придётся снимать заново.')) return;
+    try { await Native.RP.deleteFile({ path: cap.path }); } catch {}
+    delete project.hdCapture; await dbPut('projects', project); render();
+  });
+  on('#hd-load', () => $('#hd-file').click());
+  $('#hd-file').onchange = async e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const format = (f.name.split('.').pop() || 'ply').toLowerCase();
+    if (!['ply', 'spz', 'splat', 'ksplat'].includes(format)) { alert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
+    project.hdScan = { blob: f, name: f.name, size: f.size, format, created: Date.now(), flip: false };
+    try { await dbPut('projects', project); } catch (err) { alert('Не удалось сохранить модель (мало места?): ' + err.message); return; }
+    toast('HD-модель загружена'); render();
+  };
+  on('#hd-view', () => { tourState.mode = 'hd'; nav(`#/p/${pid}/tour`); });
+  const flip = $('#hd-flip');
+  if (flip) flip.onchange = async () => { project.hdScan.flip = flip.checked; await dbPut('projects', project); };
+  on('#hd-del', async () => { if (!confirm('Удалить HD-модель с телефона?')) return; delete project.hdScan; await dbPut('projects', project); if (tourState.mode === 'hd') tourState.mode = 'house'; render(); });
 }
 
 /* ---------- этапы по помещениям ---------- */
@@ -2164,6 +2237,7 @@ async function viewMore(pid) {
         </div>
         <button class="btn primary wide" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
+        ${project.hdCapture || project.hdScan || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <div class="card">
           <b>Команда объекта</b>
           <p class="mut small">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
@@ -2218,6 +2292,7 @@ async function buildExport(kind, projects, rooms, stages, photos) {
     if (p.plan && p.plan.blob) { const { blob, ...planMeta } = p.plan; rec.plan = { ...planMeta, data: await blobToDataURL(blob) }; }
     if (p.finalScan && p.finalScan.blob) { const { blob, ...m } = p.finalScan; rec.finalScan = { ...m, data: await blobToDataURL(blob) }; }
     if (p.usdz) { delete rec.usdz; rec.usdzData = await blobToDataURL(p.usdz); }
+    delete rec.hdScan; delete rec.hdCapture; // HD-модель (сотни МБ) и путь к пакету на этом телефоне — не переносим
     projectsOut.push(rec);
   }
   const roomsOut = [];
@@ -2322,7 +2397,9 @@ async function importData(data) {
           p.finalScan = { ...m, blob: await (await fetch(fd)).blob() };
         }
         if (p.usdzData) { p.usdz = await (await fetch(p.usdzData)).blob(); delete p.usdzData; }
-        if (authoritative || !(await dbGet('projects', p.id))) await dbPut('projects', p);
+        const local = await dbGet('projects', p.id);
+        if (local) for (const k of ['hdScan', 'hdCapture']) if (local[k] && !p[k]) p[k] = local[k]; // HD-скан в файле не ездит — свой не теряем
+        if (authoritative || !local) await dbPut('projects', p);
       }
       for (const r of data.rooms || []) {
         if (r.usdzData) { r.usdz = await (await fetch(r.usdzData)).blob(); delete r.usdzData; }

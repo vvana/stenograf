@@ -76,6 +76,8 @@ async function viewTour(pid, roomId = null) {
   if (roomId && rooms.some(r => r.id === roomId)) { tourState.roomId = roomId; if (tourState.mode === 'house') tourState.mode = 'inside'; }
   if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
   if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
+  if (tourState.mode === 'hd' && !(project.hdScan && project.hdScan.blob)) tourState.mode = 'house';
+  const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
     ${header('3D', `#/p/${pid}`)}
@@ -94,6 +96,7 @@ async function viewTour(pid, roomId = null) {
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('eye')}Внутри</button>
           <button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">${I('globe')}360°</button>
+          ${project.hdScan && project.hdScan.blob ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}HD</button>` : ''}
           ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}Финал</button>` : ''}
           ${Native.isNative && roomPlanModels(project, rooms).length ? `<button id="tour-rp" title="Оригинальная модель RoomPlan: 3D и AR">${I('ar')}RoomPlan</button>` : ''}
         </div>
@@ -418,6 +421,37 @@ async function viewTour(pid, roomId = null) {
     } catch (err) { console.error(err); say('Не удалось открыть финальный скан'); }
   }
 
+  /* ---------- HD-скан: Gaussian splatting, обученный на компьютере по HD-пакету ---------- */
+  let hdViewer = null, hdCenter = null, hdLoading = null;
+  function loadHD() {
+    if (hdViewer || hdLoading || !(project.hdScan && project.hdScan.blob)) return hdLoading || Promise.resolve();
+    hdLoading = (async () => {
+      say('Загружаю HD-модель…');
+      try {
+        const GS = await import('./vendor/gaussian-splats-3d.module.js');
+        const fmt = { ply: GS.SceneFormat.Ply, spz: GS.SceneFormat.Spz, splat: GS.SceneFormat.Splat, ksplat: GS.SceneFormat.KSplat }[project.hdScan.format] ?? GS.SceneFormat.Ply;
+        const v = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false, sceneRevealMode: GS.SceneRevealMode.Instant });
+        const url = URL.createObjectURL(project.hdScan.blob);
+        // пакет снят в координатах AR-сессии финального скана → тот же поворот и сдвиг, что у сетки «Финал»
+        const tr = project.finalScan && project.finalScan.transform || { ang: 0, ox: 0, oy: 0 };
+        v.rotation.y = -tr.ang; v.position.set(tr.ox, 0, tr.oy);
+        if (project.hdScan.flip) v.rotation.x = Math.PI;   // модель из программ с осью Y вниз
+        try { await v.addSplatScene(url, { format: fmt, showLoadingUI: false, progressiveLoad: false, splatAlphaRemovalThreshold: 5 }); }
+        finally { URL.revokeObjectURL(url); }
+        scene.add(v); v.updateMatrixWorld(true);
+        // центр модели по выборке сплатов — вокруг него крутится камера (если модель не совпала с планом, всё равно в кадре)
+        const sb = v.getSplatScene(0).splatBuffer, n = sb.getSplatCount(), step = Math.max(1, Math.floor(n / 3000));
+        const xs = [], ys = [], zs = [], p = new THREE.Vector3();
+        for (let i = 0; i < n; i += step) { sb.getSplatCenter(i, p); p.applyMatrix4(v.matrixWorld); xs.push(p.x); ys.push(p.y); zs.push(p.z); }
+        const med = a => { a.sort((x, y) => x - y); return a[Math.floor(a.length / 2)] || 0; };
+        hdCenter = new THREE.Vector3(med(xs), med(ys), med(zs));
+        hdViewer = v; say('');
+      } catch (err) { console.error(err); say('Не удалось открыть HD-модель: ' + err.message); }
+      hdLoading = null;
+    })();
+    return hdLoading;
+  }
+
   /* ---------- панорама ---------- */
   let panoMesh = null, panoAvailable = false;
   async function applyPano() {
@@ -448,8 +482,9 @@ async function viewTour(pid, roomId = null) {
   const orbit = { theta: Math.PI * 0.15, phi: 0.38, radius: span * 1.55, target: centerAll.clone() };
   const look = { yaw: 0, pitch: 0 };
   function placeCamera() {
-    if (tourState.mode === 'house' || tourState.mode === 'final') {
-      const { theta, phi, radius, target } = orbit;
+    if (orbitMode()) {
+      const { theta, phi, radius } = orbit;
+      const target = tourState.mode === 'hd' && hdCenter ? hdCenter : orbit.target;
       camera.position.set(target.x + radius * Math.sin(phi) * Math.sin(theta), target.y + radius * Math.cos(phi), target.z + radius * Math.sin(phi) * Math.cos(theta));
       camera.lookAt(target);
     } else if (tourState.mode === 'inside') {
@@ -488,16 +523,16 @@ async function viewTour(pid, roomId = null) {
       if (lastAng !== null) {
         let da = ang - lastAng;
         if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
-        if (tourState.mode === 'house' || tourState.mode === 'final') orbit.theta += da; else look.yaw += da; // модель следует за пальцами
+        if (orbitMode()) orbit.theta += da; else look.yaw += da; // модель следует за пальцами
       }
       lastAng = ang;
       if (lastPinch) {
-        if (tourState.mode === 'house' || tourState.mode === 'final') { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * lastPinch / d)); }
+        if (orbitMode()) { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * lastPinch / d)); }
         else { const cam = tourState.mode === 'pano' ? panoCam : camera; cam.fov = Math.max(30, Math.min(100, cam.fov * lastPinch / d)); cam.updateProjectionMatrix(); }
       }
       lastPinch = d; return;
     }
-    if (tourState.mode === 'house' || tourState.mode === 'final') {
+    if (orbitMode()) {
       orbit.theta -= dx * 0.006; orbit.phi = Math.max(0.12, Math.min(1.45, orbit.phi - dy * 0.005));
     } else {
       look.yaw += dx * 0.005; look.pitch = Math.max(-1.3, Math.min(1.3, look.pitch + dy * 0.005));
@@ -507,7 +542,7 @@ async function viewTour(pid, roomId = null) {
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    if (tourState.mode === 'house' || tourState.mode === 'final') { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * (e.deltaY > 0 ? 1.1 : 0.9))); }
+    if (orbitMode()) { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * (e.deltaY > 0 ? 1.1 : 0.9))); }
   }, { passive: false });
 
   /* ---------- мини-план ---------- */
@@ -534,7 +569,7 @@ async function viewTour(pid, roomId = null) {
     const changed = r.id !== tourState.roomId;
     tourState.roomId = r.id;
     tourState.eye = { room: r.id, x: q[0], z: q[1] };
-    if (tourState.mode === 'house' || tourState.mode === 'final') { look.pitch = 0; setMode('inside'); applyPano(); return; }
+    if (orbitMode()) { look.pitch = 0; setMode('inside'); applyPano(); return; }
     if (changed) { drawPlan(); updateHint(); applyPano(); }
   }
   let eyeDrag = false;
@@ -573,20 +608,24 @@ async function viewTour(pid, roomId = null) {
     if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем или двумя, щипок — масштаб. Тап по плану — встать в эту точку внутри.';
     else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Ведите точку на плане — чтобы перейти.`;
     else hint.textContent = panoAvailable ? `${name}: панорама 360°` : `${name}: панорамы для этого этапа нет — снимите её штатной камерой (режим «Панорама») и добавьте: тап внутри комнаты на схеме → «Панорама 360°».`;
+    if (tourState.mode === 'hd') hint.textContent = 'HD-скан. Крутите пальцем, щипок — масштаб.';
     if (tourState.mode === 'final') hint.textContent = `Финальный скан: ${project.finalScan ? (project.finalScan.vertices || 0) + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
     const pb = $('#tour-photos'); if (pb) pb.classList.toggle('active', tourState.photos);
-    const isFinal = tourState.mode === 'final', isInside = tourState.mode === 'inside';
+    const isHD = tourState.mode === 'hd';
+    const isFinal = tourState.mode === 'final' || isHD, isInside = tourState.mode === 'inside';
     const photosOn = isInside || tourState.photos;
     for (const c of ceilings) c.visible = isInside;                              // потолки только изнутри
     for (const s of surfaces) { const isFloor = s.key.endsWith(':f'), isCeil = s.key.endsWith(':c'); if (isCeil) continue; s.mesh.visible = !!(!isFinal && photosOn && (!isFloor || s.mesh.material.map)); } // visible строго true/false: three.js прячет объект только при visible === false
     for (const f of plainFloors) f.visible = !isFinal;
     for (const w of solidWalls) w.visible = !isFinal;
-    if (finalMesh) finalMesh.visible = isFinal;
+    if (finalMesh) finalMesh.visible = tourState.mode === 'final';
+    if (hdViewer) hdViewer.visible = isHD;
   }
   function setMode(m) {
     tourState.mode = m;
     if (m === 'final') loadFinal().then(updateHint);
+    if (m === 'hd') loadHD().then(updateHint);
     updateHint(); drawPlan();
   }
   app.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { look.yaw = 0; look.pitch = 0; if (b.dataset.mode === 'inside') tourState.eye = null; setMode(b.dataset.mode); }; });
@@ -619,8 +658,8 @@ async function viewTour(pid, roomId = null) {
     try {
       const { GLTFExporter } = await import('./vendor/GLTFExporter.js');
       await applyStage();
-      // свет, тень-подложка, финальный скан и зеркала-отражатели (свой шейдер) в файл не идут
-      scene.traverse(o => { if (o.isLight || o === ground || o === finalMesh || mirrors.includes(o)) setVis(o, false); });
+      // свет, тень-подложка, финальный и HD-скан, зеркала-отражатели (свой шейдер) в файл не идут
+      scene.traverse(o => { if (o.isLight || o === ground || o === finalMesh || o === hdViewer || mirrors.includes(o)) setVis(o, false); });
       for (const m of mirrors) { // вместо отражателя — простая серо-голубая плоскость
         const p = new THREE.Mesh(m.geometry, new THREE.MeshBasicMaterial({ color: 0xb8c4c8 }));
         p.position.copy(m.position); p.quaternion.copy(m.quaternion); p.name = 'Зеркало';
@@ -680,6 +719,7 @@ async function viewTour(pid, roomId = null) {
     alive = false; ro.disconnect(); delete window.__tourDebug;
     texCache.forEach(t => t.dispose());
     mirrors.forEach(m => m.dispose && m.dispose());
+    if (hdViewer) { scene.remove(hdViewer); hdViewer.dispose().catch(() => {}); }
     renderer.dispose();
   };
 }

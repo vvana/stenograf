@@ -41,6 +41,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :UIRequiresFullScreen bool true" "$PLIST" || true
           # всегда светлое оформление (и тёмный текст строки состояния), даже при тёмной теме iPhone
           /usr/libexec/PlistBuddy -c "Add :UIUserInterfaceStyle string Light" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIUserInterfaceStyle Light" "$PLIST"
+          # HD-пакеты (Documents) видны в «Файлы → На iPhone → Fixpoint» и в Windows-приложении Apple Devices / iTunes
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIFileSharingEnabled true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :LSSupportsOpeningDocumentsInPlace true" "$PLIST"
           # русский язык приложения — подсказки Apple при сканировании (RoomPlan) тоже будут по-русски
           /usr/libexec/PlistBuddy -c "Set :CFBundleDevelopmentRegion ru" "$PLIST" || /usr/libexec/PlistBuddy -c "Add :CFBundleDevelopmentRegion string ru" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :CFBundleLocalizations" "$PLIST" || true

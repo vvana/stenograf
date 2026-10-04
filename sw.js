@@ -16,6 +16,7 @@ const ASSETS = [
   './vendor/Reflector.js',
   './vendor/PLYLoader.js',
   './vendor/GLTFExporter.js',
+  './vendor/gaussian-splats-3d.module.js',
   './app.js',
   './manifest.webmanifest',
   './icon.svg',
