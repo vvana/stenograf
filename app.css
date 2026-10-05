@@ -181,7 +181,7 @@ body {
 #plan .wall-hit { stroke: transparent; stroke-width: 0.7; cursor: pointer; }
 #plan .wall-hit.edit.sel { stroke: color-mix(in srgb, var(--acc) 45%, transparent); stroke-width: 0.3; }
 #plan .wall-num {  /* номер стены — подсказка, не должен спорить с размерами: мелкий и бледный */
-  font-size: 0.17px; font-weight: 500; fill: var(--mut); opacity: 0.55;
+  font-size: 0.2px; font-weight: 500; fill: var(--mut); opacity: 0.55;
   text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
 }
 #plan .op-gap { fill: var(--card); stroke: none; pointer-events: none; }

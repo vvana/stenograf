@@ -148,6 +148,7 @@ async function viewTour(pid, roomId = null) {
   scene.add(ground);
   const wallSolid = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x6e6e6e, side: THREE.DoubleSide }); // белые, наружные грани чуть затенены
   const wallCap = new THREE.MeshBasicMaterial({ color: 0x6b7178 }); // верх стены — тёмный «разрез», как на чертеже
+  const wallCapTop = new THREE.MeshBasicMaterial({ color: 0x6b7178, side: THREE.DoubleSide });
   const doorMat = new THREE.MeshLambertMaterial({ color: 0xdcc3a0 });
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xe4f1f8, transparent: true, opacity: 0.6 });
   const plainFloors = [], solidWalls = [];
@@ -251,16 +252,32 @@ async function viewTour(pid, roomId = null) {
         fill.quaternion.copy(basisQ(e.ux, e.uy));
         scene.add(fill); solidWalls.push(fill);
       }
-      // «крышка» стены — кремовый верх по профилю
-      for (let k = 0; k + 1 < top.length; k++) {
-        const [t0, h0] = top[k], [t1, h1] = top[k + 1];
-        if (t1 - t0 < 0.01) continue;
-        const L = Math.hypot(t1 - t0, h1 - h0);
-        const X = new THREE.Vector3(e.ux * (t1 - t0) / L, (h1 - h0) / L, e.uy * (t1 - t0) / L), Z = new THREE.Vector3(-e.uy, 0, e.ux);
-        const cap = new THREE.Mesh(new THREE.BoxGeometry(L, 0.012, WALL_T + 0.002), wallCap);
-        const tm = (t0 + t1) / 2;
-        cap.position.set(e.a[0] + e.ux * tm + outN[0] * outOff, (h0 + h1) / 2 + 0.006, e.a[1] + e.uy * tm + outN[1] * outOff);
-        cap.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, new THREE.Vector3().crossVectors(Z, X), Z));
+      // «крышка» стены — тёмная лента одной ширины по профилю верха; в острых углах встык со соседней (как рама),
+      // поэтому вдоль всей комнаты ширина одинаковая, без уступов на стыках
+      const CAP_IN = 0.002, CAP_OUT = WALL_T + 0.004;
+      const miter = (vi, eA, eB) => {   // вершина vi между стенами eA → eB: направление и длина «усов»
+        const oA = [-eA.nx, -eA.ny], oB = [-eB.nx, -eB.ny];
+        let mx = oA[0] + oB[0], my = oA[1] + oB[1]; const ml = Math.hypot(mx, my) || 1; mx /= ml; my /= ml;
+        const k = 1 / Math.max(0.25, mx * oB[0] + my * oB[1]);
+        return d => [r.pts[vi][0] + mx * d * k, r.pts[vi][1] + my * d * k];
+      };
+      const nE = edges.length, prevE = edges[(i - 1 + nE) % nE], nextE = edges[(i + 1) % nE];
+      const atStart = cs[i].t > 0 ? null : miter(i, prevE, e);
+      const atEnd = cs[(i + 1) % nE].t > 0 ? null : miter((i + 1) % nE, e, nextE);
+      const capPos = [], capIdx = [];
+      const edgePt = (t, d) => [e.a[0] + e.ux * t + outN[0] * d, e.a[1] + e.uy * t + outN[1] * d];
+      top.forEach(([t, h], k) => {
+        const end = k === 0 ? atStart : k === top.length - 1 ? atEnd : null;
+        const pin = end ? end(CAP_IN) : edgePt(t, CAP_IN), pout = end ? end(CAP_OUT) : edgePt(t, CAP_OUT);
+        const y = h + 0.013;
+        capPos.push(pin[0], y, pin[1], pout[0], y, pout[1]);
+        if (k && Math.abs(t - top[k - 1][0]) > 1e-4) { const q = 2 * k; capIdx.push(q - 2, q - 1, q, q - 1, q + 1, q); }
+      });
+      if (capIdx.length) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(capPos, 3));
+        g.setIndex(capIdx); g.computeVertexNormals();
+        const cap = new THREE.Mesh(g, wallCapTop);
         scene.add(cap); solidWalls.push(cap);
       }
     });

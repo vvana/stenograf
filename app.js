@@ -428,6 +428,10 @@ async function viewProjects() {
 const MAX_CORNERS = 10;
 // sel: {type:'vertex'|'wall', i}; mode: null | 'trace' (обводка комнаты) | 'scale' (масштаб подложки) | 'underlay' (сдвиг подложки)
 const planState = { edit: false, selected: null, sel: null, mode: null, tmp: [], underlayHidden: false };
+// вид схемы в просмотре: масштаб k, поворот r (рад), сдвиг t (в единицах схемы) — двумя пальцами, как карта.
+// В редакторе всегда исходный вид.
+const planView = { k: 1, r: 0, tx: 0, ty: 0, pid: null };
+const resetPlanView = () => Object.assign(planView, { k: 1, r: 0, tx: 0, ty: 0 });
 
 /* --- геометрия комнаты-многоугольника ---
    room.pts = [[x, y, r?], ...] в метрах по часовой/против — как нарисовал пользователь; r — радиус скругления угла (м)
@@ -455,7 +459,7 @@ function normalizeRoom(r) {
 function newWallId() { return 'k' + uid().replace(/-/g, '').slice(0, 6); }
 
 const WALL_DIM_FS = 0.2; // размер подписей на схеме (длины стен, радиусы) — один для всех стен
-const NUM_OFF = 0.17;     // номер стены — вплотную к стене изнутри
+const NUM_OFF = 0.15;     // номер стены — вплотную к стене изнутри
 const DIM_OFF = 0.23;     // подпись размера — вплотную к стене (от оси стены до центра текста, м)
 // разнести подписи размеров и номера стен, если они наезжают: каждая едет вдоль своей стены (не дальше её концов) в сторону от соседки,
 // а если ехать некуда — отходит от стены. Рамка подписи — по оценке ширины текста.
@@ -674,7 +678,7 @@ async function viewPlan(pid) {
     </div>
     ${bottomNav(pid, 'plan')}`;
 
-  $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; render(); };
+  $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; resetPlanView(); render(); };
   const clearBtn = $('#clear-plan');
   if (clearBtn) clearBtn.onclick = async () => { if (await clearPlan(pid)) render(); };
   const shotsBtn = $('#toggle-shots');
@@ -983,7 +987,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         if (!planState.edit) {
           s += `<line class="wall-hit" data-wall="${key}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
           if (showNums) {
-            dims.push({ cls: 'wall-num', fs: 0.17, x: e.mid[0] + e.nx * NUM_OFF, y: e.mid[1] + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1) });
+            dims.push({ cls: 'wall-num', fs: 0.2, x: e.mid[0] + e.nx * NUM_OFF, y: e.mid[1] + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1) });
           }
           if (cnt > 0 && !shots.length) { // в режиме точек съёмки счётчики не мешают конусам
             const off = showNums ? 0.6 : 0.45;
@@ -1098,8 +1102,11 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       tmp.forEach((p, i) => { s += `<g class="handle scale"><circle cx="${p[0]}" cy="${p[1]}" r="0.3"/><text x="${p[0]}" y="${p[1]}">${i + 1}</text></g>`; });
       if (tmp.length === 2) s += `<line class="trace-line" x1="${tmp[0][0]}" y1="${tmp[0][1]}" x2="${tmp[1][0]}" y2="${tmp[1][1]}"/>`;
     }
-    svg.innerHTML = s;
+    if (planState.edit) { svg.innerHTML = s; return; }
+    const { k, r, tx, ty } = planView, c = Math.cos(r) * k, sn = Math.sin(r) * k;
+    svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
   }
+  if (planView.pid !== pid || planState.edit) { resetPlanView(); planView.pid = pid; }
   draw();
 
   function toWorld(e) {
@@ -1195,6 +1202,60 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (d.moved) { await dbPut('rooms', d.room); updateTools(); }
   });
   svg.addEventListener('pointercancel', () => { drag = null; });
+
+  // просмотр: двумя пальцами — сдвиг, масштаб и поворот; одним — сдвиг, если схема увеличена; колесо мыши — масштаб
+  const fingers = new Map();
+  let gest = null;
+  const units = (x, y) => { const m = svg.getScreenCTM(); return [(x - m.e) / m.a, (y - m.f) / m.d]; };
+  const pinchStart = () => {
+    const [a, b] = [...fingers.values()];
+    gest = { two: true, v: { ...planView }, a: units(a.x, a.y), b: units(b.x, b.y) };
+  };
+  svg.addEventListener('pointerdown', e => {
+    if (planState.edit) return;
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
+    try { svg.setPointerCapture(e.pointerId); } catch {}
+    if (fingers.size === 2) { drag = null; pinchStart(); }                       // второй палец — это жест, не нажатие
+    else if (fingers.size === 1) gest = { two: false, v: { ...planView }, p: units(e.clientX, e.clientY), panning: false };
+  });
+  svg.addEventListener('pointermove', e => {
+    const f = fingers.get(e.pointerId);
+    if (planState.edit || !f || !gest) return;
+    f.x = e.clientX; f.y = e.clientY;
+    if (gest.two && fingers.size >= 2) {
+      const [a, b] = [...fingers.values()];
+      const A = units(a.x, a.y), B = units(b.x, b.y);
+      const d0 = Math.hypot(gest.b[0] - gest.a[0], gest.b[1] - gest.a[1]) || 1e-6, d1 = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      const v0 = gest.v, ds = Math.max(0.5, Math.min(8, v0.k * d1 / d0)) / v0.k;
+      const dr = Math.atan2(B[1] - A[1], B[0] - A[0]) - Math.atan2(gest.b[1] - gest.a[1], gest.b[0] - gest.a[0]);
+      const m0 = [(gest.a[0] + gest.b[0]) / 2, (gest.a[1] + gest.b[1]) / 2], m1 = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+      // точка под пальцами остаётся под пальцами: t1 = ds·R(dr)·(t0 − m0) + m1
+      const qx = v0.tx - m0[0], qy = v0.ty - m0[1], cs = Math.cos(dr), sn = Math.sin(dr);
+      Object.assign(planView, { k: v0.k * ds, r: v0.r + dr, tx: ds * (cs * qx - sn * qy) + m1[0], ty: ds * (sn * qx + cs * qy) + m1[1] });
+      draw();
+    } else if (!gest.two && planView.k > 1.05) {
+      if (!gest.panning && Math.hypot(f.x - f.sx, f.y - f.sy) < 8) return;
+      gest.panning = true; if (drag) drag.moved = true;
+      const P = units(f.x, f.y);
+      planView.tx = gest.v.tx + P[0] - gest.p[0]; planView.ty = gest.v.ty + P[1] - gest.p[1];
+      draw();
+    }
+  });
+  const fingerUp = e => {
+    if (!fingers.delete(e.pointerId)) return;
+    if (fingers.size === 1) { const [f] = fingers.values(); gest = { two: false, v: { ...planView }, p: units(f.x, f.y), panning: true }; f.sx = f.x; f.sy = f.y; }
+    else if (!fingers.size) gest = null;
+  };
+  svg.addEventListener('pointerup', fingerUp);
+  svg.addEventListener('pointercancel', fingerUp);
+  svg.addEventListener('wheel', e => {
+    if (planState.edit) return;
+    e.preventDefault();
+    const m = units(e.clientX, e.clientY), v = planView;
+    const ds = Math.max(0.5, Math.min(8, v.k * Math.exp(-e.deltaY * 0.0015))) / v.k;
+    Object.assign(v, { k: v.k * ds, tx: ds * (v.tx - m[0]) + m[0], ty: ds * (v.ty - m[1]) + m[1] });
+    draw();
+  }, { passive: false });
 
   async function insertVertex(room, i) {
     if (room.pts.length >= MAX_CORNERS) return toast(`Максимум ${MAX_CORNERS} углов`);
