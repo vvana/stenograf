@@ -22,7 +22,7 @@ PWA-фотодневник ремонта: несколько объектов (
   - `calib`: `{type:'quad', pts:[4×[x,y]], w, h}` (углы стены по часовой от верхнего левого, метры) или `{type:'ruler', a, b, len}`; координаты точек нормированы 0..1 к натуральному размеру фото
   - `marks[]`: `{id, type:'dim'|'text'|'path'|'point', layer:'main'|'draft', ...}`; `point.kind` из `MARK_KINDS` (socket, switch, light, tv, water, sewer, heat, other)
 - `rooms` дополнительно: `ceil` (высота потолка, м; по умолчанию 2.7), `openings {side: [{kind:'door'|'window', w, h}]}`
-- `projects.calc` — настройки калькулятора материалов; работы по стенам — `walls: [primer|plaster|putty|paint|glass|wallpaper|tile]` галочками и по полу — `floors: [screed|waterproof|level|tile|laminate|board]` + `screedMm`, `levelMm` (с 2026-10-05; старые `wall`/`floor` читаются через `calcWalls`/`calcFloors`)
+- `projects.calc` — настройки калькулятора материалов; работы по стенам — `walls: [primer|plaster|putty|paint|glass|wallpaper|tile]` галочками и по полу — `floors: [screed|waterproof|level|tile|laminate|board]` + `screedMm`, `levelMm`, по потолку — `ceils: [drywall|primer|plaster|putty|paint]` (с 2026-10-05; старые `wall`/`floor`/`ceil` читаются через `calcWalls`/`calcFloors`/`calcCeils`; пусто — «Не трогаем»)
 - `projects.plan` — подложка схемы: `{blob, w, h, k, ox, oy}` (картинка, её размер в px, метров на px, положение левого верхнего угла в мировых метрах). В бэкапе blob уезжает как `data` (dataURL)
 - **wallKey** = `roomId:side`, где side ∈ `n|e|s|w` (стены, экранные «верхняя/правая/нижняя/левая») или `c` (потолок) / `f` (пол). У комнаты 6 поверхностей.
 
