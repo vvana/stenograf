@@ -389,10 +389,10 @@ async function viewCalc(pid) {
         <b>Что делаем</b>
         <div class="calc-form">
           <div class="calc-group"><span>Стены</span>
-            <div class="calc-checks">${WALL_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-wall="${v}" ${calcWalls(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
+            <div class="calc-checks">${calcWalls(c).length ? '' : '<div class="calc-none">Не трогаем</div>'}${WALL_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-wall="${v}" ${calcWalls(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
           </div>
           <div class="calc-group"><span>Пол</span>
-            <div class="calc-checks">${FLOOR_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-floor="${v}" ${calcFloors(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
+            <div class="calc-checks">${calcFloors(c).length ? '' : '<div class="calc-none">Не трогаем</div>'}${FLOOR_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-floor="${v}" ${calcFloors(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
           </div>
           <label>Потолок ${sel('c-ceil', [['paint', 'Шпаклёвка + краска'], ['none', 'Не трогаем (натяжной и т.п.)']], c.ceil)}</label>
           <label class="${calcWalls(c).includes('plaster') ? '' : 'hidden'}">Слой штукатурки, мм <input class="inp" id="c-plaster" type="number" min="0" max="50" step="1" value="${c.plasterMm}"></label>
