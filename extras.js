@@ -282,13 +282,19 @@ async function viewVerify(pid) {
 
 /* ---------- калькулятор площадей и материалов ---------- */
 
-const CALC_DEFAULTS = { floor: 'laminate', ceil: 'paint', plasterMm: 10, reserve: 10 };
+const CALC_DEFAULTS = { ceil: 'paint', plasterMm: 10, screedMm: 50, levelMm: 5, reserve: 10 };
 // работы по стенам — галочками, в порядке выполнения
 const WALL_WORKS = [['primer', 'Грунтовка'], ['plaster', 'Штукатурка'], ['putty', 'Шпаклёвка'], ['paint', 'Краска'], ['glass', 'Стеклохолст'], ['wallpaper', 'Обои'], ['tile', 'Плитка']];
 // старый формат c.wall (один вариант из списка) → набор галочек
 function calcWalls(c) {
   if (Array.isArray(c.walls)) return c.walls;
   return ({ paint: ['primer', 'plaster', 'putty', 'paint'], wallpaper: ['primer', 'plaster', 'putty', 'wallpaper'], tile: ['primer', 'tile'], none: [] })[c.wall] || ['primer', 'plaster', 'putty', 'paint'];
+}
+// работы по полу — галочками; старый c.floor (laminate | tile | none) → набор
+const FLOOR_WORKS = [['screed', 'Стяжка'], ['waterproof', 'Гидроизоляция'], ['level', 'Ровнитель'], ['tile', 'Плитка'], ['laminate', 'Ламинат / кварцвинил'], ['board', 'Инженерная доска']];
+function calcFloors(c) {
+  if (Array.isArray(c.floors)) return c.floors;
+  return ({ laminate: ['laminate'], tile: ['tile'], none: [] })[c.floor] || ['laminate'];
 }
 
 function roomAreas(r) {
@@ -324,16 +330,30 @@ function materials(tot, c) {
   }
   if (w.has('putty')) add('Шпаклёвка финишная (стены, 2 слоя)', tot.walls * 1.2, 'кг', `${Math.ceil(tot.walls * 1.2 / 20)} мешков по 20 кг`);
   if (c.ceil === 'paint') add('Шпаклёвка финишная (потолок, 2 слоя)', tot.ceiling * 1.2, 'кг', '');
-  const primed = (w.has('primer') ? tot.walls : 0) + (c.ceil === 'paint' ? tot.ceiling : 0) + (c.floor === 'tile' ? tot.floor : 0);
+  const fl = new Set(calcFloors(c));
+  if (fl.has('screed')) {
+    const kg = tot.floor * (c.screedMm || 0) * 2;
+    if (kg > 0) add('Стяжка, пескобетон / ЦПС', kg, 'кг', `${Math.ceil(kg / 40)} мешков по 40 кг, слой ${c.screedMm} мм`);
+  }
+  if (fl.has('waterproof')) {
+    const wa = tot.floor + (tot.perimeter || 0) * 0.2;
+    add('Гидроизоляция обмазочная (2 слоя)', wa * 2, 'кг', `пол + заход на стены 20 см: ${(Math.round(wa * 10) / 10).toString().replace('.', ',')} м²`);
+  }
+  if (fl.has('level')) {
+    const kg = tot.floor * (c.levelMm || 0) * 1.5;
+    if (kg > 0) add('Ровнитель (наливной пол)', kg, 'кг', `${Math.ceil(kg / 25)} мешков по 25 кг, слой ${c.levelMm} мм`);
+  }
+  const primed = (w.has('primer') ? tot.walls : 0) + (c.ceil === 'paint' ? tot.ceiling : 0) + (fl.has('tile') || fl.has('level') ? tot.floor : 0);
   if (primed > 0) add('Грунтовка (2 слоя)', primed * 0.2, 'л', '');
   if (w.has('glass')) add('Стеклохолст', tot.walls * res, 'м²', `${Math.ceil(tot.walls * res / 50)} рул. по 50 м², с запасом ${c.reserve} %`);
   if (w.has('paint')) add('Краска для стен (2 слоя)', tot.walls * 0.25, 'л', `${Math.ceil(tot.walls * 0.25 / 2.5)} банок по 2,5 л`);
   if (c.ceil === 'paint') add('Краска для потолка (2 слоя)', tot.ceiling * 0.25, 'л', '');
   if (w.has('wallpaper')) add('Обои', Math.ceil(tot.walls / 5.3 * 1.15), 'рул.', 'рулон 0,53 × 10 м, +15 % на подгонку рисунка');
   if (w.has('tile')) add('Плитка на стены', tot.walls * res, 'м²', `с запасом ${c.reserve} %`);
-  if (c.floor === 'laminate') add('Ламинат / кварцвинил', tot.floor * res, 'м²', `с запасом ${c.reserve} %`);
-  if (c.floor === 'tile') add('Плитка на пол', tot.floor * res, 'м²', `с запасом ${c.reserve} %`);
-  if (c.floor !== 'none') add('Плинтус', tot.plinth * 1.05, 'пог. м', 'периметр минус дверные проёмы, +5 %');
+  if (fl.has('tile')) add('Плитка на пол', tot.floor * res, 'м²', `с запасом ${c.reserve} %`);
+  if (fl.has('laminate')) add('Ламинат / кварцвинил', tot.floor * res, 'м²', `с запасом ${c.reserve} %`);
+  if (fl.has('board')) add('Инженерная доска', tot.floor * res, 'м²', `с запасом ${c.reserve} %`);
+  if (fl.has('tile') || fl.has('laminate') || fl.has('board')) add('Плинтус', tot.plinth * 1.05, 'пог. м', 'периметр минус дверные проёмы, +5 %');
   return out;
 }
 
@@ -371,9 +391,13 @@ async function viewCalc(pid) {
           <div class="calc-group"><span>Стены</span>
             <div class="calc-checks">${WALL_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-wall="${v}" ${calcWalls(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
           </div>
-          <label>Пол ${sel('c-floor', [['laminate', 'Ламинат / кварцвинил'], ['tile', 'Плитка'], ['none', 'Не трогаем']], c.floor)}</label>
+          <div class="calc-group"><span>Пол</span>
+            <div class="calc-checks">${FLOOR_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-floor="${v}" ${calcFloors(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
+          </div>
           <label>Потолок ${sel('c-ceil', [['paint', 'Шпаклёвка + краска'], ['none', 'Не трогаем (натяжной и т.п.)']], c.ceil)}</label>
           <label class="${calcWalls(c).includes('plaster') ? '' : 'hidden'}">Слой штукатурки, мм <input class="inp" id="c-plaster" type="number" min="0" max="50" step="1" value="${c.plasterMm}"></label>
+          <label class="${calcFloors(c).includes('screed') ? '' : 'hidden'}">Толщина стяжки, мм <input class="inp" id="c-screed" type="number" min="0" max="150" step="5" value="${c.screedMm}"></label>
+          <label class="${calcFloors(c).includes('level') ? '' : 'hidden'}">Слой ровнителя, мм <input class="inp" id="c-level" type="number" min="0" max="50" step="1" value="${c.levelMm}"></label>
           <label>Запас на подрезку, % <input class="inp" id="c-reserve" type="number" min="0" max="30" step="1" value="${c.reserve}"></label>
         </div>
       </div>
@@ -383,20 +407,20 @@ async function viewCalc(pid) {
         <ul class="mat-list">
           ${materials(tot, c).map(m => `<li><span>${esc(m.name)}</span><b>${f(m.qty)} ${m.unit}</b>${m.hint ? `<div class="mut small">${esc(m.hint)}</div>` : ''}</li>`).join('')}
         </ul>
-        <p class="mut small">Нормы усреднённые (гипсовая штукатурка 9 кг/м² на 10 мм, шпаклёвка 1,2 кг/м², краска 0,25 л/м² в два слоя). Для закупки уточняйте по упаковке конкретного материала.</p>
+        <p class="mut small">Нормы усреднённые (гипсовая штукатурка 9 кг/м² на 10 мм, шпаклёвка 1,2 кг/м², краска 0,25 л/м² в два слоя, стяжка 2 кг/м² на 1 мм, ровнитель 1,5 кг/м² на 1 мм, гидроизоляция 1 кг/м² на слой). Для закупки уточняйте по упаковке конкретного материала.</p>
       </div>`}
     </div>`;
 
   if (!rooms.length) return;
   const saveCalc = async () => {
     project.calc = {
-      walls: [...app.querySelectorAll('[data-wall]')].filter(x => x.checked).map(x => x.dataset.wall), floor: $('#c-floor').value, ceil: $('#c-ceil').value,
-      plasterMm: +$('#c-plaster').value || 0, reserve: +$('#c-reserve').value || 0,
+      walls: [...app.querySelectorAll('[data-wall]')].filter(x => x.checked).map(x => x.dataset.wall), floors: [...app.querySelectorAll('[data-floor]')].filter(x => x.checked).map(x => x.dataset.floor), ceil: $('#c-ceil').value,
+      plasterMm: +$('#c-plaster').value || 0, screedMm: +$('#c-screed').value || 0, levelMm: +$('#c-level').value || 0, reserve: +$('#c-reserve').value || 0,
     };
     await dbPut('projects', project); render();
   };
-  app.querySelectorAll('[data-wall]').forEach(x => { x.onchange = saveCalc; });
-  ['#c-floor', '#c-ceil', '#c-plaster', '#c-reserve'].forEach(s => { $(s).onchange = saveCalc; });
+  app.querySelectorAll('[data-wall], [data-floor]').forEach(x => { x.onchange = saveCalc; });
+  ['#c-ceil', '#c-plaster', '#c-screed', '#c-level', '#c-reserve'].forEach(s => { $(s).onchange = saveCalc; });
 }
 
 /* ---------- призрачная камера ---------- */
