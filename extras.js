@@ -345,8 +345,8 @@ async function viewCalc(pid) {
     <div class="pad">
       ${rooms.length === 0 ? `<div class="empty"><div class="empty-ico">🧮</div><p><b>Сначала нарисуйте схему.</b></p><p class="mut">Площади считаются по комнатам на схеме, проёмы задаются на экране стены.</p></div>` : `
       <div class="card">
-        <div class="calc-table-wrap"><table class="calc-table">
-          <thead><tr><th>Комната</th><th>Стены, м²</th><th>Пол, м²</th><th>Потолок</th></tr></thead>
+        <div class="calc-table-wrap"><table class="calc-table calc-areas">
+          <thead><tr><th>Комната</th><th>Стены<br>м²</th><th>Пол<br>м²</th><th>Потолок<br>м²</th></tr></thead>
           <tbody>
             ${areas.map(({ r, a }) => `<tr><td>${esc(r.name)}<div class="mut small">${r.pts.length} угл., периметр ${f(a.perimeter)} м, h ${f(a.ceil, 2)}${a.openings ? `, проёмы −${f(a.openings)} м²` : ''}</div></td>
               <td>${f(a.walls)}</td><td>${f(a.floor)}</td><td>${f(a.ceiling)}</td></tr>`).join('')}

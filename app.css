@@ -460,6 +460,8 @@ body {
 .calc-table th, .calc-table td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .calc-table th:first-child, .calc-table td:first-child { text-align: left; }
 .calc-table tfoot th { border-bottom: none; }
+.calc-areas th:not(:first-child), .calc-areas td:not(:first-child) { text-align: center; }
+.calc-areas thead th { vertical-align: bottom; }
 .calc-form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .calc-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--mut); }
 .calc-form .inp { color: var(--ink); font-size: 15px; }
