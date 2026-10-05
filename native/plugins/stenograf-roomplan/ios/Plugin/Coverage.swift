@@ -178,22 +178,17 @@ final class CoverageModel {
     }
 }
 
-/// Подсветка в камере: красный — не снято, жёлтый — мало кадров (HD), зелёный — снято.
+/// Подсветка в камере: зелёным — снятое; не снятое не закрашивается (решение пользователя 2026-10-05).
 @available(iOS 17.0, *)
 final class CoverageOverlayView: UIView {
-    private let layers: [CAShapeLayer] = (0..<3).map { _ in CAShapeLayer() }
+    private let shape = CAShapeLayer()
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
-        let colors: [UIColor] = [UIColor(red: 0.95, green: 0.25, blue: 0.2, alpha: 0.22),
-                                 UIColor(red: 1.0, green: 0.8, blue: 0.1, alpha: 0.26),
-                                 UIColor(red: 0.2, green: 0.85, blue: 0.4, alpha: 0.24)]
-        for (k, l) in layers.enumerated() {
-            l.fillColor = colors[k].cgColor
-            l.strokeColor = UIColor(white: 1, alpha: 0.18).cgColor
-            l.lineWidth = 0.5
-            layer.addSublayer(l)
-        }
+        shape.fillColor = UIColor(red: 0.2, green: 0.85, blue: 0.4, alpha: 0.26).cgColor
+        shape.strokeColor = UIColor(white: 1, alpha: 0.18).cgColor
+        shape.lineWidth = 0.5
+        layer.addSublayer(shape)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -201,10 +196,10 @@ final class CoverageOverlayView: UIView {
         let size = bounds.size
         guard size.width > 0 else { return }
         let inv = cam.transform.inverse
-        let paths = [UIBezierPath(), UIBezierPath(), UIBezierPath()]
+        let path = UIBezierPath()
         for s in surfaces {
             let c = model.counts(s)
-            for (i, cell) in s.cells.enumerated() {
+            for (i, cell) in s.cells.enumerated() where c[i] >= model.need {
                 var pts: [CGPoint] = []
                 var ok = true
                 for p in cell.corners {
@@ -213,17 +208,15 @@ final class CoverageOverlayView: UIView {
                     pts.append(cam.projectPoint(p, orientation: .portrait, viewportSize: size))
                 }
                 guard ok, pts.count == 4 else { continue }
-                let level = c[i] >= model.need ? 2 : (c[i] > 0 ? 1 : 0)
-                let path = paths[level]
                 path.move(to: pts[0]); path.addLine(to: pts[1]); path.addLine(to: pts[2]); path.addLine(to: pts[3]); path.close()
             }
         }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        for (k, l) in layers.enumerated() { l.frame = bounds; l.path = paths[k].cgPath }
+        shape.frame = bounds; shape.path = path.cgPath
         CATransaction.commit()
     }
 
-    func clear() { for l in layers { l.path = nil } }
+    func clear() { shape.path = nil }
 }
 
 /// Мини-карта сверху: стены всех комнат по цвету покрытия, точки съёмки, где вы сейчас.
@@ -266,8 +259,7 @@ final class CoverageMapView: UIView {
         g.setLineWidth(4); g.setLineCap(.round)
         for w in walls {
             let f = model.fraction(w)
-            let col: UIColor = f >= 0.7 ? UIColor(red: 0.18, green: 0.7, blue: 0.35, alpha: 1)
-                : (f >= 0.3 ? UIColor(red: 0.95, green: 0.7, blue: 0.1, alpha: 1) : UIColor(red: 0.9, green: 0.25, blue: 0.2, alpha: 1))
+            let col: UIColor = f >= 0.7 ? UIColor(red: 0.18, green: 0.7, blue: 0.35, alpha: 1) : UIColor(white: 0.72, alpha: 1)   // зелёная — снята, серая — нет
             g.setStrokeColor(col.cgColor)
             g.move(to: P(w.a.x, w.a.z)); g.addLine(to: P(w.b.x, w.b.z)); g.strokePath()
         }

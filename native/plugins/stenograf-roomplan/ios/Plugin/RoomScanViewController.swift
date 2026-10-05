@@ -224,7 +224,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         guard !weak.isEmpty else { return true }
         let shown = weak.prefix(8).joined(separator: "\n") + (weak.count > 8 ? "\n… и ещё \(weak.count - 8)" : "")
         let ac = UIAlertController(title: "Снято не всё",
-                                   message: "Мало кадров на поверхностях (красные на мини-карте и в камере):\n\n\(shown)",
+                                   message: "Не сняты (не зелёные на мини-карте и в камере):\n\n\(shown)",
                                    preferredStyle: .alert)
         ac.addAction(UIAlertAction(title: "Доснять", style: .cancel))
         ac.addAction(UIAlertAction(title: currentOnly ? "Дальше всё равно" : "Завершить всё равно", style: .default) { [weak self] _ in
@@ -238,13 +238,13 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func initialHint() -> String {
         switch mode {
-        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Красное — ещё не снято, зелёное — готово"
+        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Снятое подсвечивается зелёным"
         case "multi": return wantFrames
             ? "Обход квартиры: пройдите комнату вдоль стен, наклоняя телефон к полу и потолку, пока всё не станет зелёным, затем «Следующая» — и в другую комнату"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Завершить»"
         case "final": return hd
-            ? "HD-скан: идите медленно и замирайте — кадр снимается, когда телефон неподвижен. Красное — ещё не снято, жёлтое — мало кадров, зелёное — готово"
-            : "Финальный скан: наводите телефон на всё красное, пока не станет зелёным. Тап по карте — спрятать подсветку"
+            ? "HD-скан: идите медленно и замирайте — кадр снимается, когда телефон неподвижен. Снятое подсвечивается зелёным"
+            : "Финальный скан: наводите телефон на всё, что ещё не зелёное. Тап по карте — спрятать подсветку"
         case "ghost": return "Наведите телефон на стену — старое фото совместится само"
         default: return "Обмер: обойдите комнату вдоль стен, заглядывая в углы"
         }
