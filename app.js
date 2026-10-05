@@ -351,7 +351,7 @@ async function deleteProject(pid) {
   return true;
 }
 
-// очистить схему: комнаты и всё, что к ним привязано (фото стен, потолка, пола, панорамы), модели скана; этапы остаются
+// очистить схему: комнаты и всё, что к ним привязано (фото стен, потолка, пола), модели скана; этапы остаются
 async function clearPlan(pid) {
   const project = await dbGet('projects', pid);
   const rooms = await dbAll('rooms', 'projectId', pid);
@@ -359,7 +359,7 @@ async function clearPlan(pid) {
   const ids = new Set(rooms.map(r => r.id));
   const photos = (await dbAll('photos', 'projectId', pid)).filter(p => ids.has(String(p.wallKey).split(':')[0]));
   if (!confirm(`Удалить схему объекта «${project.name}»?
-Комнат: ${rooms.length}${photos.length ? `, вместе с ними удалятся ${photos.length} фото стен, потолков, полов и панорам` : ''}.
+Комнат: ${rooms.length}${photos.length ? `, вместе с ними удалятся ${photos.length} фото стен, потолков и полов` : ''}.
 Этапы останутся.`)) return false;
   if (photos.length && !confirm(`Точно удалить ${photos.length} фото? Восстановить будет нельзя (только из резервной копии).`)) return false;
   for (const p of photos) await dbDel('photos', p.id);
@@ -636,7 +636,7 @@ async function viewPlan(pid) {
           <p class="mut">Нажмите «Редактор» сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
         </div>` : `<p class="mut small center pad-h">${planState.edit
           ? 'Режим редактора: комната — многоугольник до 10 углов. По умолчанию углы 90°, любой можно изменить.'
-          : 'Тап по стене — её фото по этапам. Тап внутри комнаты — потолок, пол, панорама 360°.'}</p>`}
+          : 'Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.'}</p>`}
     </div>
     ${bottomNav(pid, 'plan')}`;
 
@@ -838,7 +838,6 @@ const ICONS = {
   scan: svgIco('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8M12 8v8" opacity=".9"/>'),
   eye: svgIco('<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
   eyeOff: svgIco('<path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.6 6.6C3.7 8.4 2 12 2 12s3.5 6 10 6a9.8 9.8 0 0 0 4.4-1"/>'),
-  pano: svgIco('<path d="M2.5 6.5c6.3 1.8 12.7 1.8 19 0v11c-6.3-1.8-12.7-1.8-19 0z"/>'), // панорама: изогнутый кадр
   flag: svgIco('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
   ar: svgIco('<path d="M12 7l5 2.8v5.4L12 18l-5-2.8V9.8L12 7z"/><path d="M7 9.8l5 2.8 5-2.8M12 12.6V18"/><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3"/>'),
   camera: svgIco('<path d="M4 8h3.2l1.8-2.6h6l1.8 2.6H20v11H4z"/><circle cx="12" cy="13" r="3.6"/>'),
@@ -1004,8 +1003,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         s += `<text class="wall-dim" style="font-size:0.2px" x="${V[0] + bx * d}" y="${V[1] + by * d}">R ${fmtM(V[2])}</text>`;
       });
       if (!planState.edit) {
-        // пол, потолок, панорама — в меню по тапу внутри комнаты; здесь только счётчик, если фото уже есть
-        const extra = [['c', '⬆'], ['f', '⬇'], ['p', '360°']]
+        // пол и потолок — в меню по тапу внутри комнаты; здесь только счётчик, если фото уже есть
+        const extra = [['c', '⬆'], ['f', '⬇']]
           .map(([sf, ico]) => { const n = counts[`${r.id}:${sf}`] || 0; return n ? `${ico} ${n}` : ''; }).filter(Boolean);
         if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.8}">${extra.join('   ')}</text>`;
       }
@@ -1333,7 +1332,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   }
   function hideSheet() { sheet.classList.add('hidden'); sheet.classList.remove('furn-sheet'); sheet.innerHTML = ''; app.style.paddingBottom = ''; if (planState.furnList) { planState.furnList = false; draw(); } }
 
-  // тап внутри комнаты: поверхности без стен — потолок, пол, панорама
+  // тап внутри комнаты: поверхности без стен — потолок и пол
   function roomMenu(roomId) {
     const r = rooms.find(x => x.id === roomId);
     if (!r) return;
@@ -1341,7 +1340,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico}${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
     showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
-      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}${cnt('p') ? item('p', I('pano'), 'Панорама 360°') : ''}`, sh => {
+      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
     });
   }
@@ -1844,10 +1843,10 @@ async function viewStageAlbum(pid, stageId) {
   const mine = photos.filter(p => p.stageId === stageId).sort((a, b) => a.created - b.created);
   const byKey = {};
   mine.forEach(p => { (byKey[p.wallKey] = byKey[p.wallKey] || []).push(p); });
-  // порядок: комнаты как в схеме, внутри — стены по кругу, потом потолок, пол, панорама
+  // порядок: комнаты как в схеме, внутри — стены по кругу, потом потолок, пол
   const groups = [];
   for (const r of rooms) {
-    const sides = [...roomEdges(r).map(e => e.id), 'c', 'f', 'p'];
+    const sides = [...roomEdges(r).map(e => e.id), 'c', 'f'];
     for (const side of sides) {
       const key = `${r.id}:${side}`;
       if (byKey[key]) { groups.push({ key, room: r, side, list: byKey[key] }); delete byKey[key]; }
@@ -1976,7 +1975,7 @@ async function viewWall(pid, wallKey) {
     ${header(wallLabel(room, side), `#/p/${pid}`,
       `<button class="iconbtn" id="rename-wall" title="Переименовать стену">${ICONS.edit}</button>`)}
     <div class="pad">
-      ${side === 'p' ? '' : stagesWithPhotos.length >= 2 ? `
+      ${stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ${I('compare')}Сравнить «до / после»</button>` : `
         <p class="mut small center">Добавьте фото минимум на двух этапах — появится сравнение «до/после».</p>`}

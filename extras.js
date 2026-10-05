@@ -1,7 +1,7 @@
 /* Fixpoint — отчёт для мастеров, калькулятор материалов, «призрачная камера» */
 'use strict';
 
-const roomSurfaces = r => [...(r.wallIds || []), 'c', 'f', 'p'];
+const roomSurfaces = r => [...(r.wallIds || []), 'c', 'f'];
 const DEFAULT_CEIL = 2.7;
 const roomCeil = r => (r.ceil > 0 ? r.ceil : DEFAULT_CEIL);
 

@@ -1,4 +1,4 @@
-/* Fixpoint — 3D-тур: «кукольный домик» из схемы и фото, вид изнутри, панорамы 360° */
+/* Fixpoint — 3D-тур: «кукольный домик» из схемы и фото, вид изнутри */
 'use strict';
 
 const tourState = { mode: 'house', stage: 'all', roomId: null, photos: false };
@@ -77,7 +77,7 @@ async function viewTour(pid, roomId = null) {
   if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
   if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
   if (tourState.mode === 'hd' && !(project.hdScan && project.hdScan.blob)) tourState.mode = 'house';
-  if (tourState.mode === 'pano') tourState.mode = 'inside'; // режим «Панорама» убран (2026-10-05): хватает «Внутри»
+  if (tourState.mode === 'pano') tourState.mode = 'inside'; // режима «Панорама» больше нет (2026-10-05)
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
