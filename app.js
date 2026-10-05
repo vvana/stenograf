@@ -838,7 +838,7 @@ const ICONS = {
   scan: svgIco('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8M12 8v8" opacity=".9"/>'),
   eye: svgIco('<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
   eyeOff: svgIco('<path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.6 6.6C3.7 8.4 2 12 2 12s3.5 6 10 6a9.8 9.8 0 0 0 4.4-1"/>'),
-  globe: svgIco('<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>'),
+  pano: svgIco('<path d="M2.5 6.5c6.3 1.8 12.7 1.8 19 0v11c-6.3-1.8-12.7-1.8-19 0z"/><path d="M5.5 15l4-4 3 3 2-2 4 3.5"/><circle cx="16" cy="9.8" r="1"/>'), // панорама: изогнутый кадр с горами
   flag: svgIco('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
   ar: svgIco('<path d="M12 7l5 2.8v5.4L12 18l-5-2.8V9.8L12 7z"/><path d="M7 9.8l5 2.8 5-2.8M12 12.6V18"/><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3"/>'),
   camera: svgIco('<path d="M4 8h3.2l1.8-2.6h6l1.8 2.6H20v11H4z"/><circle cx="12" cy="13" r="3.6"/>'),
@@ -1341,7 +1341,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico}${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
     showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
-      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}${item('p', I('globe'), 'Панорама 360°')}`, sh => {
+      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}${item('p', I('pano'), 'Панорама 360°')}`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
     });
   }
@@ -1978,7 +1978,7 @@ async function viewWall(pid, wallKey) {
     <div class="pad">
       ${side === 'p' ? `
         <p class="mut small">Снимите комнату из центра штатной камерой в режиме «Панорама» (или 360°-камерой) и добавьте снимок через «Галерея» на нужный этап. Смотреть — в 3D-туре.</p>
-        <button class="btn primary wide" id="open-pano" ${wallPhotos.length ? '' : 'disabled'}>${I('globe')}Открыть панораму в 3D</button>` : stagesWithPhotos.length >= 2 ? `
+        <button class="btn primary wide" id="open-pano" ${wallPhotos.length ? '' : 'disabled'}>${I('pano')}Открыть панораму в 3D</button>` : stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ${I('compare')}Сравнить «до / после»</button>` : `
         <p class="mut small center">Добавьте фото минимум на двух этапах — появится сравнение «до/после».</p>`}
