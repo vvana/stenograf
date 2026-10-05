@@ -192,7 +192,7 @@ body {
 #plan .op-arc { fill: none; stroke: #8a6a45; stroke-width: 0.015; stroke-dasharray: 0.06 0.04; pointer-events: none; }
 #plan .wall-dim {
   fill: var(--ink); font-weight: 600; text-anchor: middle; dominant-baseline: central;
-  pointer-events: none; user-select: none; paint-order: stroke; stroke: var(--bg); stroke-width: 0.06px;
+  pointer-events: none; user-select: none;
 }
 #plan .wall-len {
   font-size: 0.3px; font-weight: 700; fill: var(--acc);

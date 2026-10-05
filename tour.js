@@ -266,12 +266,19 @@ async function viewTour(pid, roomId = null) {
       const atEnd = cs[(i + 1) % nE].t > 0 ? null : miter((i + 1) % nE, e, nextE);
       const capPos = [], capIdx = [];
       const edgePt = (t, d) => [e.a[0] + e.ux * t + outN[0] * d, e.a[1] + e.uy * t + outN[1] * d];
+      // на каждую точку профиля 4 вершины: верх внутр./наруж. и низ внутр./наруж. — лента с бортиками до верха стены,
+      // иначе под острым углом в щель между лентой и стеной виден светлый верх стены
       top.forEach(([t, h], k) => {
         const end = k === 0 ? atStart : k === top.length - 1 ? atEnd : null;
         const pin = end ? end(CAP_IN) : edgePt(t, CAP_IN), pout = end ? end(CAP_OUT) : edgePt(t, CAP_OUT);
-        const y = h + 0.013;
-        capPos.push(pin[0], y, pin[1], pout[0], y, pout[1]);
-        if (k && Math.abs(t - top[k - 1][0]) > 1e-4) { const q = 2 * k; capIdx.push(q - 2, q - 1, q, q - 1, q + 1, q); }
+        const y = h + 0.013, y0 = h - 0.004;
+        capPos.push(pin[0], y, pin[1], pout[0], y, pout[1], pin[0], y0, pin[1], pout[0], y0, pout[1]);
+        if (k && Math.abs(t - top[k - 1][0]) > 1e-4) {
+          const q = 4 * k, p = q - 4;
+          capIdx.push(p, p + 1, q, p + 1, q + 1, q);                 // верх
+          capIdx.push(p + 1, p + 3, q + 1, p + 3, q + 3, q + 1);     // бортик снаружи
+          capIdx.push(p, q, p + 2, p + 2, q, q + 2);                 // бортик внутри
+        }
       });
       if (capIdx.length) {
         const g = new THREE.BufferGeometry();
