@@ -332,20 +332,20 @@ function materials(tot, c) {
   const w = new Set(calcWalls(c));
   if (w.has('plaster')) {
     const plasterKg = tot.walls * (c.plasterMm || 0) * 0.9;
-    if (plasterKg > 0) add('Штукатурка гипсовая (стены)', plasterKg, 'кг', `${Math.ceil(plasterKg / 30)} мешков по 30 кг, слой ${c.plasterMm} мм`);
+    if (plasterKg > 0) add('Штукатурка гипсовая (стены)', plasterKg, 'кг', `слой ${c.plasterMm} мм`);
   }
-  if (w.has('putty')) add('Шпаклёвка финишная (стены, 2 слоя)', tot.walls * 1.2, 'кг', `${Math.ceil(tot.walls * 1.2 / 20)} мешков по 20 кг`);
+  if (w.has('putty')) add('Шпаклёвка финишная (стены, 2 слоя)', tot.walls * 1.2, 'кг', '');
   const ce = new Set(calcCeils(c));
-  if (ce.has('drywall')) add('Гипсокартон (потолок)', tot.ceiling * res, 'м²', `${Math.ceil(tot.ceiling * res / 3)} листов 1,2 × 2,5 м, с запасом ${c.reserve} %; профиль и подвесы не считаются`);
+  if (ce.has('drywall')) add('Гипсокартон (потолок)', tot.ceiling * res, 'м²', `с запасом ${c.reserve} %; профиль и подвесы не считаются`);
   if (ce.has('plaster')) {
     const kg = tot.ceiling * (c.plasterMm || 0) * 0.9;
-    if (kg > 0) add('Штукатурка гипсовая (потолок)', kg, 'кг', `${Math.ceil(kg / 30)} мешков по 30 кг, слой ${c.plasterMm} мм`);
+    if (kg > 0) add('Штукатурка гипсовая (потолок)', kg, 'кг', `слой ${c.plasterMm} мм`);
   }
   if (ce.has('putty')) add('Шпаклёвка финишная (потолок, 2 слоя)', tot.ceiling * 1.2, 'кг', '');
   const fl = new Set(calcFloors(c));
   if (fl.has('screed')) {
     const kg = tot.floor * (c.screedMm || 0) * 2;
-    if (kg > 0) add('Стяжка, пескобетон / ЦПС', kg, 'кг', `${Math.ceil(kg / 40)} мешков по 40 кг, слой ${c.screedMm} мм`);
+    if (kg > 0) add('Стяжка, пескобетон / ЦПС', kg, 'кг', `слой ${c.screedMm} мм`);
   }
   if (fl.has('waterproof')) {
     const wa = tot.floor + (tot.perimeter || 0) * 0.2;
@@ -353,12 +353,12 @@ function materials(tot, c) {
   }
   if (fl.has('level')) {
     const kg = tot.floor * (c.levelMm || 0) * 1.5;
-    if (kg > 0) add('Ровнитель (наливной пол)', kg, 'кг', `${Math.ceil(kg / 25)} мешков по 25 кг, слой ${c.levelMm} мм`);
+    if (kg > 0) add('Ровнитель (наливной пол)', kg, 'кг', `слой ${c.levelMm} мм`);
   }
   const primed = (w.has('primer') ? tot.walls : 0) + (ce.has('primer') ? tot.ceiling : 0) + (fl.has('tile') || fl.has('level') ? tot.floor : 0);
   if (primed > 0) add('Грунтовка (2 слоя)', primed * 0.2, 'л', '');
-  if (w.has('glass')) add('Стеклохолст', tot.walls * res, 'м²', `${Math.ceil(tot.walls * res / 50)} рул. по 50 м², с запасом ${c.reserve} %`);
-  if (w.has('paint')) add('Краска для стен (2 слоя)', tot.walls * 0.25, 'л', `${Math.ceil(tot.walls * 0.25 / 2.5)} банок по 2,5 л`);
+  if (w.has('glass')) add('Стеклохолст', tot.walls * res, 'м²', `с запасом ${c.reserve} %`);
+  if (w.has('paint')) add('Краска для стен (2 слоя)', tot.walls * 0.25, 'л', '');
   if (ce.has('paint')) add('Краска для потолка (2 слоя)', tot.ceiling * 0.25, 'л', '');
   if (w.has('wallpaper')) add('Обои', Math.ceil(tot.walls / 5.3 * 1.15), 'рул.', 'рулон 0,53 × 10 м, +15 % на подгонку рисунка');
   if (w.has('tile')) add('Плитка на стены', tot.walls * res, 'м²', `с запасом ${c.reserve} %`);
