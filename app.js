@@ -831,7 +831,7 @@ async function createRoom(pid, rooms, pts, name) {
 const svgIco = d => `<svg viewBox="0 0 24 24">${d}</svg>`;
 const ICONS = {
   plan: svgIco('<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 12h8v8M11 4v4M15 12h6"/>'),
-  stages: svgIco('<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11"/><circle cx="5" cy="18" r="1.3"/>'),
+  stages: svgIco('<path d="M11 6h10M11 12h10M11 18h10"/><path d="M2.5 6l1.5 1.5L6.5 5M2.5 12l1.5 1.5L6.5 11"/><circle cx="4.2" cy="18" r="1.3"/>'),
   tour: svgIco('<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>'),
   more: svgIco('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'),
   trash: svgIco('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
