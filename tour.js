@@ -77,6 +77,8 @@ async function viewTour(pid, roomId = null) {
   if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
   if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
   if (tourState.mode === 'hd' && !(project.hdScan && project.hdScan.blob)) tourState.mode = 'house';
+  const hasPano = photos.some(p => p.wallKey.endsWith(':p')); // кнопка «Панорама» — только если хоть одна снята
+  if (tourState.mode === 'pano' && !hasPano) tourState.mode = 'house';
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
@@ -94,7 +96,7 @@ async function viewTour(pid, roomId = null) {
         <div class="tour-modes">
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('eye')}Внутри</button>
-          <button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">${I('pano')}Панорама</button>
+          ${hasPano ? `<button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">${I('pano')}Панорама</button>` : ''}
           ${project.hdScan && project.hdScan.blob ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}HD</button>` : ''}
           ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}Финал</button>` : ''}
           ${Native.isNative && roomPlanModels(project, rooms).length ? `<button id="tour-rp" title="Оригинальная модель RoomPlan: 3D и AR">${I('ar')}RoomPlan</button>` : ''}
