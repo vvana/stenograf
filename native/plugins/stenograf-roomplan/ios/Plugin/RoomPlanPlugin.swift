@@ -23,6 +23,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "shareFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "fileInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "htmlPdf", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -77,6 +78,42 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
                 pop.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.maxY - 40, width: 1, height: 1)
             }
             ac.completionWithItemsHandler = { _, completed, _, _ in call.resolve(["completed": completed]) }
+            host.present(ac, animated: true)
+        }
+    }
+
+    /// HTML → PDF (A4, поля 15 мм) средствами iOS и меню «Поделиться». window.print() во WKWebView не работает.
+    @objc func htmlPdf(_ call: CAPPluginCall) {
+        guard let html = call.getString("html") else { call.reject("Нет html"); return }
+        let raw = call.getString("name") ?? "Fixpoint"
+        let name = raw.replacingOccurrences(of: "[/\\:*?\"<>|]", with: "_", options: .regularExpression)
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
+            let fmt = UIMarkupTextPrintFormatter(markupText: html)
+            let renderer = UIPrintPageRenderer()
+            renderer.addPrintFormatter(fmt, startingAtPageAt: 0)
+            let page = CGRect(x: 0, y: 0, width: 595.2, height: 841.8)          // A4 в пунктах
+            let margin: CGFloat = 42.5                                            // 15 мм
+            renderer.setValue(NSValue(cgRect: page), forKey: "paperRect")
+            renderer.setValue(NSValue(cgRect: page.insetBy(dx: margin, dy: margin)), forKey: "printableRect")
+            let data = NSMutableData()
+            UIGraphicsBeginPDFContextToData(data, page, nil)
+            renderer.prepare(forDrawingPages: NSRange(location: 0, length: renderer.numberOfPages))
+            for i in 0..<renderer.numberOfPages {
+                UIGraphicsBeginPDFPage()
+                renderer.drawPage(at: i, in: UIGraphicsGetPDFContextBounds())
+            }
+            UIGraphicsEndPDFContext()
+            let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("exports", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent(name + ".pdf")
+            do { try data.write(to: url, options: .atomic) } catch { call.reject("Не удалось сохранить PDF: \(error.localizedDescription)"); return }
+            let ac = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+            if let pop = ac.popoverPresentationController {   // iPad
+                pop.sourceView = host.view
+                pop.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.maxY - 40, width: 1, height: 1)
+            }
+            ac.completionWithItemsHandler = { _, completed, _, _ in call.resolve(["path": url.path, "pages": renderer.numberOfPages, "completed": completed]) }
             host.present(ac, animated: true)
         }
     }

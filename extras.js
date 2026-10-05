@@ -355,31 +355,52 @@ function roomAreas(r) {
   };
 }
 
-function materials(tot, c) {
+// работы по помещению: свои галочки (c.rooms[id]) или по умолчанию — санузел под плитку, остальные как в общих настройках
+function calcRoomWorks(c, r) {
+  const own = c.rooms && c.rooms[r.id];
+  if (own) return { walls: own.walls || [], floors: own.floors || [], ceils: own.ceils || [] };
+  if (roomKind(r).kind === 'bath') return { walls: ['primer', 'tile'], floors: ['waterproof', 'tile'], ceils: calcCeils(c) };
+  return { walls: calcWalls(c), floors: calcFloors(c), ceils: calcCeils(c) };
+}
+
+// расход по всем помещениям: считаем по каждому с его площадями и работами, одинаковые материалы складываем
+function materials(areas, c) {
+  const by = new Map();
+  for (const { r, a } of areas) {
+    for (const m of roomMaterials(a, c, calcRoomWorks(c, r))) {
+      const k = m.name + '|' + m.unit;
+      const cur = by.get(k);
+      if (cur) { cur.qty += m.qty; cur.rooms.push(r.name); } else by.set(k, { ...m, rooms: [r.name] });
+    }
+  }
+  return [...by.values()];
+}
+
+function roomMaterials(tot, c, works) {
   const res = 1 + (c.reserve || 0) / 100;
   const out = [];
   const add = (name, qty, unit, hint) => out.push({ name, qty, unit, hint });
-  const w = new Set(calcWalls(c));
+  const w = new Set(works.walls);
   if (w.has('plaster')) {
     const plasterKg = tot.walls * (c.plasterMm || 0) * 0.9;
     if (plasterKg > 0) add('Штукатурка гипсовая (стены)', plasterKg, 'кг', `слой ${c.plasterMm} мм`);
   }
   if (w.has('putty')) add('Шпаклёвка финишная (стены, 2 слоя)', tot.walls * 1.2, 'кг', '');
-  const ce = new Set(calcCeils(c));
+  const ce = new Set(works.ceils);
   if (ce.has('drywall')) add('Гипсокартон (потолок)', tot.ceiling * res, 'м²', `с запасом ${c.reserve} %; профиль и подвесы не считаются`);
   if (ce.has('plaster')) {
     const kg = tot.ceiling * (c.plasterMm || 0) * 0.9;
     if (kg > 0) add('Штукатурка гипсовая (потолок)', kg, 'кг', `слой ${c.plasterMm} мм`);
   }
   if (ce.has('putty')) add('Шпаклёвка финишная (потолок, 2 слоя)', tot.ceiling * 1.2, 'кг', '');
-  const fl = new Set(calcFloors(c));
+  const fl = new Set(works.floors);
   if (fl.has('screed')) {
     const kg = tot.floor * (c.screedMm || 0) * 2;
     if (kg > 0) add('Стяжка, пескобетон / ЦПС', kg, 'кг', `слой ${c.screedMm} мм`);
   }
   if (fl.has('waterproof')) {
     const wa = tot.floor + (tot.perimeter || 0) * 0.2;
-    add('Гидроизоляция обмазочная (2 слоя)', wa * 2, 'кг', `пол + заход на стены 20 см: ${(Math.round(wa * 10) / 10).toString().replace('.', ',')} м²`);
+    add('Гидроизоляция обмазочная (2 слоя)', wa * 2, 'кг', 'пол + заход на стены 20 см');
   }
   if (fl.has('level')) {
     const kg = tot.floor * (c.levelMm || 0) * 1.5;
@@ -401,12 +422,14 @@ function materials(tot, c) {
 
 // поле со свёрнутым списком галочек: в поле — выбранное через запятую или «Не трогаем»
 let calcOpen = null; // какой список раскрыт — переживает перерисовку после галочки
-function checkField(key, title, works, sel, none) {
+let calcRoomSel = null; // помещение, выбранное в «Что делаем»
+function checkField(roomId, kind, title, works, sel, none) {
+  const key = `${roomId}:${kind}`;
   const names = works.filter(([v]) => sel.includes(v)).map(([, t], i) => i ? t.toLowerCase() : t);
   const open = calcOpen === key;
   return `<div class="calc-group ${open ? 'open' : ''}" data-group="${key}"><span>${title}</span>
     <button type="button" class="inp calc-field ${names.length ? '' : 'none'}" data-toggle="${key}">${esc(names.join(', ') || none)}</button>
-    <div class="calc-checks ${open ? '' : 'hidden'}">${works.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-${key}="${v}" ${sel.includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
+    <div class="calc-checks ${open ? '' : 'hidden'}">${works.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-room="${roomId}" data-k="${kind}" value="${v}" ${sel.includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
   </div>`;
 }
 
@@ -420,6 +443,10 @@ async function viewCalc(pid) {
     return t;
   }, {});
   const f = (n, d = 1) => (Math.round(n * 10 ** d) / 10 ** d).toString().replace('.', ',');
+  const works = Object.fromEntries(rooms.map(r => [r.id, calcRoomWorks(c, r)]));
+  const any = (kind, v) => rooms.some(r => works[r.id][kind].includes(v));
+  const sel = rooms.find(r => r.id === calcRoomSel) || rooms[0];
+  if (sel) calcRoomSel = sel.id;
 
   app.innerHTML = `
     ${header('Площади и материалы', `#/p/${pid}/more`)}
@@ -440,12 +467,13 @@ async function viewCalc(pid) {
       <div class="card">
         <b>Что делаем</b>
         <div class="calc-form">
-          ${checkField('wall', 'Стены', WALL_WORKS, calcWalls(c), 'Не трогаем')}
-          ${checkField('floor', 'Пол', FLOOR_WORKS, calcFloors(c), 'Не трогаем')}
-          ${checkField('ceil', 'Потолок', CEIL_WORKS, calcCeils(c), 'Не трогаем (натяжной и т.п.)')}
-          <label class="${calcWalls(c).includes('plaster') || calcCeils(c).includes('plaster') ? '' : 'hidden'}">Слой штукатурки, мм <input class="inp" id="c-plaster" type="number" min="0" max="50" step="1" value="${c.plasterMm}"></label>
-          <label class="${calcFloors(c).includes('screed') ? '' : 'hidden'}">Толщина стяжки, мм <input class="inp" id="c-screed" type="number" min="0" max="150" step="5" value="${c.screedMm}"></label>
-          <label class="${calcFloors(c).includes('level') ? '' : 'hidden'}">Слой ровнителя, мм <input class="inp" id="c-level" type="number" min="0" max="50" step="1" value="${c.levelMm}"></label>
+          <label>Помещение <select class="inp" id="c-room">${rooms.map(r => `<option value="${r.id}" ${r.id === sel.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
+          ${checkField(sel.id, 'walls', 'Стены', WALL_WORKS, works[sel.id].walls, 'Не трогаем')}
+          ${checkField(sel.id, 'floors', 'Пол', FLOOR_WORKS, works[sel.id].floors, 'Не трогаем')}
+          ${checkField(sel.id, 'ceils', 'Потолок', CEIL_WORKS, works[sel.id].ceils, 'Не трогаем (натяжной и т.п.)')}
+          <label class="${any('walls', 'plaster') || any('ceils', 'plaster') ? '' : 'hidden'}">Слой штукатурки, мм <input class="inp" id="c-plaster" type="number" min="0" max="50" step="1" value="${c.plasterMm}"></label>
+          <label class="${any('floors', 'screed') ? '' : 'hidden'}">Толщина стяжки, мм <input class="inp" id="c-screed" type="number" min="0" max="150" step="5" value="${c.screedMm}"></label>
+          <label class="${any('floors', 'level') ? '' : 'hidden'}">Слой ровнителя, мм <input class="inp" id="c-level" type="number" min="0" max="50" step="1" value="${c.levelMm}"></label>
           <label>Запас на подрезку, % <input class="inp" id="c-reserve" type="number" min="0" max="30" step="1" value="${c.reserve}"></label>
         </div>
       </div>
@@ -453,21 +481,25 @@ async function viewCalc(pid) {
       <div class="card">
         <b>Ориентировочный расход</b>
         <ul class="mat-list">
-          ${materials(tot, c).map(m => `<li><span>${esc(m.name)}</span><b>${f(m.qty)} ${m.unit}</b>${m.hint ? `<div class="mut small">${esc(m.hint)}</div>` : ''}</li>`).join('')}
+          ${materials(areas, c).map(m => { const where = rooms.length > 1 && m.rooms.length < rooms.length ? m.rooms.join(', ') : ''; const sub = [where, m.hint].filter(Boolean).join(' · '); return `<li><span>${esc(m.name)}</span><b>${f(m.qty)} ${m.unit}</b>${sub ? `<div class="mut small">${esc(sub)}</div>` : ''}</li>`; }).join('')}
         </ul>
+        <button class="btn wide" id="c-pdf">${I('download')}PDF: работы и материалы</button>
         <p class="mut small">Нормы усреднённые (гипсовая штукатурка 9 кг/м² на 10 мм, шпаклёвка 1,2 кг/м², краска 0,25 л/м² в два слоя, стяжка 2 кг/м² на 1 мм, ровнитель 1,5 кг/м² на 1 мм, гидроизоляция 1 кг/м² на слой). Для закупки уточняйте по упаковке конкретного материала.</p>
       </div>`}
     </div>`;
 
   if (!rooms.length) return;
   const saveCalc = async () => {
+    const roomsCalc = { ...(c.rooms || {}) };
+    const got = kind => [...app.querySelectorAll(`[data-room="${sel.id}"][data-k="${kind}"]`)].filter(x => x.checked).map(x => x.value);
+    roomsCalc[sel.id] = { walls: got('walls'), floors: got('floors'), ceils: got('ceils') };
     project.calc = {
-      walls: [...app.querySelectorAll('[data-wall]')].filter(x => x.checked).map(x => x.dataset.wall), floors: [...app.querySelectorAll('[data-floor]')].filter(x => x.checked).map(x => x.dataset.floor), ceils: [...app.querySelectorAll('[data-ceil]')].filter(x => x.checked).map(x => x.dataset.ceil),
+      walls: calcWalls(c), floors: calcFloors(c), ceils: calcCeils(c), rooms: roomsCalc,
       plasterMm: +$('#c-plaster').value || 0, screedMm: +$('#c-screed').value || 0, levelMm: +$('#c-level').value || 0, reserve: +$('#c-reserve').value || 0,
     };
     await dbPut('projects', project); render();
   };
-  app.querySelectorAll('[data-wall], [data-floor], [data-ceil]').forEach(x => { x.onchange = saveCalc; });
+  app.querySelectorAll('[data-room][data-k]').forEach(x => { x.onchange = saveCalc; });
   const groups = [...app.querySelectorAll('[data-group]')];
   const showOpen = () => groups.forEach(g => { const o = g.dataset.group === calcOpen; g.classList.toggle('open', o); g.querySelector('.calc-checks').classList.toggle('hidden', !o); });
   app.querySelectorAll('[data-toggle]').forEach(b => { b.onclick = () => { calcOpen = calcOpen === b.dataset.toggle ? null : b.dataset.toggle; showOpen(); }; });
@@ -476,6 +508,50 @@ async function viewCalc(pid) {
     if (calcOpen && !e.target.closest('[data-group]')) { calcOpen = null; showOpen(); }
   });
   ['#c-plaster', '#c-screed', '#c-level', '#c-reserve'].forEach(s => { $(s).onchange = saveCalc; });
+  $('#c-room').onchange = e => { calcRoomSel = e.target.value; calcOpen = null; render(); };
+  $('#c-pdf').onclick = () => calcPdf(project, areas, c);
+}
+
+// PDF «Работы и материалы»: работы по помещениям с площадями + общий расход
+function calcReportHtml(project, areas, c) {
+  const f = (n, d = 1) => (Math.round(n * 10 ** d) / 10 ** d).toString().replace('.', ',');
+  const list = (works, sel) => works.filter(([v]) => sel.includes(v)).map(([, t]) => t.toLowerCase()).join(', ') || '—';
+  const many = areas.length > 1;
+  const rows = areas.map(({ r, a }) => { const w = calcRoomWorks(c, r); return `<tr><td><b>${esc(r.name)}</b></td>
+    <td>${f(a.walls)} м²<br>${esc(list(WALL_WORKS, w.walls))}</td>
+    <td>${f(a.floor)} м²<br>${esc(list(FLOOR_WORKS, w.floors))}</td>
+    <td>${f(a.ceiling)} м²<br>${esc(list(CEIL_WORKS, w.ceils))}</td></tr>`; }).join('');
+  const mats = materials(areas, c).map(m => { const where = many && m.rooms.length < areas.length ? m.rooms.join(', ') : 'все'; return `<tr><td>${esc(m.name)}${m.hint ? `<br><small>${esc(m.hint)}</small>` : ''}</td><td class="n">${f(m.qty)} ${m.unit}</td>${many ? `<td>${esc(where)}</td>` : ''}</tr>`; }).join('');
+  const date = new Date().toLocaleDateString('ru-RU');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(project.name)} — работы и материалы</title><style>
+    body{font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:11pt;color:#222;margin:0}
+    h1{font-size:16pt;margin:0 0 2pt}h2{font-size:13pt;margin:16pt 0 6pt}.sub{color:#666;font-size:10pt;margin:0}
+    table{width:100%;border-collapse:collapse}th,td{border:0.5pt solid #bbb;padding:4pt 6pt;text-align:left;vertical-align:top}
+    th{background:#f1f1f1;font-weight:600}td.n{text-align:right;white-space:nowrap}small{color:#666}.note{color:#666;font-size:9pt;margin-top:8pt}
+  </style></head><body>
+    <h1>${esc(project.name)}: работы и материалы</h1><p class="sub">Fixpoint · ${date}</p>
+    <h2>Работы по помещениям</h2>
+    <table><tr><th>Помещение</th><th>Стены</th><th>Пол</th><th>Потолок</th></tr>${rows}</table>
+    <p class="note">Площадь стен — за вычетом проёмов.${c.plasterMm && areas.some(({ r }) => { const w = calcRoomWorks(c, r); return w.walls.includes('plaster') || w.ceils.includes('plaster'); }) ? ` Слой штукатурки ${c.plasterMm} мм.` : ''} Запас на подрезку ${c.reserve} %.</p>
+    <h2>Ориентировочный расход</h2>
+    <table><tr><th>Материал</th><th>Количество</th>${many ? '<th>Где</th>' : ''}</tr>${mats || `<tr><td colspan="${many ? 3 : 2}">Работы не выбраны</td></tr>`}</table>
+    <p class="note">Нормы усреднённые: гипсовая штукатурка 9 кг/м² на 10 мм, шпаклёвка 1,2 кг/м², краска 0,25 л/м² в два слоя, стяжка 2 кг/м² на 1 мм, ровнитель 1,5 кг/м² на 1 мм, гидроизоляция 1 кг/м² на слой. Для закупки уточняйте по упаковке конкретного материала.</p>
+  </body></html>`;
+}
+
+async function calcPdf(project, areas, c) {
+  const html = calcReportHtml(project, areas, c);
+  const name = `${project.name || 'Объект'} — работы и материалы`;
+  if (Native.RP && Native.RP.htmlPdf) {
+    try { await Native.RP.htmlPdf({ html, name }); return; }
+    catch (err) { if (!/not implemented|не реализ|UNIMPLEMENTED/i.test(String(err && (err.code || err.message)))) { alert('PDF не получился: ' + (err.message || err)); return; } }
+  }
+  // браузер (или старая сборка без метода): печать скрытой страницы → «Сохранить как PDF»
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;width:0;height:0;border:0;right:0;bottom:0';
+  document.body.appendChild(fr);
+  fr.srcdoc = html;
+  fr.onload = () => { fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(() => fr.remove(), 60000); };
 }
 
 /* ---------- призрачная камера ---------- */
