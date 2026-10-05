@@ -282,7 +282,14 @@ async function viewVerify(pid) {
 
 /* ---------- калькулятор площадей и материалов ---------- */
 
-const CALC_DEFAULTS = { wall: 'paint', floor: 'laminate', ceil: 'paint', plasterMm: 10, reserve: 10 };
+const CALC_DEFAULTS = { floor: 'laminate', ceil: 'paint', plasterMm: 10, reserve: 10 };
+// работы по стенам — галочками, в порядке выполнения
+const WALL_WORKS = [['primer', 'Грунтовка'], ['plaster', 'Штукатурка'], ['putty', 'Шпаклёвка'], ['paint', 'Краска'], ['glass', 'Стеклохолст'], ['wallpaper', 'Обои'], ['tile', 'Плитка']];
+// старый формат c.wall (один вариант из списка) → набор галочек
+function calcWalls(c) {
+  if (Array.isArray(c.walls)) return c.walls;
+  return ({ paint: ['primer', 'plaster', 'putty', 'paint'], wallpaper: ['primer', 'plaster', 'putty', 'wallpaper'], tile: ['primer', 'tile'], none: [] })[c.wall] || ['primer', 'plaster', 'putty', 'paint'];
+}
 
 function roomAreas(r) {
   const ceil = roomCeil(r);
@@ -310,18 +317,20 @@ function materials(tot, c) {
   const res = 1 + (c.reserve || 0) / 100;
   const out = [];
   const add = (name, qty, unit, hint) => out.push({ name, qty, unit, hint });
-  if (c.wall !== 'none' && c.wall !== 'tile') {
+  const w = new Set(calcWalls(c));
+  if (w.has('plaster')) {
     const plasterKg = tot.walls * (c.plasterMm || 0) * 0.9;
     if (plasterKg > 0) add('Штукатурка гипсовая (стены)', plasterKg, 'кг', `${Math.ceil(plasterKg / 30)} мешков по 30 кг, слой ${c.plasterMm} мм`);
-    add('Шпаклёвка финишная (стены, 2 слоя)', tot.walls * 1.2, 'кг', `${Math.ceil(tot.walls * 1.2 / 20)} мешков по 20 кг`);
   }
+  if (w.has('putty')) add('Шпаклёвка финишная (стены, 2 слоя)', tot.walls * 1.2, 'кг', `${Math.ceil(tot.walls * 1.2 / 20)} мешков по 20 кг`);
   if (c.ceil === 'paint') add('Шпаклёвка финишная (потолок, 2 слоя)', tot.ceiling * 1.2, 'кг', '');
-  const primed = (c.wall !== 'none' ? tot.walls : 0) + (c.ceil === 'paint' ? tot.ceiling : 0) + (c.floor === 'tile' ? tot.floor : 0);
+  const primed = (w.has('primer') ? tot.walls : 0) + (c.ceil === 'paint' ? tot.ceiling : 0) + (c.floor === 'tile' ? tot.floor : 0);
   if (primed > 0) add('Грунтовка (2 слоя)', primed * 0.2, 'л', '');
-  if (c.wall === 'paint') add('Краска для стен (2 слоя)', tot.walls * 0.25, 'л', `${Math.ceil(tot.walls * 0.25 / 2.5)} банок по 2,5 л`);
+  if (w.has('glass')) add('Стеклохолст', tot.walls * res, 'м²', `${Math.ceil(tot.walls * res / 50)} рул. по 50 м², с запасом ${c.reserve} %`);
+  if (w.has('paint')) add('Краска для стен (2 слоя)', tot.walls * 0.25, 'л', `${Math.ceil(tot.walls * 0.25 / 2.5)} банок по 2,5 л`);
   if (c.ceil === 'paint') add('Краска для потолка (2 слоя)', tot.ceiling * 0.25, 'л', '');
-  if (c.wall === 'wallpaper') add('Обои', Math.ceil(tot.walls / 5.3 * 1.15), 'рул.', 'рулон 0,53 × 10 м, +15 % на подгонку рисунка');
-  if (c.wall === 'tile') add('Плитка на стены', tot.walls * res, 'м²', `с запасом ${c.reserve} %`);
+  if (w.has('wallpaper')) add('Обои', Math.ceil(tot.walls / 5.3 * 1.15), 'рул.', 'рулон 0,53 × 10 м, +15 % на подгонку рисунка');
+  if (w.has('tile')) add('Плитка на стены', tot.walls * res, 'м²', `с запасом ${c.reserve} %`);
   if (c.floor === 'laminate') add('Ламинат / кварцвинил', tot.floor * res, 'м²', `с запасом ${c.reserve} %`);
   if (c.floor === 'tile') add('Плитка на пол', tot.floor * res, 'м²', `с запасом ${c.reserve} %`);
   if (c.floor !== 'none') add('Плинтус', tot.plinth * 1.05, 'пог. м', 'периметр минус дверные проёмы, +5 %');
@@ -359,10 +368,12 @@ async function viewCalc(pid) {
       <div class="card">
         <b>Что делаем</b>
         <div class="calc-form">
-          <label>Стены ${sel('c-wall', [['paint', 'Штукатурка + шпаклёвка + краска'], ['wallpaper', 'Штукатурка + шпаклёвка + обои'], ['tile', 'Плитка'], ['none', 'Не трогаем']], c.wall)}</label>
+          <div class="calc-group"><span>Стены</span>
+            <div class="calc-checks">${WALL_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-wall="${v}" ${calcWalls(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
+          </div>
           <label>Пол ${sel('c-floor', [['laminate', 'Ламинат / кварцвинил'], ['tile', 'Плитка'], ['none', 'Не трогаем']], c.floor)}</label>
           <label>Потолок ${sel('c-ceil', [['paint', 'Шпаклёвка + краска'], ['none', 'Не трогаем (натяжной и т.п.)']], c.ceil)}</label>
-          <label>Слой штукатурки, мм <input class="inp" id="c-plaster" type="number" min="0" max="50" step="1" value="${c.plasterMm}"></label>
+          <label class="${calcWalls(c).includes('plaster') ? '' : 'hidden'}">Слой штукатурки, мм <input class="inp" id="c-plaster" type="number" min="0" max="50" step="1" value="${c.plasterMm}"></label>
           <label>Запас на подрезку, % <input class="inp" id="c-reserve" type="number" min="0" max="30" step="1" value="${c.reserve}"></label>
         </div>
       </div>
@@ -379,12 +390,13 @@ async function viewCalc(pid) {
   if (!rooms.length) return;
   const saveCalc = async () => {
     project.calc = {
-      wall: $('#c-wall').value, floor: $('#c-floor').value, ceil: $('#c-ceil').value,
+      walls: [...app.querySelectorAll('[data-wall]')].filter(x => x.checked).map(x => x.dataset.wall), floor: $('#c-floor').value, ceil: $('#c-ceil').value,
       plasterMm: +$('#c-plaster').value || 0, reserve: +$('#c-reserve').value || 0,
     };
     await dbPut('projects', project); render();
   };
-  ['#c-wall', '#c-floor', '#c-ceil', '#c-plaster', '#c-reserve'].forEach(s => { $(s).onchange = saveCalc; });
+  app.querySelectorAll('[data-wall]').forEach(x => { x.onchange = saveCalc; });
+  ['#c-floor', '#c-ceil', '#c-plaster', '#c-reserve'].forEach(s => { $(s).onchange = saveCalc; });
 }
 
 /* ---------- призрачная камера ---------- */

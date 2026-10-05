@@ -465,6 +465,11 @@ body {
 .calc-form { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .calc-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--mut); }
 .calc-form .inp { color: var(--ink); font-size: 15px; }
+.calc-group > span { font-size: 13px; color: var(--mut); }
+.calc-checks { display: flex; flex-direction: column; margin-top: 4px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.calc-form label.calc-check { flex-direction: row; align-items: center; gap: 10px; padding: 10px 12px; font-size: 15px; color: var(--ink); border-top: 1px solid var(--line); cursor: pointer; }
+.calc-check:first-child { border-top: none; }
+.calc-check input { width: 20px; height: 20px; margin: 0; accent-color: var(--acc); }
 .mat-list { list-style: none; padding: 0; margin-top: 8px; }
 .mat-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .mat-list li:last-child { border-bottom: none; }
