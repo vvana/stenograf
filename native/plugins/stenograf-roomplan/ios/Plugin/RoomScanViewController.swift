@@ -149,13 +149,13 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
         if mode == "ghost" { setupGhost(bar: bar) }
         if hd { hdCapture = HDCapture() }
-        if mode == "final" { setupCoverage() }
+        if mode == "final" || wantSurfaces { setupCoverage() }
     }
 
     // MARK: покрытие
 
     private func setupCoverage() {
-        let model = CoverageModel(need: hd ? 2 : 1)
+        let model = CoverageModel(need: hd ? 2 : 1)   // обход этапа: 1 кадр на клетку
         coverage = model
         let ov = CoverageOverlayView(frame: view.bounds)
         ov.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -238,9 +238,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func initialHint() -> String {
         switch mode {
-        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен — кадры снимутся сами. Наклоните телефон к полу и к потолку"
+        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Красное — ещё не снято, зелёное — готово"
         case "multi": return wantFrames
-            ? "Обход квартиры: пройдите комнату вдоль стен, наклоните телефон к полу и к потолку, затем «Следующая» — и в другую комнату"
+            ? "Обход квартиры: пройдите комнату вдоль стен, наклоняя телефон к полу и потолку, пока всё не станет зелёным, затем «Следующая» — и в другую комнату"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Завершить»"
         case "final": return hd
             ? "HD-скан: идите медленно и замирайте — кадр снимается, когда телефон неподвижен. Красное — ещё не снято, жёлтое — мало кадров, зелёное — готово"
@@ -665,6 +665,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
               let rgba = rgbaBytes(of: cg, width: targetW, height: targetH) else { return }
         let k = Float(targetW) / Float(res.width)
         let K = cam.intrinsics
+        coverage?.add(CovView(inv: T.inverse, fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
+                              w: Float(targetW), h: Float(targetH), pos: pos, target: .planes))
         surfFrames.append(KeyFrame(transformInv: T.inverse,
                                    fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
                                    w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd))
@@ -778,6 +780,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         list.sort { $0.score > $1.score }
         if list.count > 2 { list = Array(list.prefix(2)) }
         frames[wall.identifier] = list
+        let K0 = cam.intrinsics
+        coverage?.add(CovView(inv: viewM, fx: K0.columns.0.x, fy: K0.columns.1.y, cx: K0.columns.2.x, cy: K0.columns.2.y,
+                              w: Float(res.width), h: Float(res.height), pos: camPos, target: .wall(wall.identifier.uuidString)))
         let n = frames.values.reduce(0) { $0 + $1.count }
         statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
     }

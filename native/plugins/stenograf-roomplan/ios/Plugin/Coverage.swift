@@ -7,11 +7,20 @@ import simd
 /// Поверхности режутся на клетки ~40 см; клетка «снята», если её центр виден в кадре (в поле зрения, 0,3–5 м,
 /// не по касательной). Перекрытия предметами не учитываются — это подсказка, а не точный расчёт.
 
+/// Какие поверхности засчитывает кадр. В обходе этапа стена «снята» только кадром, который станет её фото,
+/// а пол и потолок — кадрами, из которых собирается их снимок.
+enum CovTarget {
+    case any
+    case planes              // только пол и потолок
+    case wall(String)        // только эта стена (uuid)
+}
+
 struct CovView {
     let inv: simd_float4x4          // мир → камера
     let fx: Float, fy: Float, cx: Float, cy: Float
     let w: Float, h: Float
     let pos: simd_float3
+    var target: CovTarget = .any
 }
 
 struct CovCell {
@@ -121,6 +130,11 @@ func coverageCounts(_ s: CovSurface, views: [CovView]) -> [Int] {
     for (i, cell) in s.cells.enumerated() {
         var n = 0
         for v in views {
+            switch v.target {
+            case .any: break
+            case .planes: if s.isWall { continue }
+            case .wall(let id): if !s.isWall || !s.key.contains(id) { continue }
+            }
             let d: simd_float3 = v.pos - cell.center
             let dist = simd_length(d)
             if dist < 0.3 || dist > 5 { continue }
