@@ -418,6 +418,37 @@ async function framesToPhotos(pid, roomId, stageId, frames, idMap, place = null)
   return { photos: n, walls: Object.keys(byWall).length };
 }
 
+/* ---------- автопанорама обхода → фото «Панорама 360°» комнаты на этапе ---------- */
+
+// Swift отдаёт панораму в осях AR-сессии (столбец ↔ азимут мира); на схеме комната повёрнута на turn —
+// сдвигаем столбцы, чтобы в 3D панорама смотрела туда же, куда режим «Внутри»
+async function panoToPlan(jpegB64, turn) {
+  const blob = await (await fetch('data:image/jpeg;base64,' + jpegB64)).blob();
+  if (!turn) return blob;
+  const bmp = await createImageBitmap(blob);
+  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+  const g = c.getContext('2d');
+  const sx = Math.round((((turn / (2 * Math.PI)) % 1) + 1) % 1 * bmp.width);
+  g.drawImage(bmp, sx, 0); g.drawImage(bmp, sx - bmp.width, 0);
+  bmp.close();
+  return await new Promise(r => c.toBlob(r, 'image/jpeg', 0.88));
+}
+// place(walls) → { roomId, turn } или null; прежняя автопанорама этой комнаты на этом этапе заменяется
+async function savePanos(pid, stageId, panos, place) {
+  let n = 0;
+  for (const pz of panos || []) {
+    const at = place(pz.walls || []);
+    if (!at || !pz.jpeg) continue;
+    const wallKey = `${at.roomId}:p`;
+    for (const old of await dbAll('photos', 'wallKey', wallKey)) if (old.projectId === pid && old.stageId === stageId && old.source === 'lidar-pano') await dbDel('photos', old.id);
+    const rec = { id: uid(), projectId: pid, wallKey, stageId, blob: await panoToPlan(pz.jpeg, at.turn || 0), note: '', created: Date.now(), by: userName(true), marks: [], source: 'lidar-pano' };
+    await sealPhoto(rec, { source: 'lidar' });
+    await dbPut('photos', rec);
+    n++;
+  }
+  return n;
+}
+
 /* ---------- зеркала, найденные лидаром: предложить пользователю ---------- */
 
 async function proposeMirrors(room, scan, res, idMap) {
@@ -594,6 +625,10 @@ async function lidarApartment(pid, rooms, stageId) {
       const r = await framesToPhotos(pid, roomId, stageId, list, idMap, wallMap[list[0].wall].place);
       photos += r.photos;
     }
+    photos += await savePanos(pid, stageId, scan.panos, walls => {
+      const m = walls.map(w => wallMap[w]).find(Boolean);
+      return m ? { roomId: m.roomId, turn: (m.place && m.place.turn) || 0 } : null;
+    });
   }
   toast(`Квартира: ${results.length} комн.${photos ? `, ${photos} фото` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
   return results;
@@ -643,7 +678,8 @@ async function lidarWalk(pid, room, stageId) {
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
   const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap, toPlan ? { toPlan, turn, floorY: scan.floorY } : null);
+  r.panos = await savePanos(pid, stageId, scan.panos, () => ({ roomId: room.id, turn: turn || 0 }));
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;
-  toast(`Обход: ${r.photos} фото на ${r.walls} стен${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
+  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.panos ? ' + панорама' : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
   return r;
 }
