@@ -48,12 +48,6 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var lastKeyPos: simd_float3?
     private var lastKeyFwd: simd_float3?
     private var meshAnchors: [ARMeshAnchor] = []
-    // автопанорама обхода: кадры со всех сторон (уменьшенные, с позой камеры)
-    private var panoFrames: [KeyFrame] = []
-    private var lastPanoPos: simd_float3?
-    private var lastPanoFwd: simd_float3?
-    private var prevPanoT: simd_float4x4?
-    private var wantPano: Bool { wantFrames && (mode == "walk" || mode == "multi") }
     private let hd: Bool                              // HD-скан: полные кадры + позы для обучения на компьютере
     private var hdCapture: HDCapture?
 
@@ -238,7 +232,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func initialHint() -> String {
         switch mode {
-        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен — кадры снимутся сами. В середине комнаты повернитесь на месте — соберётся панорама"
+        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен — кадры снимутся сами"
         case "multi": return wantFrames
             ? "Обход квартиры: пройдите комнату вдоль стен, затем «Следующая» и переходите в другую"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Завершить»"
@@ -405,12 +399,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         dict["mirrors"] = mirrors
         if let usdz = exportUSDZ({ try room.export(to: $0) }) { dict["usdz"] = usdz }
         sharedSession?.pause()
-        let base = dict
-        Task { @MainActor in
-            var out = base
-            await self.addPanoramas(to: &out, rooms: [room])
-            self.dismiss(animated: true) { self.completion(.success(out)) }
-        }
+        dismiss(animated: true) { self.completion(.success(dict)) }
     }
 
     private func finishStructure() {
@@ -436,7 +425,6 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             var dict = self.buildResult(rooms: finalRooms)
             if let usdz = usdz { dict["usdz"] = usdz }
             dict["mirrors"] = self.detectMirrors(rooms: finalRooms)
-            await self.addPanoramas(to: &dict, rooms: finalRooms)
             if wantMesh {
                 let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
                 let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in
@@ -634,52 +622,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
         }
         if coverage != nil { refreshCoverageMap() }
-        if wantPano { pollPanoFrame(frame: frame) }
         if wantFrames { pollWallFrame(frame: frame) }
-    }
-
-    /// Кадр для панорамы: телефон неподвижен (не смазано) и смотрит в новую сторону (≥ 14°) или сдвинулся (≥ 0,5 м).
-    private func pollPanoFrame(frame: ARFrame) {
-        let cam = frame.camera
-        guard cam.trackingState == .normal, panoFrames.count < 160 else { return }
-        let T = cam.transform
-        let pos = xyz(T.columns.3)
-        let fwd = simd_normalize(-xyz(T.columns.2))
-        defer { prevPanoT = T }
-        guard let prev = prevPanoT else { return }
-        let jitter = simd_length(pos - xyz(prev.columns.3))
-        let spin = acos(max(-1, min(1, simd_dot(fwd, simd_normalize(-xyz(prev.columns.2))))))
-        if jitter > 0.05 || spin > 0.06 { return }
-        if let lp = lastPanoPos, let lf = lastPanoFwd {
-            let moved = simd_length(pos - lp)
-            let turned = acos(max(-1, min(1, simd_dot(fwd, lf))))
-            if moved < 0.5 && turned < 0.25 { return }
-        }
-        // не дублируем направление, уже снятое рядом
-        for kf in panoFrames where simd_length(kf.pos - pos) < 0.5 && simd_dot(kf.fwd, fwd) > 0.97 { return }
-        let res = cam.imageResolution
-        let targetW = 480
-        let targetH = Int(Double(targetW) * Double(res.height) / Double(res.width))
-        let ci = CIImage(cvPixelBuffer: frame.capturedImage)
-        guard let cg = ciContext.createCGImage(ci, from: ci.extent),
-              let rgba = rgbaBytes(of: cg, width: targetW, height: targetH) else { return }
-        let k = Float(targetW) / Float(res.width)
-        let K = cam.intrinsics
-        panoFrames.append(KeyFrame(transformInv: T.inverse,
-                                   fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
-                                   w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd))
-        lastPanoPos = pos; lastPanoFwd = fwd
-    }
-
-    /// Панорамы по комнатам в фоне (секунда-две на комнату).
-    private func addPanoramas(to dict: inout [String: Any], rooms: [CapturedRoom]) async {
-        guard wantPano, !panoFrames.isEmpty else { return }
-        statusLabel.text = "Собираю панораму…"
-        let input = PanoInput(rooms: panoRooms(rooms, frames: panoFrames), frames: panoFrames)
-        let panos = await Task.detached(priority: .userInitiated) { () -> [[String: Any]] in
-            return buildPanoramas(input)
-        }.value
-        if !panos.isEmpty { dict["panos"] = panos }
     }
 
     /// Лучшая стена в кадре: (стена, score) — камера смотрит на неё не вскользь, точка взгляда внутри стены.
