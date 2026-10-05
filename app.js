@@ -454,6 +454,41 @@ function normalizeRoom(r) {
 }
 function newWallId() { return 'k' + uid().replace(/-/g, '').slice(0, 6); }
 
+const WALL_DIM_FS = 0.2; // размер подписей на схеме (длины стен, радиусы) — один для всех стен
+const NUM_OFF = 0.17;     // номер стены — вплотную к стене изнутри
+const DIM_OFF = 0.23;     // подпись размера — вплотную к стене (от оси стены до центра текста, м)
+// разнести подписи размеров и номера стен, если они наезжают: каждая едет вдоль своей стены (не дальше её концов) в сторону от соседки,
+// а если ехать некуда — отходит от стены. Рамка подписи — по оценке ширины текста.
+function layoutDims(list) {
+  const pad = 0.05;
+  for (const d of list) {
+    const fs = d.fs || WALL_DIM_FS;
+    const w = d.txt.length * fs * 0.56 + pad, h = fs + pad;
+    const a = d.deg * Math.PI / 180, c = Math.abs(Math.cos(a)), sn = Math.abs(Math.sin(a));
+    d.hw = (c * w + sn * h) / 2; d.hh = (sn * w + c * h) / 2;
+    d.x0 = d.x; d.y0 = d.y; d.t = 0; d.o = 0;
+  }
+  for (let it = 0; it < 40; it++) {
+    let moved = false;
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const A = list[i], B = list[j];
+      const ox = A.hw + B.hw - Math.abs(A.x - B.x), oy = A.hh + B.hh - Math.abs(A.y - B.y);
+      if (ox <= 0 || oy <= 0) continue;
+      if (A.fixed && B.fixed) continue;
+      moved = true;
+      for (const [P, Q] of [[A, B], [B, A]]) {
+        if (P.fixed) continue;
+        const along = (P.x - Q.x) * P.ux + (P.y - Q.y) * P.uy;
+        const dir = along >= 0 ? 1 : -1, step = 0.03;
+        const nt = P.t + dir * step;
+        if (Math.abs(nt) <= P.slide) P.t = nt; else P.o += step / 2;   // по стене некуда — отходим от неё
+        P.x = P.x0 + P.ux * P.t + P.nx * P.o; P.y = P.y0 + P.uy * P.t + P.ny * P.o;
+      }
+    }
+    if (!moved) break;
+  }
+  return list;
+}
 function roomBBox(r) {
   const xs = r.pts.map(p => p[0]), ys = r.pts.map(p => p[1]);
   const x = Math.min(...xs), y = Math.min(...ys);
@@ -918,6 +953,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       for (let gy = Math.ceil(vb.y); gy <= vb.y + vb.h; gy++) s += `<line x1="${vb.x}" y1="${gy}" x2="${vb.x + vb.w}" y2="${gy}"/>`;
       s += '</g>';
     }
+    const dims = []; // размеры стен — отдельным слоем поверх всех комнат, чтобы соседняя комната их не закрывала
+    // точка внутри другой комнаты или вплотную к ней (зазор между комнатами меньше отступа подписи)
+    const nearOther = (r, x, y) => rooms.some(o => o !== r && (pointInPoly([x, y], o.pts) || roomEdges(o).some(e => {
+      const t = Math.max(0, Math.min(e.len, (x - e.a[0]) * e.ux + (y - e.a[1]) * e.uy));
+      return Math.hypot(x - e.a[0] - e.ux * t, y - e.a[1] - e.uy * t) < 0.18;
+    })));
     for (const r of rooms) {
       const sel = planState.selected === r.id;
       const [cx, cy] = roomCenter(r);
@@ -925,19 +966,24 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const path = roomPath(r);
       const edges = roomEdges(r);
       const showNums = !isStandardRoom(r);
+      // название уменьшается в узкой комнате, чтобы по краям оставалось место для размеров стен
+      const nameFs = Math.max(0.2, Math.min(0.42, (bb.w - 0.9) / (0.56 * Math.max(1, r.name.length))));
+      // название и высота — неподвижные препятствия для подписей стен
+      dims.push({ cls: 'obstacle', fixed: true, fs: nameFs, x: cx, y: cy, deg: 0, txt: r.name, ux: 0, uy: 0, nx: 0, ny: 0, slide: 0 });
+      dims.push({ cls: 'obstacle', fixed: true, fs: Math.min(0.26, nameFs), x: cx, y: cy + nameFs, deg: 0, txt: roomHeightText(r).replace(/<[^>]*>/g, ''), ux: 0, uy: 0, nx: 0, ny: 0, slide: 0 });
       s += `<g>
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
-        <text class="room-label" x="${cx}" y="${cy}">${esc(r.name)}</text>
-        <text class="room-label room-h" x="${cx}" y="${cy + 0.42}">${roomHeightText(r)}</text>`;
+        <text class="room-label" style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>
+        <text class="room-label room-h" style="font-size:${Math.min(0.26, nameFs).toFixed(3)}px" x="${cx}" y="${cy + nameFs}">${roomHeightText(r)}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
         if (!planState.edit) {
           s += `<line class="wall-hit" data-wall="${key}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
           if (showNums) {
-            s += `<text class="wall-num" x="${e.mid[0] + e.nx * 0.22}" y="${e.mid[1] + e.ny * 0.22}">${e.i + 1}</text>`;
+            dims.push({ cls: 'wall-num', fs: 0.17, x: e.mid[0] + e.nx * NUM_OFF, y: e.mid[1] + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1) });
           }
           if (cnt > 0 && !shots.length) { // в режиме точек съёмки счётчики не мешают конусам
             const off = showNums ? 0.6 : 0.45;
@@ -981,15 +1027,17 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         if (e.len < 0.25) continue;
         let deg = Math.atan2(e.uy, e.ux) * 180 / Math.PI;
         if (deg > 90.5) deg -= 180; else if (deg <= -89.5) deg += 180;
-        const x = e.mid[0] - e.nx * 0.3, y = e.mid[1] - e.ny * 0.3;
+        let x = e.mid[0] - e.nx * DIM_OFF, y = e.mid[1] - e.ny * DIM_OFF;
+        // снаружи вплотную соседняя комната — подпись внутрь своей (глубже номера стены, если он есть)
+        let out = -1; // -1 — снаружи комнаты, +1 — внутри
+        if (nearOther(r, x, y)) { const d = showNums ? 0.38 : DIM_OFF; x = e.mid[0] + e.nx * d; y = e.mid[1] + e.ny * d; out = 1; }
         let txt = fmtM(e.len);
         if (r.wallTop && r.wallTop[e.id]) {
           const hs = wallTop(r, e.id).map(q => q[1]);
           const h0 = hs[0], h1 = hs[hs.length - 1], lo = Math.min(...hs), hi = Math.max(...hs);
           txt += hi - lo < 0.015 ? ` · h ${fmtM(hi)}` : (Math.abs(Math.min(h0, h1) - lo) < 0.005 && Math.abs(Math.max(h0, h1) - hi) < 0.005 && !hs.some((h, k) => k && Math.abs(h - hs[k - 1]) > 0.005 && Math.abs(wallTop(r, e.id)[k][0] - wallTop(r, e.id)[k - 1][0]) < 1e-3) ? ` · h ${fmtM(h0)}→${fmtM(h1)}` : ` · h ${fmtM(lo)}–${fmtM(hi)}`);
         }
-        const fs = Math.min(0.26, Math.max(0.14, e.len * 0.12));
-        s += `<text class="wall-dim" style="font-size:${fs}px" transform="translate(${x} ${y}) rotate(${deg})">${txt}</text>`;
+        dims.push({ x, y, deg, txt, ux: e.ux, uy: e.uy, nx: e.nx * out, ny: e.ny * out, slide: Math.max(0, e.len / 2 - 0.12) });
       }
       // радиусы скруглённых углов
       r.pts.forEach((V, i) => {
@@ -999,7 +1047,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         let bx = (P[0] - V[0]) / lp + (N[0] - V[0]) / ln, by = (P[1] - V[1]) / lp + (N[1] - V[1]) / ln;
         const bl = Math.hypot(bx, by) || 1; bx /= bl; by /= bl;
         const d = V[2] * 0.42 + 0.4;
-        s += `<text class="wall-dim" style="font-size:0.2px" x="${V[0] + bx * d}" y="${V[1] + by * d}">R ${fmtM(V[2])}</text>`;
+        dims.push({ x: V[0] + bx * d, y: V[1] + by * d, deg: 0, txt: `R ${fmtM(V[2])}`, ux: 0, uy: 0, nx: bx, ny: by, slide: 0 });
       });
       if (!planState.edit) {
         // пол и потолок — в меню по тапу внутри комнаты; здесь только счётчик, если фото уже есть
@@ -1024,6 +1072,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       }
       s += '</g>';
     }
+    s += layoutDims(dims).filter(d => d.cls !== 'obstacle').map(d => d.cls === 'wall-num'
+      ? `<text class="wall-num" x="${d.x.toFixed(3)}" y="${d.y.toFixed(3)}">${d.txt}</text>`
+      : `<text class="wall-dim" style="font-size:${WALL_DIM_FS}px" transform="translate(${d.x.toFixed(3)} ${d.y.toFixed(3)}) rotate(${d.deg})">${d.txt}</text>`).join('');
     // точки съёмки: камера и конус обзора (≈60°) в сторону снятой стены
     if (!planState.edit) {
       for (const p of shots) {
@@ -2239,7 +2290,7 @@ async function viewMore(pid) {
           <div class="proj-name-row"><b>${esc(project.name)}</b><button class="iconbtn" id="rename-project" title="Переименовать объект" aria-label="Переименовать объект">${ICONS.edit}</button></div>
           <div class="mut small">${rooms.length} комн. · ${photos.length} фото</div>
         </div>
-        <button class="btn primary wide" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
+        <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
         ${project.hdCapture || project.hdScan || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <div class="card">

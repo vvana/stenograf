@@ -453,18 +453,6 @@ async function viewCalc(pid) {
     <div class="pad">
       ${rooms.length === 0 ? `<div class="empty"><div class="empty-ico">🧮</div><p><b>Сначала нарисуйте схему.</b></p><p class="mut">Площади считаются по комнатам на схеме, проёмы задаются на экране стены.</p></div>` : `
       <div class="card">
-        <div class="calc-table-wrap"><table class="calc-table calc-areas">
-          <thead><tr><th>Комната</th><th>Стены<br>м²</th><th>Пол<br>м²</th><th>Потолок<br>м²</th></tr></thead>
-          <tbody>
-            ${areas.map(({ r, a }) => `<tr><td>${esc(r.name)}<div class="mut small">${r.pts.length} угл., периметр ${f(a.perimeter)} м, h ${f(a.ceil, 2)}${a.openings ? `, проёмы −${f(a.openings)} м²` : ''}</div></td>
-              <td>${f(a.walls)}</td><td>${f(a.floor)}</td><td>${f(a.ceiling)}</td></tr>`).join('')}
-          </tbody>
-          <tfoot><tr><th>Итого</th><th>${f(tot.walls)}</th><th>${f(tot.floor)}</th><th>${f(tot.ceiling)}</th></tr></tfoot>
-        </table></div>
-        <p class="mut small">Стены — за вычетом проёмов. Высота потолка задаётся в редакторе схемы (по умолчанию ${DEFAULT_CEIL} м), проёмы — на экране стены.</p>
-      </div>
-
-      <div class="card">
         <b>Что делаем</b>
         <div class="calc-form">
           <label>Помещение <select class="inp" id="c-room">${rooms.map(r => `<option value="${r.id}" ${r.id === sel.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>
@@ -479,13 +467,27 @@ async function viewCalc(pid) {
       </div>
 
       <div class="card">
+        <div class="calc-table-wrap"><table class="calc-table calc-areas">
+          <thead><tr><th>Комната</th><th>Стены<br>м²</th><th>Пол<br>м²</th><th>Потолок<br>м²</th></tr></thead>
+          <tbody>
+            ${areas.map(({ r, a }) => `<tr><td>${esc(r.name)}<div class="mut small">периметр ${f(a.perimeter)} м, h ${f(a.ceil, 2)}</div></td>
+              <td>${f(a.walls)}</td><td>${f(a.floor)}</td><td>${f(a.ceiling)}</td></tr>`).join('')}
+          </tbody>
+          <tfoot><tr><th>Итого</th><th>${f(tot.walls)}</th><th>${f(tot.floor)}</th><th>${f(tot.ceiling)}</th></tr></tfoot>
+        </table></div>
+        <p class="mut small">Стены — за вычетом проёмов. Высота потолка задаётся в редакторе схемы (по умолчанию ${DEFAULT_CEIL} м), проёмы — на экране стены.</p>
+      </div>
+
+      <div class="card">
         <b>Ориентировочный расход</b>
         <ul class="mat-list">
           ${materials(areas, c).map(m => { const where = rooms.length > 1 && m.rooms.length < rooms.length ? m.rooms.join(', ') : ''; const sub = [where, m.hint].filter(Boolean).join(' · '); return `<li><span>${esc(m.name)}</span><b>${f(m.qty)} ${m.unit}</b>${sub ? `<div class="mut small">${esc(sub)}</div>` : ''}</li>`; }).join('')}
         </ul>
-        <button class="btn wide" id="c-pdf">${I('download')}PDF: работы и материалы</button>
-        <p class="mut small">Нормы усреднённые (гипсовая штукатурка 9 кг/м² на 10 мм, шпаклёвка 1,2 кг/м², краска 0,25 л/м² в два слоя, стяжка 2 кг/м² на 1 мм, ровнитель 1,5 кг/м² на 1 мм, гидроизоляция 1 кг/м² на слой). Для закупки уточняйте по упаковке конкретного материала.</p>
-      </div>`}
+        <details class="calc-norms"><summary class="mut small">Как считается</summary>
+          <p class="mut small">Нормы усреднённые (гипсовая штукатурка 9 кг/м² на 10 мм, шпаклёвка 1,2 кг/м², краска 0,25 л/м² в два слоя, стяжка 2 кг/м² на 1 мм, ровнитель 1,5 кг/м² на 1 мм, гидроизоляция 1 кг/м² на слой). Для закупки уточняйте по упаковке конкретного материала.</p>
+        </details>
+      </div>
+      <button class="btn wide calc-pdf" id="c-pdf">${I('download')}PDF: работы и материалы</button>`}
     </div>`;
 
   if (!rooms.length) return;

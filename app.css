@@ -163,7 +163,7 @@ body {
   fill: color-mix(in srgb, var(--acc) 7%, var(--card));
   stroke: none;
 }
-#plan .room-label.room-h { font-size: 0.26px; fill: var(--ink); font-weight: 600; } /* как размеры стен (.wall-dim, до 0.26px) */
+#plan .room-label.room-h { font-size: 0.26px; fill: var(--ink); font-weight: 600; } /* высота комнаты; размеры стен — WALL_DIM_FS в app.js */
 #plan .room-cnt { font-size: 0.24px; fill: var(--mut); text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none; }
 #plan .furn2 { fill: #f4f3f9; stroke: #8e8aa8; stroke-width: 0.02; pointer-events: none; }
 #plan .furn3 { fill: #e4e2ef; stroke: #8e8aa8; stroke-width: 0.015; pointer-events: none; }
@@ -180,8 +180,8 @@ body {
 #plan .wall-outline { fill: none; stroke: var(--ink); stroke-width: 0.12; stroke-linejoin: round; pointer-events: none; }
 #plan .wall-hit { stroke: transparent; stroke-width: 0.7; cursor: pointer; }
 #plan .wall-hit.edit.sel { stroke: color-mix(in srgb, var(--acc) 45%, transparent); stroke-width: 0.3; }
-#plan .wall-num {
-  font-size: 0.26px; font-weight: 700; fill: var(--mut);
+#plan .wall-num {  /* номер стены — подсказка, не должен спорить с размерами: мелкий и бледный */
+  font-size: 0.17px; font-weight: 500; fill: var(--mut); opacity: 0.55;
   text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
 }
 #plan .op-gap { fill: var(--card); stroke: none; pointer-events: none; }
@@ -697,3 +697,11 @@ select.inp {
 
 /* карточки подряд без обёртки .cards (площади и др.): зазор ≈ 2,3 мм на iPhone */
 .pad > .card + .card { margin-top: 14px; }
+
+/* площади: нормы расхода свёрнуты, PDF — отдельной кнопкой внизу */
+.calc-norms { margin-top: 8px; }
+.calc-norms summary { cursor: pointer; }
+.calc-norms p { margin: 6px 0 0; }
+.calc-pdf { margin-top: 14px; }
+/* обычная кнопка с оранжевой рамкой («Задание для мастеров») */
+.btn.accent-border { border-color: var(--acc); }
