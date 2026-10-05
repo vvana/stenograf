@@ -90,7 +90,6 @@ async function viewTour(pid, roomId = null) {
             ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
           </select>
           <button id="tour-photos" class="tour-ico ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото на стенах">${ICONS.camera}</button>
-          <button id="tour-glb" class="tour-ico" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}</button>
         </div>
         <div class="tour-modes">
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
@@ -102,6 +101,7 @@ async function viewTour(pid, roomId = null) {
         </div>
       </div>
       <div class="tour-bottom">
+        <button id="tour-glb" class="tour-ico tour-glb" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
         <div class="tour-plan" id="tour-plan"></div>
       </div>
       <div class="tour-msg hidden" id="tour-msg"></div>
@@ -290,28 +290,26 @@ async function viewTour(pid, roomId = null) {
       post.castShadow = true;
       scene.add(post); solidWalls.push(post);
     });
-    // скруглённые углы: стена по дуге из коротких сегментов
+    // скруглённые углы: стена по дуге одним телом (внутренняя и наружная кривые) — без зазубрин на стыках
     cs.forEach((c, i) => {
       if (!(c.t > 0)) return;
-      const arc = ring.filter(p => p.arc === i);
-      for (let k = 0; k + 1 < arc.length; k++) {
-        const P = arc[k], Q = arc[k + 1];
-        const L = Math.hypot(Q.x - P.x, Q.y - P.y);
-        if (L < 0.002) continue;
-        const ux = (Q.x - P.x) / L, uy = (Q.y - P.y) / L;
-        let nx = -uy, ny = ux;
-        const mx = (P.x + Q.x) / 2, my = (P.y + Q.y) / 2;
-        if (pointInPoly([mx + nx * 0.02, my + ny * 0.02], ringArr)) { nx = -nx; ny = -ny; }
-        const h = P.h;
-        const seg = new THREE.Mesh(new THREE.BoxGeometry(L + 0.02, h, WALL_T), wallSolid);
-        seg.position.set(mx + nx * outOff, h / 2, my + ny * outOff);
-        seg.quaternion.copy(basisQ(ux, uy));
-        scene.add(seg); solidWalls.push(seg);
-        const cap = new THREE.Mesh(new THREE.BoxGeometry(L + 0.02, 0.012, WALL_T + 0.002), wallCap);
-        cap.position.set(mx + nx * outOff, h + 0.006, my + ny * outOff);
-        cap.quaternion.copy(basisQ(ux, uy));
-        scene.add(cap); solidWalls.push(cap);
-      }
+      const N = 24, arc = [];
+      for (let k = 0; k <= N; k++) arc.push(bezier2(c.A, c.V, c.B, k / N));
+      const nrm = arc.map((p, k) => {
+        const a = arc[Math.max(0, k - 1)], b = arc[Math.min(N, k + 1)];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        return [-(b[1] - a[1]) / L, (b[0] - a[0]) / L];
+      });
+      const m = arc[N >> 1], mn = nrm[N >> 1];
+      const sgn = pointInPoly([m[0] + mn[0] * 0.02, m[1] + mn[1] * 0.02], ringArr) ? -1 : 1;
+      const off = d => arc.map((p, k) => new THREE.Vector2(p[0] + sgn * nrm[k][0] * d, -(p[1] + sgn * nrm[k][1] * d)));
+      const shape = new THREE.Shape([...off(0.003), ...off(T).reverse()]);
+      const h = Math.min(wallHAt(r, edges[(i - 1 + edges.length) % edges.length].id, 1), wallHAt(r, edges[i].id, 0));
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: h + 0.012, bevelEnabled: false, curveSegments: 1 });
+      geo.rotateX(-Math.PI / 2);
+      const wall = new THREE.Mesh(geo, [wallCap, wallSolid]);
+      wall.castShadow = true;
+      scene.add(wall); solidWalls.push(wall);
     });
     surfaces.push({ key: `${r.id}:f`, mesh: floor, w: bb.w, h: bb.h, base: floorMat });
     surfaces.push({ key: `${r.id}:c`, mesh: ceiling, w: bb.w, h: bb.h, base: ceilMat });

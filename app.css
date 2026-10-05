@@ -30,18 +30,20 @@ body {
 /* ---------- шапка ---------- */
 .topbar {
   position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; gap: 10px;
+  /* заголовок по центру экрана: слева «назад»/знак, справа кнопки — колонки одинаковой ширины */
+  display: grid; grid-template-columns: 1fr minmax(0, max-content) 1fr; align-items: center; gap: 10px;
   background: var(--top); color: var(--top-ink);
   padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
   border-bottom: 1px solid var(--line);
 }
 .topbar h1 {
-  font-size: 17px; font-weight: 600; flex: 1;
+  font-size: 17px; font-weight: 600; text-align: center; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .topbar .logo { font-size: 20px; }
 .topbar .iconbtn { color: var(--top-ink); }
-.topbar-right { display: flex; gap: 6px; }
+.topbar-right { display: flex; gap: 6px; justify-content: flex-end; }
+.topbar > :first-child { justify-self: start; }
 
 /* ---------- базовые элементы ---------- */
 .pad { padding: 14px; }
@@ -629,6 +631,7 @@ select.inp {
 .tour-plan .tp-dot { fill: var(--acc); stroke: #fff; stroke-width: 0.05; }
 .backup-row .btn { white-space: nowrap; padding-left: 8px; padding-right: 8px; font-size: 15px; }
 .stage-toolbar { justify-content: flex-end; }
+#final-stage { margin-right: auto; }
 /* этапы по помещениям */
 .room-tags { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px; }
 .room-tag { font-size: 11px; line-height: 1.5; padding: 0 7px; border-radius: 8px; background: #e6f1fb; color: #0c447c; }
@@ -647,6 +650,7 @@ select.inp {
 .stage-lidar { padding: 10px 0 0; }
 .pa-btn.pa-scan2 { flex: 1; border-color: var(--acc); color: var(--acc); font-size: 13px; }
 .tour-bottom { justify-content: flex-end; }
+.tour-glb { pointer-events: auto; margin-right: auto; width: auto; gap: 5px; padding: 0 12px; font: 600 13px system-ui, -apple-system, sans-serif; }
 .topbar .logo { display: inline-flex; line-height: 0; }
 .topbar .logo svg { width: 34px; height: 34px; margin: -4px -2px -4px -4px; }
 .empty-ico.logo-big svg { width: 72px; height: 72px; stroke: none; }

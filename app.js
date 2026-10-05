@@ -579,10 +579,10 @@ async function viewPlan(pid) {
     ${header(project.name, '#/')}
     <div class="plan-wrap">
       <div class="plan-actions">
+        <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
+        <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
-        <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
-        <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
       </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <span id="create-tools" class="tools">
@@ -1550,6 +1550,16 @@ async function measureApartment(pid) {
   const { rooms } = await loadProjectData(pid);
   try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
 }
+// после финального скана — последний этап «Финальный скан» со статусом «готово» (если уже есть — переносится в конец)
+async function markFinalStage(pid) {
+  const { stages } = await loadProjectData(pid);
+  let st = stages.find(s => s.final) || stages.find(s => s.name.trim().toLowerCase() === 'финальный скан');
+  const maxOrd = Math.max(-1, ...stages.filter(s => s !== st).map(s => s.ord));
+  if (!st) st = { id: uid(), projectId: pid, name: 'Финальный скан', ord: maxOrd + 1, status: 2 };
+  if (st.ord <= maxOrd) st.ord = maxOrd + 1;
+  st.final = true; st.status = 2;
+  await dbPut('stages', st);
+}
 // финальный скан: 3D с текстурами в конце ремонта
 async function finalScan(pid) {
   const kind = await pickSheet('Финальный скан', '3D-модель готовой квартиры для заказчика и портфолио. Лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям.', [
@@ -1561,6 +1571,7 @@ async function finalScan(pid) {
   const { project, rooms } = await loadProjectData(pid);
   try {
     const res = await lidarFinal(pid, project, rooms, { hd: kind === 'hd' });
+    if (res) await markFinalStage(pid);
     if (res && res.hd) { nav(`#/p/${pid}/hd`); return; }
     if (res) toast('Готово — смотрите в 3D, режим «Финал»');
   } catch (err) { alert('Скан не удался: ' + err.message); }
