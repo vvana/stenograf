@@ -418,6 +418,42 @@ async function framesToPhotos(pid, roomId, stageId, frames, idMap, place = null)
   return { photos: n, walls: Object.keys(byWall).length };
 }
 
+/* ---------- пол и потолок из обхода: ортофото в осях скана → снимок по габариту комнаты на схеме ---------- */
+
+// o: {jpeg, minX, minZ, k} — пиксель (i, j) ↔ точка скана (minX + i/k, minZ + j/k); toPlan: [x, z] скана → [x, y] схемы.
+// 3D кладёт фото пола/потолка по габариту комнаты: столбец — x схемы от bb.x, строка — y схемы от bb.y.
+async function orthoToPlan(o, toPlan, room, base) {
+  const bmp = await createImageBitmap(await (await fetch('data:image/jpeg;base64,' + o.jpeg)).blob());
+  const bb = roomBBox(room);
+  const K = Math.min(150, 2048 / Math.max(bb.w, bb.h, 0.5));
+  const c = document.createElement('canvas');
+  c.width = Math.max(16, Math.round(bb.w * K)); c.height = Math.max(16, Math.round(bb.h * K));
+  const g = c.getContext('2d');
+  g.fillStyle = base; g.fillRect(0, 0, c.width, c.height);
+  const T = (i, j) => { const q = toPlan([o.minX + i / o.k, o.minZ + j / o.k]); return [(q[0] - bb.x) * K, (q[1] - bb.y) * K]; };
+  const A = T(0, 0), B = T(1, 0), C = T(0, 1);
+  g.setTransform(B[0] - A[0], B[1] - A[1], C[0] - A[0], C[1] - A[1], A[0], A[1]);
+  g.drawImage(bmp, 0, 0);
+  bmp.close();
+  return await new Promise(r => c.toBlob(r, 'image/jpeg', 0.88));
+}
+// place(walls) → { room, toPlan } или null; прежний снимок пола/потолка из обхода той же комнаты и этапа заменяется
+async function savePlanes(pid, stageId, planes, place) {
+  let n = 0;
+  for (const o of planes || []) {
+    const at = place(o.walls || []);
+    if (!at || !at.toPlan || !o.jpeg || (o.surface !== 'f' && o.surface !== 'c')) continue;
+    const wallKey = `${at.room.id}:${o.surface}`;
+    for (const old of await dbAll('photos', 'wallKey', wallKey)) if (old.projectId === pid && old.stageId === stageId && old.source === 'lidar-ortho') await dbDel('photos', old.id);
+    const blob = await orthoToPlan(o, at.toPlan, at.room, o.surface === 'f' ? '#b9b2a6' : '#e9e5dd');
+    const rec = { id: uid(), projectId: pid, wallKey, stageId, blob, note: '', created: Date.now(), by: userName(true), marks: [], source: 'lidar-ortho' };
+    await sealPhoto(rec, { source: 'lidar' });
+    await dbPut('photos', rec);
+    n++;
+  }
+  return n;
+}
+
 /* ---------- зеркала, найденные лидаром: предложить пользователю ---------- */
 
 async function proposeMirrors(room, scan, res, idMap) {
@@ -594,6 +630,12 @@ async function lidarApartment(pid, rooms, stageId) {
       const r = await framesToPhotos(pid, roomId, stageId, list, idMap, wallMap[list[0].wall].place);
       photos += r.photos;
     }
+    const roomsNow = await dbAll('rooms', 'projectId', pid);
+    photos += await savePlanes(pid, stageId, scan.planes, walls => {
+      const m = walls.map(w => wallMap[w]).find(Boolean);
+      const room = m && roomsNow.find(x => x.id === m.roomId);
+      return room && m.place && m.place.toPlan ? { room, toPlan: m.place.toPlan } : null;
+    });
   }
   toast(`Квартира: ${results.length} комн.${photos ? `, ${photos} фото` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
   return results;
@@ -643,7 +685,9 @@ async function lidarWalk(pid, room, stageId) {
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
   const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap, toPlan ? { toPlan, turn, floorY: scan.floorY } : null);
+  r.planes = await savePlanes(pid, stageId, scan.planes, () => toPlan ? { room, toPlan } : null);
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;
-  toast(`Обход: ${r.photos} фото на ${r.walls} стен${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
+  const extra = [['f', 'пол'], ['c', 'потолок']].filter(([sf]) => (scan.planes || []).some(o => o.surface === sf)).map(([, t]) => t);
+  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
   return r;
 }

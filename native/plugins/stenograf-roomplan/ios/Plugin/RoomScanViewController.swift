@@ -48,6 +48,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var lastKeyPos: simd_float3?
     private var lastKeyFwd: simd_float3?
     private var meshAnchors: [ARMeshAnchor] = []
+    // пол и потолок обхода: кадры со всех сторон (уменьшенные, с позой камеры) → ортофото в конце
+    private var surfFrames: [KeyFrame] = []
+    private var lastSurfPos: simd_float3?
+    private var lastSurfFwd: simd_float3?
+    private var prevSurfT: simd_float4x4?
+    private var wantSurfaces: Bool { wantFrames && (mode == "walk" || mode == "multi") }
     private let hd: Bool                              // HD-скан: полные кадры + позы для обучения на компьютере
     private var hdCapture: HDCapture?
 
@@ -232,9 +238,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func initialHint() -> String {
         switch mode {
-        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен — кадры снимутся сами"
+        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен — кадры снимутся сами. Наклоните телефон к полу и к потолку"
         case "multi": return wantFrames
-            ? "Обход квартиры: пройдите комнату вдоль стен, затем «Следующая» и переходите в другую"
+            ? "Обход квартиры: пройдите комнату вдоль стен, наклоните телефон к полу и к потолку, затем «Следующая» — и в другую комнату"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Завершить»"
         case "final": return hd
             ? "HD-скан: идите медленно и замирайте — кадр снимается, когда телефон неподвижен. Красное — ещё не снято, жёлтое — мало кадров, зелёное — готово"
@@ -399,7 +405,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         dict["mirrors"] = mirrors
         if let usdz = exportUSDZ({ try room.export(to: $0) }) { dict["usdz"] = usdz }
         sharedSession?.pause()
-        dismiss(animated: true) { self.completion(.success(dict)) }
+        let base = dict
+        Task { @MainActor in
+            var out = base
+            await self.addSurfaces(to: &out, rooms: [room])
+            self.dismiss(animated: true) { self.completion(.success(out)) }
+        }
     }
 
     private func finishStructure() {
@@ -425,6 +436,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             var dict = self.buildResult(rooms: finalRooms)
             if let usdz = usdz { dict["usdz"] = usdz }
             dict["mirrors"] = self.detectMirrors(rooms: finalRooms)
+            await self.addSurfaces(to: &dict, rooms: finalRooms)
             if wantMesh {
                 let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
                 let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in
@@ -622,7 +634,52 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
         }
         if coverage != nil { refreshCoverageMap() }
+        if wantSurfaces { pollSurfaceFrame(frame: frame) }
         if wantFrames { pollWallFrame(frame: frame) }
+    }
+
+    /// Кадр для пола/потолка: телефон неподвижен (не смазано) и смотрит в новую сторону (≥ 14°) или сдвинулся (≥ 0,5 м).
+    /// Берём только кадры, где камера наклонена к полу или к потолку больше чем на 20°.
+    private func pollSurfaceFrame(frame: ARFrame) {
+        let cam = frame.camera
+        guard cam.trackingState == .normal, surfFrames.count < 120 else { return }
+        let T = cam.transform
+        let pos = xyz(T.columns.3)
+        let fwd = simd_normalize(-xyz(T.columns.2))
+        defer { prevSurfT = T }
+        guard abs(fwd.y) > 0.34, let prev = prevSurfT else { return }
+        let jitter = simd_length(pos - xyz(prev.columns.3))
+        let spin = acos(max(-1, min(1, simd_dot(fwd, simd_normalize(-xyz(prev.columns.2))))))
+        if jitter > 0.05 || spin > 0.06 { return }
+        if let lp = lastSurfPos, let lf = lastSurfFwd {
+            let moved = simd_length(pos - lp)
+            let turned = acos(max(-1, min(1, simd_dot(fwd, lf))))
+            if moved < 0.5 && turned < 0.25 { return }
+        }
+        for kf in surfFrames where simd_length(kf.pos - pos) < 0.5 && simd_dot(kf.fwd, fwd) > 0.97 { return }
+        let res = cam.imageResolution
+        let targetW = 480
+        let targetH = Int(Double(targetW) * Double(res.height) / Double(res.width))
+        let ci = CIImage(cvPixelBuffer: frame.capturedImage)
+        guard let cg = ciContext.createCGImage(ci, from: ci.extent),
+              let rgba = rgbaBytes(of: cg, width: targetW, height: targetH) else { return }
+        let k = Float(targetW) / Float(res.width)
+        let K = cam.intrinsics
+        surfFrames.append(KeyFrame(transformInv: T.inverse,
+                                   fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
+                                   w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd))
+        lastSurfPos = pos; lastSurfFwd = fwd
+    }
+
+    /// Пол и потолок по комнатам в фоне (около секунды на комнату).
+    private func addSurfaces(to dict: inout [String: Any], rooms: [CapturedRoom]) async {
+        guard wantSurfaces, !surfFrames.isEmpty else { return }
+        statusLabel.text = "Собираю пол и потолок…"
+        let input = OrthoInput(rooms: orthoRooms(rooms), frames: surfFrames)
+        let planes = await Task.detached(priority: .userInitiated) { () -> [[String: Any]] in
+            return buildOrthos(input)
+        }.value
+        if !planes.isEmpty { dict["planes"] = planes }
     }
 
     /// Лучшая стена в кадре: (стена, score) — камера смотрит на неё не вскользь, точка взгляда внутри стены.
