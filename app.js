@@ -1341,7 +1341,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico}${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
     showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
-      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}${item('p', I('pano'), 'Панорама 360°')}`, sh => {
+      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}${cnt('p') ? item('p', I('pano'), 'Панорама 360°') : ''}`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
     });
   }
@@ -1976,9 +1976,7 @@ async function viewWall(pid, wallKey) {
     ${header(wallLabel(room, side), `#/p/${pid}`,
       `<button class="iconbtn" id="rename-wall" title="Переименовать стену">${ICONS.edit}</button>`)}
     <div class="pad">
-      ${side === 'p' ? `
-        <p class="mut small">Снимите комнату из центра штатной камерой в режиме «Панорама» (или 360°-камерой) и добавьте снимок через «Галерея» на нужный этап. Смотреть — в 3D-туре.</p>
-        <button class="btn primary wide" id="open-pano" ${wallPhotos.length ? '' : 'disabled'}>${I('pano')}Открыть панораму в 3D</button>` : stagesWithPhotos.length >= 2 ? `
+      ${side === 'p' ? '' : stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ${I('compare')}Сравнить «до / после»</button>` : `
         <p class="mut small center">Добавьте фото минимум на двух этапах — появится сравнение «до/после».</p>`}
@@ -2032,8 +2030,6 @@ async function viewWall(pid, wallKey) {
     await dbPut('rooms', room); render();
   };
 
-  const openPano = $('#open-pano');
-  if (openPano) openPano.onclick = () => { tourState.mode = 'pano'; nav(`#/p/${pid}/tour/${roomId}`); };
 
   app.querySelectorAll('[data-hint]').forEach(el => { el.onclick = () => toast(el.dataset.hint); });
 

@@ -77,8 +77,7 @@ async function viewTour(pid, roomId = null) {
   if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
   if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
   if (tourState.mode === 'hd' && !(project.hdScan && project.hdScan.blob)) tourState.mode = 'house';
-  const hasPano = photos.some(p => p.wallKey.endsWith(':p')); // кнопка «Панорама» — только если хоть одна снята
-  if (tourState.mode === 'pano' && !hasPano) tourState.mode = 'house';
+  if (tourState.mode === 'pano') tourState.mode = 'inside'; // режим «Панорама» убран (2026-10-05): хватает «Внутри»
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
@@ -96,7 +95,6 @@ async function viewTour(pid, roomId = null) {
         <div class="tour-modes">
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('eye')}Внутри</button>
-          ${hasPano ? `<button data-mode="pano" class="${tourState.mode === 'pano' ? 'active' : ''}">${I('pano')}Панорама</button>` : ''}
           ${project.hdScan && project.hdScan.blob ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}HD</button>` : ''}
           ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}Финал</button>` : ''}
           ${Native.isNative && roomPlanModels(project, rooms).length ? `<button id="tour-rp" title="Оригинальная модель RoomPlan: 3D и AR">${I('ar')}RoomPlan</button>` : ''}
@@ -126,9 +124,7 @@ async function viewTour(pid, roomId = null) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
-  const panoScene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 500);
-  const panoCam = new THREE.PerspectiveCamera(75, 1, 0.1, 200);
 
   const bbAll = rooms.map(roomBBox);
   const minX = Math.min(...bbAll.map(b => b.x)), maxX = Math.max(...bbAll.map(b => b.x + b.w));
@@ -398,7 +394,6 @@ async function viewTour(pid, roomId = null) {
       s.mesh.material = new THREE.MeshBasicMaterial({ map: tex, side: THREE.FrontSide });
     }
     updateHint();
-    await applyPano();
   }
 
   /* ---------- финальный скан (окрашенная сетка) ---------- */
@@ -452,32 +447,6 @@ async function viewTour(pid, roomId = null) {
     return hdLoading;
   }
 
-  /* ---------- панорама ---------- */
-  let panoMesh = null, panoAvailable = false;
-  async function applyPano() {
-    if (panoMesh) { panoScene.remove(panoMesh); panoMesh.geometry.dispose(); panoMesh.material.map?.dispose(); panoMesh = null; }
-    panoAvailable = false;
-    const photo = tourState.roomId ? pickPhoto(photos, `${tourState.roomId}:p`, stages, tourState.stage) : null;
-    if (!photo) { updateHint(); return; }
-    try {
-      const bmp = await createImageBitmap(photo.blob);
-      const aspect = bmp.width / bmp.height;
-      const cvs = document.createElement('canvas');
-      const cw = Math.min(4096, bmp.width); cvs.width = cw; cvs.height = Math.round(cw / aspect);
-      cvs.getContext('2d').drawImage(bmp, 0, 0, cvs.width, cvs.height); bmp.close();
-      const tex = canvasTexture(THREE, cvs);
-      const full = aspect > 1.85 && aspect < 2.15;
-      const vfov = full ? Math.PI : 65 * Math.PI / 180;
-      const hfov = full ? Math.PI * 2 : Math.min(Math.PI * 2, vfov * aspect);
-      const geo = new THREE.SphereGeometry(50, 64, 32, Math.PI / 2 - hfov / 2, hfov, Math.PI / 2 - vfov / 2, vfov);
-      geo.scale(-1, 1, 1);
-      panoMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex }));
-      panoScene.add(panoMesh);
-      panoAvailable = true;
-    } catch { panoAvailable = false; }
-    updateHint();
-  }
-
   /* ---------- камера и управление ---------- */
   const orbit = { theta: Math.PI * 0.15, phi: 0.38, radius: span * 1.55, target: centerAll.clone() };
   const look = { yaw: 0, pitch: 0 };
@@ -493,10 +462,6 @@ async function viewTour(pid, roomId = null) {
       else if (ri) camera.position.copy(ri.center);
       camera.rotation.set(0, 0, 0, 'YXZ');
       camera.rotation.y = look.yaw; camera.rotation.x = look.pitch;
-    } else {
-      panoCam.position.set(0, 0, 0);
-      panoCam.rotation.set(0, 0, 0, 'YXZ');
-      panoCam.rotation.y = look.yaw; panoCam.rotation.x = look.pitch;
     }
   }
   function resize() {
@@ -504,7 +469,6 @@ async function viewTour(pid, roomId = null) {
     const w = Math.max(1, Math.floor(r.width)), h = Math.max(1, Math.floor(r.height));
     renderer.setSize(w, h, false);
     camera.aspect = w / h; camera.updateProjectionMatrix();
-    panoCam.aspect = w / h; panoCam.updateProjectionMatrix();
     // узкий (портретный) экран: отодвигаем камеру «домика», чтобы квартира помещалась по ширине
     if (!orbit.userZoom) orbit.radius = span * 1.55 * Math.max(1, 0.85 / (w / h));
   }
@@ -528,7 +492,7 @@ async function viewTour(pid, roomId = null) {
       lastAng = ang;
       if (lastPinch) {
         if (orbitMode()) { orbit.userZoom = true; orbit.radius = Math.max(span * 0.3, Math.min(span * 6, orbit.radius * lastPinch / d)); }
-        else { const cam = tourState.mode === 'pano' ? panoCam : camera; cam.fov = Math.max(30, Math.min(100, cam.fov * lastPinch / d)); cam.updateProjectionMatrix(); }
+        else { camera.fov = Math.max(30, Math.min(100, camera.fov * lastPinch / d)); camera.updateProjectionMatrix(); }
       }
       lastPinch = d; return;
     }
@@ -569,8 +533,8 @@ async function viewTour(pid, roomId = null) {
     const changed = r.id !== tourState.roomId;
     tourState.roomId = r.id;
     tourState.eye = { room: r.id, x: q[0], z: q[1] };
-    if (orbitMode()) { look.pitch = 0; setMode('inside'); applyPano(); return; }
-    if (changed) { drawPlan(); updateHint(); applyPano(); }
+    if (orbitMode()) { look.pitch = 0; setMode('inside'); return; }
+    if (changed) { drawPlan(); updateHint(); }
   }
   let eyeDrag = false;
   planBox.addEventListener('pointerdown', e => {
@@ -607,7 +571,6 @@ async function viewTour(pid, roomId = null) {
     const name = ri ? ri.name : '';
     if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем или двумя, щипок — масштаб. Тап по плану — встать в эту точку внутри.';
     else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Ведите точку на плане — чтобы перейти.`;
-    else hint.textContent = panoAvailable ? `${name}: панорама 360°` : `${name}: панорамы для этого этапа нет — снимите её штатной камерой (режим «Панорама») и добавьте: тап внутри комнаты на схеме → «Панорама 360°».`;
     if (tourState.mode === 'hd') hint.textContent = 'HD-скан. Крутите пальцем, щипок — масштаб.';
     if (tourState.mode === 'final') hint.textContent = `Финальный скан: ${project.finalScan ? (project.finalScan.vertices || 0) + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
@@ -705,15 +668,14 @@ async function viewTour(pid, roomId = null) {
     if (!alive) return;
     placeCamera();
     updateEye();
-    if (tourState.mode === 'pano' && panoAvailable) renderer.render(panoScene, panoCam);
-    else renderer.render(scene, camera);
+    renderer.render(scene, camera);
     requestAnimationFrame(frame);
   }
   const ro = new ResizeObserver(resize); ro.observe(canvas.parentElement);
   resize(); setMode(tourState.mode); frame();
   applyStage();
 
-  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, pano: panoAvailable, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId, solidWalls: solidWalls.length, plainFloors: plainFloors.length, photos: tourState.photos, finalLoaded: !!finalMesh, wallPlanesVisible: surfaces.filter(s => !s.key.endsWith(':f') && !s.key.endsWith(':c') && s.mesh.visible).length, floors: plainFloors.map(f => ({ color: f.material.color.getHexString(), visible: f.visible, y: f.position.y, n: f.geometry.attributes.normal.getY(0) })), floorPlanes: surfaces.filter(s => s.key.endsWith(':f')).map(s => ({ key: s.key, visible: s.mesh.visible, map: !!s.mesh.material.map })) });
+  window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId, solidWalls: solidWalls.length, plainFloors: plainFloors.length, photos: tourState.photos, finalLoaded: !!finalMesh, wallPlanesVisible: surfaces.filter(s => !s.key.endsWith(':f') && !s.key.endsWith(':c') && s.mesh.visible).length, floors: plainFloors.map(f => ({ color: f.material.color.getHexString(), visible: f.visible, y: f.position.y, n: f.geometry.attributes.normal.getY(0) })), floorPlanes: surfaces.filter(s => s.key.endsWith(':f')).map(s => ({ key: s.key, visible: s.mesh.visible, map: !!s.mesh.material.map })) });
   window.__tourScene = scene;
   viewCleanup = () => {
     alive = false; ro.disconnect(); delete window.__tourDebug;
