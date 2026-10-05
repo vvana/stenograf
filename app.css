@@ -686,3 +686,6 @@ select.inp {
 .hd-steps { margin: 6px 0; padding-left: 20px; }
 .hd-steps li { margin: 4px 0; }
 .check-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }
+
+/* карточки подряд без обёртки .cards (площади и др.): зазор ≈ 2,3 мм на iPhone */
+.pad > .card + .card { margin-top: 14px; }
