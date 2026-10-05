@@ -207,7 +207,6 @@ function sideTitle(room, side) {
   if (custom) return custom;
   if (side === 'c') return 'потолок';
   if (side === 'f') return 'пол';
-  if (side === 'p') return 'панорама 360°';
   return wallBaseName(room, side);
 }
 function stageName(stages, id) { const s = stages.find(x => x.id === id); return s ? s.name : 'Этап'; }

@@ -45,7 +45,6 @@ function wallLabel(room, side) {
   if (custom) return custom;
   if (side === 'c') return `${room.name} — потолок`;
   if (side === 'f') return `${room.name} — пол`;
-  if (side === 'p') return `${room.name} — панорама 360°`;
   return `${room.name} — ${wallBaseName(room, side)}`;
 }
 // «верхняя стена» для стандартных 4 сторон, «стена 3» для произвольных многоугольников
@@ -2127,7 +2126,6 @@ const OPENING_KINDS = {
 // ожидаемые размеры поверхности из схемы: ширина × высота (для калибровки по 4 углам)
 function wallSizeOf(room, side) {
   const ceil = room.ceil || 2.7;
-  if (side === 'p') return { w: null, h: null };
   if (side === 'c' || side === 'f') { const bb = roomBBox(room); return { w: cm(bb.w), h: cm(bb.h) }; }
   const e = roomEdge(room, side);
   return { w: e ? cm(e.len) : null, h: ceil };
