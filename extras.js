@@ -8,11 +8,42 @@ const roomCeil = r => (r.ceil > 0 ? r.ceil : DEFAULT_CEIL);
 /* ---------- высота стен: у каждой стены свой профиль верха ---------- */
 // r.wallTop[wallId] = [[f, h], ...]: f — доля длины от начала стены (0..1), h — высота над полом, м.
 // Две точки с одним f — ступенька (короб), разные h по краям — скос. Нет записи — стена ровная, высота roomCeil.
+// шум лидара: RoomPlan у углов часто отдаёт потолок на 1–5 см ниже/выше — это не короб, в 3D даёт «ступеньки» на кромке
+const TOP_NOISE = 0.05;
+const wallTopCache = new WeakMap();
 function wallTop(r, wallId) {
-  const p = r.wallTop && r.wallTop[wallId];
-  if (p && p.length >= 2) return p;
   const h = roomCeil(r);
-  return [[0, h], [1, h]];
+  const p = r.wallTop && r.wallTop[wallId];
+  if (!(p && p.length >= 2)) return [[0, h], [1, h]];
+  let byRoom = wallTopCache.get(r);
+  if (!byRoom) wallTopCache.set(r, byRoom = {});
+  const hit = byRoom[wallId];
+  if (hit && hit.src === p && hit.h === h) return hit.out;
+  // близкие к общей высоте точки → общая высота; подряд идущие одинаковые высоты → одна полка
+  let snapped = p.map(([f, y]) => [f, Math.abs(y - h) < TOP_NOISE ? h : y]);
+  // перепад только у самого угла (последние 25 см стены) — тоже шум RoomPlan: продлеваем высоту изнутри стены
+  const i = (r.wallIds || []).indexOf(wallId);
+  const A = r.pts[i], B = r.pts[(i + 1) % r.pts.length];
+  const len = A && B ? Math.hypot(B[0] - A[0], B[1] - A[1]) : 0;
+  if (len > 0.8) {
+    const e = 0.25 / len;
+    const at = f => { for (let k = 1; k < snapped.length; k++) if (f <= snapped[k][0]) { const [f0, h0] = snapped[k - 1], [f1, h1] = snapped[k]; return f1 - f0 < 1e-6 ? h1 : h0 + (h1 - h0) * (f - f0) / (f1 - f0); } return snapped[snapped.length - 1][1]; };
+    // ступенька = резкий перепад (круче 45°) на участке; плавный скос не трогаем
+    const steep = (f0, f1) => snapped.some((q, k) => k && q[0] >= f0 - 1e-6 && snapped[k - 1][0] <= f1 + 1e-6
+      && Math.abs(q[1] - snapped[k - 1][1]) > 0.005 && Math.abs(q[1] - snapped[k - 1][1]) > (q[0] - snapped[k - 1][0]) * len);
+    const fixS = steep(0, e), fixE = steep(1 - e, 1);
+    if (fixS || fixE) {
+      const hs = at(e), he = at(1 - e);
+      snapped = [...(fixS ? [[0, hs], [e, hs]] : snapped.filter(([f]) => f <= e)),
+                 ...snapped.filter(([f]) => f > e && f < 1 - e),
+                 ...(fixE ? [[1 - e, he], [1, he]] : snapped.filter(([f]) => f >= 1 - e))];
+    }
+  }
+  const out = snapped.filter((q, k) => k === 0 || k === snapped.length - 1
+    || !(snapped[k - 1][1] === q[1] && snapped[k + 1][1] === q[1]));
+  const res = out.every(q => q[1] === h) ? [[0, h], [1, h]] : out;
+  byRoom[wallId] = { src: p, h, out: res };
+  return res;
 }
 function wallHAt(r, wallId, f) {
   const p = wallTop(r, wallId);
