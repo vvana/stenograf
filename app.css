@@ -469,7 +469,15 @@ body {
 .calc-checks { display: flex; flex-direction: column; margin-top: 4px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .calc-form label.calc-check { flex-direction: row; align-items: center; gap: 10px; padding: 10px 12px; font-size: 15px; color: var(--ink); border-top: 1px solid var(--line); cursor: pointer; }
 .calc-check:first-child { border-top: none; }
-.calc-none { padding: 10px 12px; font-size: 15px; font-weight: 600; color: var(--mut); background: var(--bg); }
+.calc-field {
+  display: block; margin-top: 4px; text-align: left; font-size: 15px; color: var(--ink); cursor: pointer; padding-right: 34px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2320323c' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 16px 16px;
+}
+.calc-field.none { color: var(--mut); }
+.calc-group.open .calc-field { border-color: var(--acc); border-radius: 10px 10px 0 0; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2320323c' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 15l6-6 6 6'/%3E%3C/svg%3E"); }
+.calc-group.open .calc-checks { margin-top: 0; border-top: none; border-color: var(--acc); border-radius: 0 0 10px 10px; }
 .calc-check input { width: 20px; height: 20px; margin: 0; accent-color: var(--acc); }
 .mat-list { list-style: none; padding: 0; margin-top: 8px; }
 .mat-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }

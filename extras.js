@@ -369,6 +369,17 @@ function materials(tot, c) {
   return out;
 }
 
+// поле со свёрнутым списком галочек: в поле — выбранное через запятую или «Не трогаем»
+let calcOpen = null; // какой список раскрыт — переживает перерисовку после галочки
+function checkField(key, title, works, sel, none) {
+  const names = works.filter(([v]) => sel.includes(v)).map(([, t], i) => i ? t.toLowerCase() : t);
+  const open = calcOpen === key;
+  return `<div class="calc-group ${open ? 'open' : ''}" data-group="${key}"><span>${title}</span>
+    <button type="button" class="inp calc-field ${names.length ? '' : 'none'}" data-toggle="${key}">${esc(names.join(', ') || none)}</button>
+    <div class="calc-checks ${open ? '' : 'hidden'}">${works.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-${key}="${v}" ${sel.includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
+  </div>`;
+}
+
 async function viewCalc(pid) {
   const { project, rooms } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -399,15 +410,9 @@ async function viewCalc(pid) {
       <div class="card">
         <b>Что делаем</b>
         <div class="calc-form">
-          <div class="calc-group"><span>Стены</span>
-            <div class="calc-checks">${calcWalls(c).length ? '' : '<div class="calc-none">Не трогаем</div>'}${WALL_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-wall="${v}" ${calcWalls(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
-          </div>
-          <div class="calc-group"><span>Пол</span>
-            <div class="calc-checks">${calcFloors(c).length ? '' : '<div class="calc-none">Не трогаем</div>'}${FLOOR_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-floor="${v}" ${calcFloors(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
-          </div>
-          <div class="calc-group"><span>Потолок</span>
-            <div class="calc-checks">${calcCeils(c).length ? '' : '<div class="calc-none">Не трогаем (натяжной и т.п.)</div>'}${CEIL_WORKS.map(([v, t]) => `<label class="calc-check"><input type="checkbox" data-ceil="${v}" ${calcCeils(c).includes(v) ? 'checked' : ''}>${t}</label>`).join('')}</div>
-          </div>
+          ${checkField('wall', 'Стены', WALL_WORKS, calcWalls(c), 'Не трогаем')}
+          ${checkField('floor', 'Пол', FLOOR_WORKS, calcFloors(c), 'Не трогаем')}
+          ${checkField('ceil', 'Потолок', CEIL_WORKS, calcCeils(c), 'Не трогаем (натяжной и т.п.)')}
           <label class="${calcWalls(c).includes('plaster') || calcCeils(c).includes('plaster') ? '' : 'hidden'}">Слой штукатурки, мм <input class="inp" id="c-plaster" type="number" min="0" max="50" step="1" value="${c.plasterMm}"></label>
           <label class="${calcFloors(c).includes('screed') ? '' : 'hidden'}">Толщина стяжки, мм <input class="inp" id="c-screed" type="number" min="0" max="150" step="5" value="${c.screedMm}"></label>
           <label class="${calcFloors(c).includes('level') ? '' : 'hidden'}">Слой ровнителя, мм <input class="inp" id="c-level" type="number" min="0" max="50" step="1" value="${c.levelMm}"></label>
@@ -433,6 +438,13 @@ async function viewCalc(pid) {
     await dbPut('projects', project); render();
   };
   app.querySelectorAll('[data-wall], [data-floor], [data-ceil]').forEach(x => { x.onchange = saveCalc; });
+  const groups = [...app.querySelectorAll('[data-group]')];
+  const showOpen = () => groups.forEach(g => { const o = g.dataset.group === calcOpen; g.classList.toggle('open', o); g.querySelector('.calc-checks').classList.toggle('hidden', !o); });
+  app.querySelectorAll('[data-toggle]').forEach(b => { b.onclick = () => { calcOpen = calcOpen === b.dataset.toggle ? null : b.dataset.toggle; showOpen(); }; });
+  // тап мимо раскрытого списка — свернуть
+  app.querySelector('.calc-form').closest('.card').parentElement.addEventListener('click', e => {
+    if (calcOpen && !e.target.closest('[data-group]')) { calcOpen = null; showOpen(); }
+  });
   ['#c-plaster', '#c-screed', '#c-level', '#c-reserve'].forEach(s => { $(s).onchange = saveCalc; });
 }
 
