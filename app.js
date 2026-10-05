@@ -851,7 +851,7 @@ const ICONS = {
   sofa: svgIco('<path d="M5 11V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"/><path d="M3 11h18v6H3zM5 17v2M19 17v2"/>'),
   report: svgIco('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/>'),
   lock: svgIco('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
-  calc: svgIco('<circle cx="10" cy="11" r="7"/><circle cx="10" cy="11" r="2"/><path d="M10 18h11v-3.5h-4.5M14 18v-1.8M17 18v-1.8"/>'), // рулетка
+  calc: svgIco('<rect x="3" y="3" width="15" height="6" rx="2"/><path d="M18 6h2.5v5H12v3"/><rect x="10.5" y="14" width="3" height="7" rx="1"/>'), // валик
   user: svgIco('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'),
   info: svgIco('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.4"/>'),
   image: svgIco('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>'),
