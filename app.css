@@ -731,3 +731,6 @@ select.inp {
 .ihint:not([open]) .ihint-text { display: none; }
 .ihint-text { line-height: 1.4; padding-top: 1px; }
 #mode-tools .btn { white-space: nowrap; }
+
+.len-ceil { margin: 8px 0 4px; }
+.len-ceil span { white-space: normal; }

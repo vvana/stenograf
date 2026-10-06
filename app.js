@@ -636,8 +636,7 @@ async function viewPlan(pid) {
           <details class="mode-hint ihint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span id="mode-text" class="ihint-text"></span></summary></details>
         </span>
         <span id="room-tools" class="tools hidden">
-          <label class="rt-field rt-ceil"><span>Высота потолка, м</span><input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="2,70"></label>
-          <button class="btn small-btn" id="room-lengths" title="Ввести измеренные длины стен — схема подстроится">${I('ruler')}Длины стен</button>
+          <button class="btn small-btn" id="room-lengths" title="Высота потолка и длины стен — схема подстроится">${I('ruler')}Размеры</button>
           <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
           <button class="btn small-btn danger" id="del-room">Удалить</button>
         </span>
@@ -659,7 +658,7 @@ async function viewPlan(pid) {
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool ${planUndo.stack.length ? '' : 'hidden'}" id="plan-undo" title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
           ${rooms.length ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
-          ${rooms.length || (project.plan && project.plan.blob) ? `<button class="plan-tool danger" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">${ICONS.trash}</button>` : ''}
+          ${planState.edit && (rooms.length || (project.plan && project.plan.blob)) ? `<button class="plan-tool danger" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">${ICONS.trash}</button>` : ''}
         </div>
       </div>
       ${showShots ? `<div class="shot-bar">
@@ -1446,16 +1445,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!room) return;
 
     if (!sel) {
-      const ceilInp = $('#room-ceil');
-      ceilInp.value = room.ceil || '';
-      if (room.wallTop && Object.keys(room.wallTop).length) ceilInp.title = `Высота потолка. У части стен своя высота по обмеру (${roomHeightText(room)}) — её меняют у стены`;
-      ceilInp.onfocus = () => { ceilInp._undo = false; };
-      ceilInp.oninput = () => {
-        if (!ceilInp._undo) { ceilInp._undo = true; pushUndo(); } // одна запись на правку поля
-        const v = parseFloat(ceilInp.value);
-        if (v > 0) room.ceil = v; else delete room.ceil;
-        clearTimeout(ceilInp._t); ceilInp._t = setTimeout(() => dbPut('rooms', room), 400);
-      };
       $('#room-lengths').onclick = () => lengthsSheet(room);
       const furnBtn = $('#room-furn');
       furnBtn.classList.toggle('hidden', !(room.objects && room.objects.length));
@@ -1637,24 +1626,31 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const el = document.querySelector('#plan path.room.sel') || $('#plan-box'), top = document.querySelector('.topbar');
     if (el) window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + scrollY - (top ? top.offsetHeight : 0) - 12) });
     const label = e => `Стена ${e.i + 1}`;
-    showSheet(`<div class="sh-title">Длины стен — ${esc(room.name)}</div>
-      <p class="mut small">Номера — как на схеме выше. Введите, что измерили; пустые стены подстроятся.</p>
+    const ceilHint = room.wallTop && Object.keys(room.wallTop).length ? ` <span class="mut small">(у части стен своя высота по обмеру: ${esc(roomHeightText(room))})</span>` : '';
+    showSheet(`<div class="sh-title">Размеры — ${esc(room.name)}</div>
+      <label class="len-row len-ceil"><span>Высота потолка, м${ceilHint}</span>
+        <input class="inp num" id="len-ceil" type="number" step="0.01" min="2" max="6" inputmode="decimal" value="${room.ceil || ''}" placeholder="${fmtM(DEFAULT_CEIL)}"></label>
+      <p class="mut small">Длины стен — номера как на схеме выше. Введите, что измерили; пустые стены подстроятся.</p>
       <div class="len-list">${edges.map(e => `<label class="len-row"><span>${esc(label(e))}</span>
         <input class="inp num" data-len="${e.i}" type="number" step="0.01" min="0.05" inputmode="decimal" placeholder="≈${fmtM(e.len)}"></label>`).join('')}</div>
       <label class="len-snap"><input type="checkbox" id="len-snap" checked> Выровнять почти прямые углы до 90°</label>
       <button class="btn primary wide" id="len-apply">Применить</button>`, sh => {
       sh.querySelector('#len-apply').onclick = async () => {
         const vals = edges.map(e => { const v = parseFloat(String(sh.querySelector(`[data-len="${e.i}"]`).value).replace(',', '.')); return v > 0 ? v : null; });
-        const res = fitLengths(room.pts, vals, sh.querySelector('#len-snap').checked);
-        if (res.error) return toast(res.error);
+        const cv = parseFloat(String(sh.querySelector('#len-ceil').value).replace(',', '.'));
+        const ceilChanged = (cv > 0 ? cv : undefined) !== room.ceil;
+        const anyLen = vals.some(v => v != null), snapOn = sh.querySelector('#len-snap').checked;
+        const res = anyLen ? fitLengths(room.pts, vals, snapOn) : null; // только высота — геометрию не трогаем
+        if (res && res.error) return toast(res.error);
         pushUndo();
-        room.pts = res.pts.map((p, k) => [cm(p[0]), cm(p[1]), ...room.pts[k].slice(2)]);
+        if (ceilChanged) { if (cv > 0) room.ceil = cm(cv); else delete room.ceil; }
+        if (res) room.pts = res.pts.map((p, k) => [cm(p[0]), cm(p[1]), ...room.pts[k].slice(2)]);
         await dbPut('rooms', room);
         hideSheet(); draw(); updateTools();
-        toast(res.fix > 0.02 ? `Длины не сходились: ${res.fixWall} поправлена на ${Math.round(res.fix * 100)} см` : 'Схема подстроена под длины стен');
+        toast(res && res.fix > 0.02 ? `Длины не сходились: ${res.fixWall} поправлена на ${Math.round(res.fix * 100)} см` : 'Размеры сохранены');
       };
     });
-    const first = sheet.querySelector('[data-len]'); if (first) first.focus();
+    const first = sheet.querySelector('#len-ceil'); if (first) first.focus();
   }
 
   // лидар (только нативная iOS-версия на iPhone Pro)
