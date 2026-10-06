@@ -432,6 +432,8 @@ const planState = { edit: false, selected: null, sel: null, mode: null, tmp: [],
 // В редакторе всегда исходный вид.
 const planView = { k: 1, r: 0, tx: 0, ty: 0, pid: null };
 const resetPlanView = () => Object.assign(planView, { k: 1, r: 0, tx: 0, ty: 0 });
+// отмена в редакторе: снимки комнат (и положения фото плана) перед каждым изменением; очищается при выходе из редактора
+const planUndo = { pid: null, stack: [] };
 
 /* --- геометрия комнаты-многоугольника ---
    room.pts = [[x, y, r?], ...] в метрах по часовой/против — как нарисовал пользователь; r — радиус скругления угла (м)
@@ -628,10 +630,10 @@ async function viewPlan(pid) {
           <button class="btn small-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${I('pen')}Нарисовать</button>
         </span>
         <span id="mode-tools" class="tools hidden">
-          <span id="mode-text" class="small"></span>
           <button class="btn small-btn primary" id="mode-done">Готово</button>
           <button class="btn small-btn" id="mode-cancel">Отмена</button>
-          <button class="btn small-btn hidden" id="mode-plan" title="Фото плана под схемой: заменить, масштаб, сдвинуть, скрыть">${I('layers')}Фото плана</button>
+          <button class="btn small-btn hidden" id="mode-plan" title="Загрузить фото плана (БТИ, план застройщика, скан) и рисовать по нему">${I('layers')}Фото плана</button>
+          <details class="mode-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}</summary><div id="mode-text" class="small"></div></details>
         </span>
         <span id="room-tools" class="tools hidden">
           <label class="rt-field rt-ceil"><span>Высота потолка, м</span><input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="2,70"></label>
@@ -655,6 +657,7 @@ async function viewPlan(pid) {
         <div id="plan-box" class="plan-box"></div>
         <div class="plan-tools">
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
+          ${planState.edit ? `<button class="plan-tool ${planUndo.stack.length ? '' : 'hidden'}" id="plan-undo" title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
           ${rooms.length ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
           ${rooms.length || (project.plan && project.plan.blob) ? `<button class="plan-tool danger" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">${ICONS.trash}</button>` : ''}
         </div>
@@ -677,7 +680,7 @@ async function viewPlan(pid) {
     </div>
     ${bottomNav(pid, 'plan')}`;
 
-  $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; resetPlanView(); render(); };
+  $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; planUndo.stack = []; resetPlanView(); render(); };
   const clearBtn = $('#clear-plan');
   if (clearBtn) clearBtn.onclick = async () => { if (await clearPlan(pid)) render(); };
   const shotsBtn = $('#toggle-shots');
@@ -901,6 +904,7 @@ const ICONS = {
   camera: svgIco('<path d="M4 8h3.2l1.8-2.6h6l1.8 2.6H20v11H4z"/><circle cx="12" cy="13" r="3.6"/>'),
   share: svgIco('<path d="M12 15V3M7.5 7.5L12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>'),
   download: svgIco('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
+  undo: svgIco('<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
   upload: svgIco('<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>'),
   pen: svgIco('<path d="M4 20l4.2-1L19 8.2 15.8 5 5 15.8 4 20z"/><path d="M13.8 7l3.2 3.2"/>'),
   ruler: svgIco('<path d="M3 17L17 3l4 4L7 21z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/>'),
@@ -1129,16 +1133,38 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       tmp.forEach((p, i) => { s += `<g class="handle scale"><circle cx="${p[0]}" cy="${p[1]}" r="0.3"/><text x="${p[0]}" y="${p[1]}">${i + 1}</text></g>`; });
       if (tmp.length === 2) s += `<line class="trace-line" x1="${tmp[0][0]}" y1="${tmp[0][1]}" x2="${tmp[1][0]}" y2="${tmp[1][1]}"/>`;
     }
-    if (planState.edit) { svg.innerHTML = s; return; }
     const { k, r, tx, ty } = planView, c = Math.cos(r) * k, sn = Math.sin(r) * k;
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
   }
-  if (planView.pid !== pid || planState.edit) { resetPlanView(); planView.pid = pid; }
+  if (planView.pid !== pid) { resetPlanView(); planView.pid = pid; planUndo.stack = []; }
   draw();
 
-  function toWorld(e) {
-    return new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+  function toWorld(e) { // координаты схемы с учётом масштаба/сдвига вида
+    const g = svg.querySelector('.plan-view') || svg;
+    return new DOMPoint(e.clientX, e.clientY).matrixTransform(g.getScreenCTM().inverse());
   }
+
+  // --- отмена ---
+  function pushUndo(extra = {}, snapRooms = null) {
+    planUndo.stack.push({ rooms: snapRooms || structuredClone(rooms), plan: project.plan ? { k: project.plan.k, ox: project.plan.ox, oy: project.plan.oy } : null, ...extra });
+    if (planUndo.stack.length > 40) planUndo.stack.shift();
+    const b = $('#plan-undo'); if (b) b.classList.remove('hidden');
+  }
+  async function undoEdit() {
+    const snap = planUndo.stack.pop();
+    if (!snap) return;
+    const ids = new Set(snap.rooms.map(r => r.id));
+    for (const r of await dbAll('rooms', 'projectId', pid)) if (!ids.has(r.id)) await dbDel('rooms', r.id);
+    for (const r of snap.rooms) await dbPut('rooms', r);
+    if (snap.plan && project.plan) { Object.assign(project.plan, snap.plan); await dbPut('projects', project); }
+    for (const k of snap.photoKeys || []) { const ph = await dbGet('photos', k.id); if (ph) { ph.wallKey = k.wallKey; await dbPut('photos', ph); } }
+    for (const ph of snap.photos || []) await dbPut('photos', ph);
+    planState.sel = null;
+    if (planState.selected && !ids.has(planState.selected)) planState.selected = null;
+    toast('Отменено');
+    render();
+  }
+  if ($('#plan-undo')) $('#plan-undo').onclick = undoEdit;
   const snap = v => Math.round(v * 10) / 10;
 
   let drag = null;
@@ -1156,12 +1182,13 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       return;
     }
     e.preventDefault();
+    if (fingers.size) return; // второй палец — жест масштаба (ниже), а не новая правка
     if (planState.mode === 'trace' || planState.mode === 'scale') {
       drag = { kind: 'tap-mode', sx: e.clientX, sy: e.clientY, moved: false, world: toWorld(e) };
       return;
     }
     if (planState.mode === 'underlay' && plan) {
-      drag = { kind: 'underlay', start: toWorld(e), orig: { ox: plan.ox, oy: plan.oy }, moved: false };
+      drag = { kind: 'underlay', start: toWorld(e), orig: { ox: plan.ox, oy: plan.oy }, moved: false, snap: structuredClone(rooms) };
       try { svg.setPointerCapture(e.pointerId); } catch {}
       return;
     }
@@ -1177,12 +1204,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
     if (t.dataset.drag === 'vertex') {
       const i = +t.dataset.i;
-      drag = { kind: 'vertex', room, i, start: toWorld(e), orig: room.pts[i].slice(), moved: false };
+      drag = { kind: 'vertex', room, i, start: toWorld(e), orig: room.pts[i].slice(), moved: false, snap: structuredClone(rooms) };
     } else {
       const rm = rooms.find(r => r.id === t.dataset.room);
       if (!rm) return;
       if (planState.selected !== rm.id) { planState.selected = rm.id; planState.sel = null; updateTools(); }
-      drag = { kind: 'move', room: rm, start: toWorld(e), orig: rm.pts.map(p => p.slice()), moved: false };
+      drag = { kind: 'move', room: rm, start: toWorld(e), orig: rm.pts.map(p => p.slice()), moved: false, snap: structuredClone(rooms) };
     }
     try { svg.setPointerCapture(e.pointerId); } catch {}
     draw();
@@ -1221,12 +1248,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (d.kind === 'tap-wall') { if (!d.moved) nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`); return; }
     if (d.kind === 'tap-room') { if (!d.moved) roomMenu(d.id); return; }
     if (d.kind === 'tap-mode') { if (!d.moved) await modeTap(d.world); return; }
-    if (d.kind === 'underlay') { if (d.moved) await dbPut('projects', project); return; }
+    if (d.kind === 'underlay') { if (d.moved) { pushUndo({ plan: { k: plan.k, ox: d.orig.ox, oy: d.orig.oy } }, d.snap); await dbPut('projects', project); } return; }
     const room = selRoom();
     if (d.kind === 'tap-add') { if (!d.moved && room) await insertVertex(room, d.i); return; }
     if (d.kind === 'tap-edge') { if (!d.moved) { planState.sel = { type: 'wall', i: d.i }; updateTools(); draw(); } return; }
     if (d.kind === 'vertex' && !d.moved) { planState.sel = { type: 'vertex', i: d.i }; updateTools(); draw(); return; }
-    if (d.moved) { await dbPut('rooms', d.room); updateTools(); }
+    if (d.moved) { pushUndo({}, d.snap); await dbPut('rooms', d.room); updateTools(); }
   });
   svg.addEventListener('pointercancel', () => { drag = null; });
 
@@ -1239,22 +1266,28 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     gest = { two: true, v: { ...planView }, a: units(a.x, a.y), b: units(b.x, b.y) };
   };
   svg.addEventListener('pointerdown', e => {
-    if (planState.edit) return;
     fingers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
     try { svg.setPointerCapture(e.pointerId); } catch {}
-    if (fingers.size === 2) { drag = null; pinchStart(); }                       // второй палец — это жест, не нажатие
+    if (fingers.size === 2) {                                                   // второй палец — это жест, не нажатие и не правка
+      if (drag && drag.moved && drag.orig) {                                    // начатое перетаскивание откатываем
+        if (drag.kind === 'vertex') drag.room.pts[drag.i] = drag.orig;
+        else if (drag.kind === 'move') drag.room.pts = drag.orig;
+        else if (drag.kind === 'underlay') { plan.ox = drag.orig.ox; plan.oy = drag.orig.oy; }
+      }
+      drag = null; pinchStart();
+    }
     else if (fingers.size === 1) gest = { two: false, v: { ...planView }, p: units(e.clientX, e.clientY), panning: false };
   });
   svg.addEventListener('pointermove', e => {
     const f = fingers.get(e.pointerId);
-    if (planState.edit || !f || !gest) return;
+    if (!f || !gest || (planState.edit && !gest.two)) return;   // в редакторе один палец — правка, не сдвиг вида
     f.x = e.clientX; f.y = e.clientY;
     if (gest.two && fingers.size >= 2) {
       const [a, b] = [...fingers.values()];
       const A = units(a.x, a.y), B = units(b.x, b.y);
       const d0 = Math.hypot(gest.b[0] - gest.a[0], gest.b[1] - gest.a[1]) || 1e-6, d1 = Math.hypot(B[0] - A[0], B[1] - A[1]);
       const v0 = gest.v, ds = Math.max(0.5, Math.min(8, v0.k * d1 / d0)) / v0.k;
-      const dr = Math.atan2(B[1] - A[1], B[0] - A[0]) - Math.atan2(gest.b[1] - gest.a[1], gest.b[0] - gest.a[0]);
+      const dr = planState.edit ? 0 : Math.atan2(B[1] - A[1], B[0] - A[0]) - Math.atan2(gest.b[1] - gest.a[1], gest.b[0] - gest.a[0]); // в редакторе без поворота — сетка ровная
       const m0 = [(gest.a[0] + gest.b[0]) / 2, (gest.a[1] + gest.b[1]) / 2], m1 = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
       // точка под пальцами остаётся под пальцами: t1 = ds·R(dr)·(t0 − m0) + m1
       const qx = v0.tx - m0[0], qy = v0.ty - m0[1], cs = Math.cos(dr), sn = Math.sin(dr);
@@ -1276,7 +1309,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   svg.addEventListener('pointerup', fingerUp);
   svg.addEventListener('pointercancel', fingerUp);
   svg.addEventListener('wheel', e => {
-    if (planState.edit) return;
     e.preventDefault();
     const m = units(e.clientX, e.clientY), v = planView;
     const ds = Math.max(0.5, Math.min(8, v.k * Math.exp(-e.deltaY * 0.0015))) / v.k;
@@ -1287,6 +1319,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   async function insertVertex(room, i) {
     if (room.pts.length >= MAX_CORNERS) return toast(`Максимум ${MAX_CORNERS} углов`);
     const e = roomEdges(room)[i];
+    pushUndo();
     room.pts.splice(i + 1, 0, [cm(e.mid[0]), cm(e.mid[1])]);
     room.wallIds.splice(i + 1, 0, newWallId());
     planState.sel = { type: 'vertex', i: i + 1 };
@@ -1300,6 +1333,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const keep = room.wallIds[(i - 1 + n) % n], drop = room.wallIds[i];
     // стена «drop» сливается со стеной «keep»: фото и проёмы переезжают, ничего не теряется
     const photos = (await dbAll('photos', 'wallKey', `${room.id}:${drop}`));
+    pushUndo({ photoKeys: photos.map(p => ({ id: p.id, wallKey: p.wallKey })) });
     for (const p of photos) { p.wallKey = `${room.id}:${keep}`; await dbPut('photos', p); }
     if (room.openings && room.openings[drop]) {
       room.openings[keep] = [...(room.openings[keep] || []), ...room.openings[drop]];
@@ -1336,6 +1370,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const t = prompt('Реальная длина этого отрезка, м:', '');
       const L = parseFloat(String(t || '').replace(',', '.'));
       if (L > 0 && d > 0.01) {
+        pushUndo();
         const ratio = L / d;
         plan.k *= ratio;
         plan.ox = cm(tmp[0][0] - (tmp[0][0] - plan.ox) * ratio);
@@ -1366,6 +1401,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const name = prompt('Название комнаты:', 'Комната ' + (rooms.length + 1));
     if (name === null) return;
     planState.lengthsNext = true; // после перерисовки — окно длин стен новой комнаты
+    pushUndo();
     await createRoom(pid, rooms, tmp.map(p => p.slice()), name.trim() || null);
   }
 
@@ -1377,8 +1413,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     $('#create-tools').classList.toggle('hidden', !!mode);
     if (mode) {
       $('#mode-text').textContent = MODE_TEXT[mode]();
+      const mh = $('.mode-hint'); if (mh && mh.dataset.mode !== mode) { mh.dataset.mode = mode; mh.open = mode !== 'trace'; } // масштаб/сдвиг — подсказка сразу открыта
       $('#mode-done').classList.toggle('hidden', mode === 'scale');
-      $('#mode-plan').classList.toggle('hidden', mode !== 'trace' || !plan);
+      $('#mode-plan').classList.toggle('hidden', mode !== 'trace');
+      $('#mode-plan').innerHTML = `${I('image')}Фото плана`; // короткая подпись — три кнопки в одну линию
       roomTools.classList.add('hidden'); vTools.classList.add('hidden'); wTools.classList.add('hidden'); hint.classList.add('hidden');
       $('#room-name').classList.add('hidden');
       return;
@@ -1393,6 +1431,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       $('#room-name').onclick = async () => {
         const name = prompt('Название комнаты:', room.name);
         if (!name || !name.trim() || name.trim() === room.name) return;
+        pushUndo();
         room.name = name.trim();
         $('#room-name-text').textContent = room.name;
         await dbPut('rooms', room);
@@ -1409,7 +1448,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const ceilInp = $('#room-ceil');
       ceilInp.value = room.ceil || '';
       if (room.wallTop && Object.keys(room.wallTop).length) ceilInp.title = `Высота потолка. У части стен своя высота по обмеру (${roomHeightText(room)}) — её меняют у стены`;
+      ceilInp.onfocus = () => { ceilInp._undo = false; };
       ceilInp.oninput = () => {
+        if (!ceilInp._undo) { ceilInp._undo = true; pushUndo(); } // одна запись на правку поля
         const v = parseFloat(ceilInp.value);
         if (v > 0) room.ceil = v; else delete room.ceil;
         clearTimeout(ceilInp._t); ceilInp._t = setTimeout(() => dbPut('rooms', room), 400);
@@ -1425,6 +1466,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
           ? `Удалить комнату «${room.name}»? Вместе с ней удалятся ${photos.length} фото её стен!`
           : `Удалить комнату «${room.name}»?`;
         if (!confirm(msg)) return;
+        pushUndo({ photos });
         for (const p of photos) await dbDel('photos', p.id);
         await dbDel('rooms', room.id);
         planState.selected = null; planState.sel = null;
@@ -1438,12 +1480,14 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       ang.onchange = async () => {
         const v = parseFloat(ang.value);
         if (!(v > 0 && v < 360)) return;
+        pushUndo();
         setCornerAngle(room, i, v);
         await dbPut('rooms', room); draw();
       };
       rad.onchange = async () => {
         const v = parseFloat(rad.value);
         const p = room.pts[i];
+        pushUndo();
         room.pts[i] = v > 0 ? [p[0], p[1], v / 100] : [p[0], p[1]];
         await dbPut('rooms', room); draw();
       };
@@ -1455,6 +1499,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       len.onchange = async () => {
         const v = parseFloat(String(len.value).replace(',', '.'));
         if (!(v > 0)) return;
+        pushUndo();
         setWallLength(room, i, v);
         await dbPut('rooms', room); draw();
       };
@@ -1464,6 +1509,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       wh.onchange = async () => {
         const v = parseFloat(String(wh.value).replace(',', '.'));
         if (!(v > 0)) return;
+        pushUndo();
         room.wallTop = { ...(room.wallTop || {}) };
         if (Math.abs(v - roomCeil(room)) < 0.005) delete room.wallTop[wid]; else room.wallTop[wid] = [[0, cm(v)], [1, cm(v)]];
         await dbPut('rooms', room); draw();
@@ -1523,12 +1569,14 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         <button class="iconbtn danger" data-fdel="${k}" title="Удалить">${I('trash')}</button>
       </div>`).join('') || '<p class="mut">Мебели нет.</p>'}`, sh => {
       sh.querySelectorAll('[data-ft]').forEach(s => s.onchange = async () => {
+        pushUndo();
         const o = list[+s.dataset.ft]; o.cat = s.value; o.attrs = [];
         await dbPut('rooms', room); draw();
       });
       sh.querySelectorAll('[data-fdel]').forEach(b => b.onclick = async () => {
         const k = +b.dataset.fdel;
         if (!confirm(`Удалить «${furnName(list[k])}» со схемы и из 3D?`)) return;
+        pushUndo();
         list.splice(k, 1); room.objects = list;
         await dbPut('rooms', room); hideSheet(); render();
       });
@@ -1598,6 +1646,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         const vals = edges.map(e => { const v = parseFloat(String(sh.querySelector(`[data-len="${e.i}"]`).value).replace(',', '.')); return v > 0 ? v : null; });
         const res = fitLengths(room.pts, vals, sh.querySelector('#len-snap').checked);
         if (res.error) return toast(res.error);
+        pushUndo();
         room.pts = res.pts.map((p, k) => [cm(p[0]), cm(p[1]), ...room.pts[k].slice(2)]);
         await dbPut('rooms', room);
         hideSheet(); draw(); updateTools();
@@ -1629,18 +1678,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
   });
   if (planState.edit) {
-    // «Нарисовать»: по сетке или по фото плана (загрузить → масштаб по известной стене → углы по плану)
-    $('#trace-room').onclick = () => {
-      if (plan) return setMode('trace');
-      showSheet(`<div class="sh-title">Как рисуем комнату?</div>
-        <p class="mut small">Отметьте углы примерно — потом введёте длины стен, и схема подстроится.</p>
-        <button class="btn primary wide" id="dr-grid">${I('pen')}По сетке</button>
-        <button class="btn wide" id="dr-plan">${I('image')}По фото плана (БТИ, план застройщика, скан)</button>`, sh => {
-        sh.querySelector('#dr-grid').onclick = () => { hideSheet(); setMode('trace'); };
-        sh.querySelector('#dr-plan').onclick = () => { hideSheet(); planState.drawAfterPlan = true; $('#underlay-file').click(); };
-      });
+    // «Нарисовать» — сразу рисование по сетке; фото плана подгружается кнопкой в панели режима
+    $('#trace-room').onclick = () => setMode('trace');
+    $('#mode-plan').onclick = () => { // после загрузки/масштаба — обратно к углам
+      planState.drawAfterPlan = true;
+      if (plan) underlaySheet(); else $('#underlay-file').click();
     };
-    $('#mode-plan').onclick = () => { planState.drawAfterPlan = true; underlaySheet(); }; // после масштаба — обратно к углам
     if (planState.lengthsNext) { planState.lengthsNext = false; const r = selRoom(); if (r) lengthsSheet(r); }
     $('#mode-done').onclick = async () => {
       if (planState.mode === 'trace') return finishTrace();

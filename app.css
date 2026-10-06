@@ -718,3 +718,13 @@ select.inp {
 .len-row .inp.num { width: 84px; flex: none; padding: 7px 8px; }
 .len-snap { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 4px 0 10px; }
 .len-snap input { width: 18px; height: 18px; accent-color: var(--acc); }
+
+/* режим рисования: кнопки в одну линию, под ними — раскрывающаяся подсказка */
+#mode-tools { flex-wrap: wrap; }
+.mode-hint { flex: 1 1 100%; font-size: 13px; color: var(--mut); }
+.mode-hint summary { cursor: pointer; list-style: none; display: inline-flex; padding: 2px; }
+.mode-hint summary::-webkit-details-marker { display: none; }
+.mode-hint summary svg { width: 20px; height: 20px; fill: none; stroke: var(--mut); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.mode-hint[open] summary svg { stroke: var(--acc); }
+.mode-hint #mode-text { margin-top: 4px; }
+#mode-tools .btn { white-space: nowrap; }
