@@ -350,26 +350,6 @@ async function deleteProject(pid) {
   return true;
 }
 
-// очистить схему: комнаты и всё, что к ним привязано (фото стен, потолка, пола), модели скана; этапы остаются
-async function clearPlan(pid) {
-  const project = await dbGet('projects', pid);
-  const rooms = await dbAll('rooms', 'projectId', pid);
-  if (!rooms.length && !(project && (project.plan || project.usdz || project.finalScan))) { toast('Схема и так пустая'); return false; }
-  const ids = new Set(rooms.map(r => r.id));
-  const photos = (await dbAll('photos', 'projectId', pid)).filter(p => ids.has(String(p.wallKey).split(':')[0]));
-  if (!confirm(`Удалить схему объекта «${project.name}»?
-Комнат: ${rooms.length}${photos.length ? `, вместе с ними удалятся ${photos.length} фото стен, потолков и полов` : ''}.
-Этапы останутся.`)) return false;
-  if (photos.length && !confirm(`Точно удалить ${photos.length} фото? Восстановить будет нельзя (только из резервной копии).`)) return false;
-  for (const p of photos) await dbDel('photos', p.id);
-  for (const r of rooms) await dbDel('rooms', r.id);
-  delete project.usdz; delete project.usdzAt; delete project.finalScan;
-  if (project.plan && confirm('Фото плана (БТИ / скан) тоже удалить?')) delete project.plan;
-  await dbPut('projects', project);
-  planState.selected = null; planState.sel = null; planState.mode = null; planState.tmp = [];
-  toast('Схема удалена');
-  return true;
-}
 
 /* ---------- экран: список объектов ---------- */
 
@@ -638,7 +618,6 @@ async function viewPlan(pid) {
         <span id="room-tools" class="tools hidden">
           <button class="btn small-btn" id="room-lengths" title="Высота потолка и длины стен — схема подстроится">${I('ruler')}Размеры</button>
           <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
-          <button class="btn small-btn danger" id="del-room">Удалить</button>
         </span>
         <span id="vertex-tools" class="tools hidden">
           <label>Угол° <input id="v-angle" class="inp num" type="number" step="1" min="1" max="359"></label>
@@ -658,7 +637,7 @@ async function viewPlan(pid) {
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool ${planUndo.stack.length ? '' : 'hidden'}" id="plan-undo" title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
           ${rooms.length ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
-          ${planState.edit && (rooms.length || (project.plan && project.plan.blob)) ? `<button class="plan-tool danger" id="clear-plan" title="Удалить схему" aria-label="Удалить схему">${ICONS.trash}</button>` : ''}
+          ${planState.edit && rooms.length ? `<button class="plan-tool danger hidden" id="clear-plan" title="Удалить выбранную комнату" aria-label="Удалить комнату">${ICONS.trash}</button>` : ''}
         </div>
       </div>
       ${showShots ? `<div class="shot-bar">
@@ -678,8 +657,6 @@ async function viewPlan(pid) {
     ${bottomNav(pid, 'plan')}`;
 
   $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; planUndo.stack = []; resetPlanView(); render(); };
-  const clearBtn = $('#clear-plan');
-  if (clearBtn) clearBtn.onclick = async () => { if (await clearPlan(pid)) render(); };
   const shotsBtn = $('#toggle-shots');
   if (shotsBtn) shotsBtn.onclick = () => { planState.shots = !planState.shots; render(); };
   app.querySelectorAll('[data-shot-stage]').forEach(b => b.onclick = () => { planState.shotStage = b.dataset.shotStage; render(); });
@@ -1419,11 +1396,29 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       $('#mode-plan').innerHTML = `${I('image')}Фото плана`; // короткая подпись — три кнопки в одну линию
       roomTools.classList.add('hidden'); vTools.classList.add('hidden'); wTools.classList.add('hidden'); hint.classList.add('hidden');
       $('#room-name').classList.add('hidden');
+      if ($('#clear-plan')) $('#clear-plan').classList.add('hidden');
       return;
     }
     const room = selRoom();
     const sel = room ? planState.sel : null;
     $('#create-tools').classList.toggle('hidden', !!room); // выбрана комната — «Нарисовать» не нужен (тап мимо комнат вернёт его)
+    // корзина в углу схемы удаляет выбранную комнату (видна, только когда комната выбрана)
+    const trash = $('#clear-plan');
+    if (trash) {
+      trash.classList.toggle('hidden', !room);
+      trash.onclick = room ? async () => {
+        const photos = (await dbAll('photos', 'projectId', pid)).filter(p => p.wallKey.startsWith(room.id + ':'));
+        const msg = photos.length
+          ? `Удалить комнату «${room.name}»? Вместе с ней удалятся ${photos.length} фото её стен!`
+          : `Удалить комнату «${room.name}»?`;
+        if (!confirm(msg)) return;
+        pushUndo({ photos });
+        for (const p of photos) await dbDel('photos', p.id);
+        await dbDel('rooms', room.id);
+        planState.selected = null; planState.sel = null;
+        render();
+      } : null;
+    }
     // название выбранной комнаты — во всю ширину под кнопками сверху; тап — переименовать
     $('#room-name').classList.toggle('hidden', !room);
     if (room) {
@@ -1450,18 +1445,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       furnBtn.classList.toggle('hidden', !(room.objects && room.objects.length));
       furnBtn.innerHTML = `${I('sofa')}Мебель (${(room.objects || []).length})`;
       furnBtn.onclick = () => furnitureSheet(room);
-      $('#del-room').onclick = async () => {
-        const photos = (await dbAll('photos', 'projectId', pid)).filter(p => p.wallKey.startsWith(room.id + ':'));
-        const msg = photos.length
-          ? `Удалить комнату «${room.name}»? Вместе с ней удалятся ${photos.length} фото её стен!`
-          : `Удалить комнату «${room.name}»?`;
-        if (!confirm(msg)) return;
-        pushUndo({ photos });
-        for (const p of photos) await dbDel('photos', p.id);
-        await dbDel('rooms', room.id);
-        planState.selected = null; planState.sel = null;
-        render();
-      };
     } else if (sel.type === 'vertex') {
       const i = sel.i;
       const ang = $('#v-angle'), rad = $('#v-radius');
@@ -1527,17 +1510,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!r) return;
     const cnt = sf => counts[`${r.id}:${sf}`] || 0;
     const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico}${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
-    showSheet(`<div class="sh-title sh-title-row"><span>${esc(r.name)}</span><button class="iconbtn" data-rename title="Переименовать комнату" aria-label="Переименовать">${ICONS.edit}</button></div>
+    showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
       ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
-      sh.querySelector('[data-rename]').onclick = async () => {
-        const name = prompt('Название комнаты:', r.name);
-        if (!name || !name.trim() || name.trim() === r.name) return;
-        r.name = name.trim();
-        await dbPut('rooms', r);
-        hideSheet(); render();
-      };
     });
   }
 
@@ -2162,8 +2138,7 @@ async function viewWall(pid, wallKey) {
   const stagesWithPhotos = stages.filter(s => byStage[s.id] && byStage[s.id].length);
 
   app.innerHTML = `
-    ${header(wallLabel(room, side), `#/p/${pid}`,
-      `<button class="iconbtn" id="rename-wall" title="Переименовать стену">${ICONS.edit}</button>`)}
+    ${header(wallLabel(room, side), `#/p/${pid}`)}
     <div class="pad">
       ${stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
@@ -2211,13 +2186,6 @@ async function viewWall(pid, wallKey) {
     <input type="file" id="gal" accept="image/*" multiple class="hidden-input">
     <div id="viewer" class="viewer hidden"></div>`;
 
-  $('#rename-wall').onclick = async () => {
-    const name = prompt('Название поверхности:', wallLabel(room, side));
-    if (!name || !name.trim()) return;
-    room.labels = room.labels || {};
-    room.labels[side] = name.trim();
-    await dbPut('rooms', room); render();
-  };
 
 
   app.querySelectorAll('[data-hint]').forEach(el => { el.onclick = () => toast(el.dataset.hint); });
