@@ -633,7 +633,7 @@ async function viewPlan(pid) {
           <button class="btn small-btn primary" id="mode-done">Готово</button>
           <button class="btn small-btn" id="mode-cancel">Отмена</button>
           <button class="btn small-btn hidden" id="mode-plan" title="Загрузить фото плана (БТИ, план застройщика, скан) и рисовать по нему">${I('layers')}Фото плана</button>
-          <details class="mode-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}</summary><div id="mode-text" class="small"></div></details>
+          <details class="mode-hint ihint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span id="mode-text" class="ihint-text"></span></summary></details>
         </span>
         <span id="room-tools" class="tools hidden">
           <label class="rt-field rt-ceil"><span>Высота потолка, м</span><input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="2,70"></label>
@@ -651,7 +651,7 @@ async function viewPlan(pid) {
           <label>h, м <input id="w-h" class="inp num" type="number" step="0.01" min="1" max="10" title="Высота этой стены"></label>
           <button class="btn small-btn" id="add-vertex">+ Угол на стене</button>
         </span>
-        <span class="mut small" id="editor-hint">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину.</span>
+        <details class="ihint" id="editor-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину. Комната — многоугольник до 10 углов; по умолчанию углы 90°, любой можно изменить.</span></summary></details>
       </div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
@@ -674,9 +674,7 @@ async function viewPlan(pid) {
           <div class="empty-ico">${ICONS.plan}</div>
           <p><b>Схемы пока нет.</b></p>
           <p class="mut">Нажмите «Редактор» сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
-        </div>` : `<p class="mut small center pad-h">${planState.edit
-          ? 'Режим редактора: комната — многоугольник до 10 углов. По умолчанию углы 90°, любой можно изменить.'
-          : 'Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.'}</p>`}
+        </div>` : planState.edit ? '' : `<p class="mut small center pad-h">Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.</p>`}
     </div>
     ${bottomNav(pid, 'plan')}`;
 
@@ -1134,6 +1132,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       if (tmp.length === 2) s += `<line class="trace-line" x1="${tmp[0][0]}" y1="${tmp[0][1]}" x2="${tmp[1][0]}" y2="${tmp[1][1]}"/>`;
     }
     const { k, r, tx, ty } = planView, c = Math.cos(r) * k, sn = Math.sin(r) * k;
+    // в просмотре без увеличения смахивание по схеме листает страницу; увеличенная схема и редактор ловят касания сами
+    svg.style.touchAction = !planState.edit && k <= 1.05 ? 'pan-y' : 'none';
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
   }
   if (planView.pid !== pid) { resetPlanView(); planView.pid = pid; planUndo.stack = []; }
@@ -1209,7 +1209,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const rm = rooms.find(r => r.id === t.dataset.room);
       if (!rm) return;
       if (planState.selected !== rm.id) { planState.selected = rm.id; planState.sel = null; updateTools(); }
-      drag = { kind: 'move', room: rm, start: toWorld(e), orig: rm.pts.map(p => p.slice()), moved: false, snap: structuredClone(rooms) };
+      drag = { kind: 'move', room: rm, start: toWorld(e), orig: rm.pts.map(p => p.slice()), origObj: (rm.objects || []).map(o => [o.x, o.y]), moved: false, snap: structuredClone(rooms) };
     }
     try { svg.setPointerCapture(e.pointerId); } catch {}
     draw();
@@ -1229,6 +1229,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     } else if (drag.kind === 'move') {
       const sx = snap(dx), sy = snap(dy);
       drag.room.pts = drag.orig.map(o => [cm(o[0] + sx), cm(o[1] + sy), ...o.slice(2)]);
+      (drag.room.objects || []).forEach((o, k) => { const p0 = drag.origObj[k]; if (p0) { o.x = cm(p0[0] + sx); o.y = cm(p0[1] + sy); } }); // мебель едет вместе с комнатой
     } else {
       const r = drag.room, n = r.pts.length;
       let x = snap(drag.orig[0] + dx), y = snap(drag.orig[1] + dy);
@@ -1271,7 +1272,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (fingers.size === 2) {                                                   // второй палец — это жест, не нажатие и не правка
       if (drag && drag.moved && drag.orig) {                                    // начатое перетаскивание откатываем
         if (drag.kind === 'vertex') drag.room.pts[drag.i] = drag.orig;
-        else if (drag.kind === 'move') drag.room.pts = drag.orig;
+        else if (drag.kind === 'move') { drag.room.pts = drag.orig; (drag.room.objects || []).forEach((o, k) => { const p0 = drag.origObj[k]; if (p0) { o.x = p0[0]; o.y = p0[1]; } }); }
         else if (drag.kind === 'underlay') { plan.ox = drag.orig.ox; plan.oy = drag.orig.oy; }
       }
       drag = null; pinchStart();

@@ -721,10 +721,13 @@ select.inp {
 
 /* режим рисования: кнопки в одну линию, под ними — раскрывающаяся подсказка */
 #mode-tools { flex-wrap: wrap; }
-.mode-hint { flex: 1 1 100%; font-size: 13px; color: var(--mut); }
-.mode-hint summary { cursor: pointer; list-style: none; display: inline-flex; padding: 2px; }
-.mode-hint summary::-webkit-details-marker { display: none; }
-.mode-hint summary svg { width: 20px; height: 20px; fill: none; stroke: var(--mut); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.mode-hint[open] summary svg { stroke: var(--acc); }
-.mode-hint #mode-text { margin-top: 4px; }
+/* раскрывающаяся подсказка под значком «i»: текст начинается в той же строке, что и значок */
+.mode-hint, #editor-hint { flex: 1 1 100%; }
+.ihint { font-size: 13px; color: var(--mut); }
+.ihint summary { cursor: pointer; list-style: none; display: flex; align-items: flex-start; gap: 6px; padding: 2px 0; }
+.ihint summary::-webkit-details-marker { display: none; }
+.ihint summary svg { flex: none; width: 20px; height: 20px; fill: none; stroke: var(--mut); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ihint[open] summary svg { stroke: var(--acc); }
+.ihint:not([open]) .ihint-text { display: none; }
+.ihint-text { line-height: 1.4; padding-top: 1px; }
 #mode-tools .btn { white-space: nowrap; }
