@@ -130,8 +130,13 @@ body {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 14px 0;
 }
-#room-tools { display: flex; gap: 8px; flex: 1; }
-#room-name { flex: 1; min-width: 0; }
+#room-tools { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; align-items: flex-end; }
+/* комната в редакторе: название текстом с карандашом (тап — переименовать), высота — подписанное поле */
+.editor-bar .tools label.rt-field { flex-direction: column; align-items: stretch; gap: 3px; }
+.rt-ceil { flex: 0 0 auto; }
+.rt-title { flex: 1 1 100%; display: block; min-width: 0; padding: 2px 0 4px; border: 0; background: none;
+  font: 600 17px/1.3 system-ui, -apple-system, sans-serif; color: var(--ink); text-align: center; cursor: pointer; overflow-wrap: anywhere; }
+.rt-title svg { display: inline-block; vertical-align: -3px; margin-left: 6px; width: 18px; height: 18px; fill: none; stroke: var(--mut); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .plan-box { padding: 8px 10px; }
 .plan-frame { position: relative; }
 .plan-tools { position: absolute; top: 16px; right: 18px; display: flex; gap: 8px; }
@@ -199,12 +204,13 @@ body {
   text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
   paint-order: stroke; stroke: var(--card); stroke-width: 0.08px;
 }
-#plan .handle.v { fill: var(--card); stroke: var(--acc); stroke-width: 0.1; cursor: grab; }
+#plan .handle.v { fill: var(--card); stroke: var(--acc); stroke-width: 0.06; cursor: grab; }
+#plan .handle-hit, #plan .handle.add circle.handle-hit { fill: transparent; stroke: none; cursor: grab; }
 #plan .handle.v.sel { fill: var(--acc); }
 #plan .handle.add { cursor: pointer; }
-#plan .handle.add circle { fill: var(--card); stroke: var(--mut); stroke-width: 0.06; }
+#plan .handle.add circle { fill: var(--card); stroke: var(--mut); stroke-width: 0.04; }
 #plan .handle.add text {
-  font-size: 0.34px; font-weight: 700; fill: var(--mut);
+  font-size: 0.22px; font-weight: 700; fill: var(--mut);
   text-anchor: middle; dominant-baseline: central; pointer-events: none;
 }
 #plan .underlay { opacity: .35; pointer-events: none; }
@@ -222,10 +228,6 @@ body {
   max-height: 70vh; overflow-y: auto;
 }
 .plan-sheet .btn.wide { margin-top: 0; }
-.wz-list { padding-left: 20px; font-size: 14px; }
-.wz-list li { padding: 2px 0; }
-.wz-inputs { display: flex; gap: 8px; }
-.wz-inputs label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--mut); }
 #mode-text { flex: 1; min-width: 120px; }
 .editor-bar .btn.primary { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
 .editor-bar .tools { display: flex; gap: 8px; flex: 1; align-items: center; flex-wrap: wrap; }
@@ -705,3 +707,14 @@ select.inp {
 .calc-pdf { margin-top: 14px; }
 /* обычная кнопка с оранжевой рамкой («Задание для мастеров») */
 .btn.accent-border { border-color: var(--acc); }
+/* заголовок листа с кнопкой (переименовать комнату) */
+.sh-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sh-title-row .iconbtn { flex: none; }
+
+/* длины стен: строки «Стена N — поле» */
+.len-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 8px 0; }
+.len-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; min-width: 0; }
+.len-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.len-row .inp.num { width: 84px; flex: none; padding: 7px 8px; }
+.len-snap { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 4px 0 10px; }
+.len-snap input { width: 18px; height: 18px; accent-color: var(--acc); }

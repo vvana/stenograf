@@ -47,11 +47,11 @@ function wallLabel(room, side) {
   if (side === 'f') return `${room.name} — пол`;
   return `${room.name} — ${wallBaseName(room, side)}`;
 }
-// «верхняя стена» для стандартных 4 сторон, «стена 3» для произвольных многоугольников
+// «стена 3» — номер как на схеме; у прямоугольных комнат ещё и сторона: «стена 1 (верхняя)»
 function wallBaseName(room, side) {
-  if (SIDE_NAMES[side]) return `${SIDE_NAMES[side]} стена`;
   const i = (room.wallIds || []).indexOf(side);
-  return i >= 0 ? `стена ${i + 1}` : 'стена';
+  const num = i >= 0 ? `стена ${i + 1}` : 'стена';
+  return SIDE_NAMES[side] ? `${num} (${SIDE_NAMES[side]})` : num;
 }
 
 // имя/роль для подписи фото и пометок (хранится на устройстве)
@@ -364,7 +364,7 @@ async function clearPlan(pid) {
   for (const p of photos) await dbDel('photos', p.id);
   for (const r of rooms) await dbDel('rooms', r.id);
   delete project.usdz; delete project.usdzAt; delete project.finalScan;
-  if (project.plan && confirm('Подложку (план БТИ / скан) тоже удалить?')) delete project.plan;
+  if (project.plan && confirm('Фото плана (БТИ / скан) тоже удалить?')) delete project.plan;
   await dbPut('projects', project);
   planState.selected = null; planState.sel = null; planState.mode = null; planState.tmp = [];
   toast('Схема удалена');
@@ -623,20 +623,20 @@ async function viewPlan(pid) {
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
       </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
+        <button type="button" class="rt-title hidden" id="room-name" title="Переименовать комнату"><span id="room-name-text"></span>${ICONS.edit}</button>
         <span id="create-tools" class="tools">
           <button class="btn small-btn" id="add-room">+ Комната</button>
-          <button class="btn small-btn" id="trace-room" title="Обвести комнату тапами по углам">${I('pen')}Обвести</button>
-          <button class="btn small-btn" id="wizard-room" title="Ввести стены по обмеру">${I('ruler')}По обмеру</button>
-          <button class="btn small-btn" id="underlay-menu" title="План БТИ / скан как подложка">${I('layers')}Подложка</button>
+          <button class="btn small-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${I('pen')}Нарисовать</button>
         </span>
         <span id="mode-tools" class="tools hidden">
           <span id="mode-text" class="small"></span>
           <button class="btn small-btn primary" id="mode-done">Готово</button>
           <button class="btn small-btn" id="mode-cancel">Отмена</button>
+          <button class="btn small-btn hidden" id="mode-plan" title="Фото плана под схемой: заменить, масштаб, сдвинуть, скрыть">${I('layers')}Фото плана</button>
         </span>
         <span id="room-tools" class="tools hidden">
-          <input id="room-name" class="inp" placeholder="Название комнаты">
-          <input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="h, м" title="Высота потолка, м">
+          <label class="rt-field rt-ceil"><span>Высота потолка, м</span><input id="room-ceil" class="inp num" type="number" step="0.05" min="2" max="6" placeholder="2,70"></label>
+          <button class="btn small-btn" id="room-lengths" title="Ввести измеренные длины стен — схема подстроится">${I('ruler')}Длины стен</button>
           <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
           <button class="btn small-btn danger" id="del-room">Удалить</button>
         </span>
@@ -851,6 +851,38 @@ function standardizeRect(pts) {
   return [...arr.slice(k), ...arr.slice(0, k)];
 }
 
+// подогнать многоугольник под длины стен: vals[i] — длина стены i (pts[i]→pts[i+1]) или null
+function fitLengths(pts, vals, snap) {
+  const n = pts.length;
+  const ed = pts.map((a, i) => { const b = pts[(i + 1) % n]; const dx = b[0] - a[0], dy = b[1] - a[1]; return { len: Math.hypot(dx, dy), th: Math.atan2(dy, dx) }; });
+  if (ed.some(e => e.len < 1e-6)) return { error: 'В комнате есть стена нулевой длины' };
+  if (snap) { // почти прямые (±10°) углы относительно первой стены — ровно кратные 90°
+    const q = Math.PI / 2, tol = 10 * Math.PI / 180;
+    let th0 = ed[0].th; const k0 = Math.round(th0 / q);
+    if (Math.abs(th0 - k0 * q) < tol) th0 = k0 * q;          // первая стена почти по оси — выравниваем по осям схемы
+    for (const e of ed) { const k = Math.round((e.th - th0) / q); if (Math.abs(e.th - th0 - k * q) < tol) e.th = th0 + k * q; }
+  }
+  const known = vals.map((v, i) => v != null ? v / ed[i].len : null).filter(v => v != null).sort((a, b) => a - b);
+  const k = known.length ? known[known.length >> 1] : 1;   // масштаб для не введённых стен — медиана введённых
+  const d = ed.map(e => [Math.cos(e.th), Math.sin(e.th)]);
+  const t = ed.map((e, i) => vals[i] != null ? vals[i] : e.len * k);
+  const wInv = vals.map(v => v != null ? 0.01 : 1);       // введённые длины весят в 100 раз больше
+  // минимум Σ w(L−t)² при замыкании Σ L·d = 0: L = t − (1/w)·(d·λ), M·λ = Σ t·d, M = Σ (1/w)·d·dᵀ
+  let m00 = 0, m01 = 0, m11 = 0, r0 = 0, r1 = 0;
+  for (let i = 0; i < n; i++) { m00 += wInv[i] * d[i][0] * d[i][0]; m01 += wInv[i] * d[i][0] * d[i][1]; m11 += wInv[i] * d[i][1] * d[i][1]; r0 += t[i] * d[i][0]; r1 += t[i] * d[i][1]; }
+  const det = m00 * m11 - m01 * m01;
+  let l0 = 0, l1 = 0;
+  if (Math.abs(det) > 1e-9) { l0 = (m11 * r0 - m01 * r1) / det; l1 = (m00 * r1 - m01 * r0) / det; }
+  else if (Math.hypot(r0, r1) > 0.01) return { error: 'Контур не замкнуть с такими направлениями стен' };
+  const L = t.map((ti, i) => ti - wInv[i] * (d[i][0] * l0 + d[i][1] * l1));
+  if (L.some(v => !(v > 0.05))) return { error: 'Длины не подходят к форме комнаты — проверьте числа' };
+  let fix = 0, fixWall = '';
+  L.forEach((v, i) => { if (vals[i] != null && Math.abs(v - vals[i]) > fix) { fix = Math.abs(v - vals[i]); fixWall = `стена ${i + 1}`; } });
+  const out = [[pts[0][0], pts[0][1]]];
+  for (let i = 0; i < n - 1; i++) out.push([out[i][0] + d[i][0] * L[i], out[i][1] + d[i][1] * L[i]]);
+  return { pts: out, fix, fixWall };
+}
+
 async function createRoom(pid, rooms, pts, name) {
   const std = standardizeRect(pts);
   const room = {
@@ -969,7 +1001,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const bb = roomBBox(r);
       const path = roomPath(r);
       const edges = roomEdges(r);
-      const showNums = !isStandardRoom(r);
+      const showNums = true; // номера стен у всех комнат — по ним подписаны фото, длины и отчёт
       // название уменьшается в узкой комнате, чтобы по краям оставалось место для размеров стен
       const nameFs = Math.max(0.2, Math.min(0.42, (bb.w - 0.9) / (0.56 * Math.max(1, r.name.length))));
       // название и высота — неподвижные препятствия для подписей стен
@@ -984,6 +1016,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
+        // номера стен и в редакторе
+        if (planState.edit && showNums) {
+          dims.push({ cls: 'wall-num', fs: 0.2, x: e.mid[0] + e.nx * NUM_OFF, y: e.mid[1] + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1) });
+        }
         if (!planState.edit) {
           s += `<line class="wall-hit" data-wall="${key}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
           if (showNums) {
@@ -1059,15 +1095,16 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
           .map(([sf, ico]) => { const n = counts[`${r.id}:${sf}`] || 0; return n ? `${ico} ${n}` : ''; }).filter(Boolean);
         if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.8}">${extra.join('   ')}</text>`;
       }
-      if (planState.edit && sel) {
+      if (planState.edit && sel && planState.lengthsOpen !== r.id) {
         if (r.pts.length < MAX_CORNERS) {
           for (const e of edges) {
-            s += `<g class="handle add" data-add="${e.i}"><circle cx="${e.mid[0]}" cy="${e.mid[1]}" r="0.24"/><text x="${e.mid[0]}" y="${e.mid[1]}">+</text></g>`;
+            s += `<g class="handle add" data-add="${e.i}"><circle class="handle-hit" cx="${e.mid[0]}" cy="${e.mid[1]}" r="0.3"/><circle cx="${e.mid[0]}" cy="${e.mid[1]}" r="0.13"/><text x="${e.mid[0]}" y="${e.mid[1]}">+</text></g>`;
           }
         }
         r.pts.forEach((p, i) => {
           const vs = planState.sel && planState.sel.type === 'vertex' && planState.sel.i === i;
-          s += `<circle class="handle v ${vs ? 'sel' : ''}" data-drag="vertex" data-i="${i}" cx="${p[0]}" cy="${p[1]}" r="0.3"/>`;
+          // видимый кружок маленький, касание ловит невидимый круг побольше
+          s += `<g data-drag="vertex" data-i="${i}"><circle class="handle-hit" cx="${p[0]}" cy="${p[1]}" r="0.34"/><circle class="handle v ${vs ? 'sel' : ''}" cx="${p[0]}" cy="${p[1]}" r="0.15"/></g>`;
           if (vs) {
             const a = Math.round(cornerAngle(r, i));
             s += `<text class="wall-len" x="${p[0] + 0.4}" y="${p[1] - 0.4}">${a}°</text>`;
@@ -1096,7 +1133,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const tmp = planState.tmp;
     if (planState.mode === 'trace' && tmp.length) {
       s += `<polyline class="trace-line" points="${tmp.map(p => p.join(',')).join(' ')}"/>`;
-      tmp.forEach((p, i) => { s += `<circle class="handle v ${i === 0 ? 'first' : ''}" cx="${p[0]}" cy="${p[1]}" r="${i === 0 ? 0.36 : 0.26}"/>`; });
+      tmp.forEach((p, i) => { s += `<circle class="handle v ${i === 0 ? 'first' : ''}" cx="${p[0]}" cy="${p[1]}" r="${i === 0 ? 0.2 : 0.14}"/>`; });
     }
     if (planState.mode === 'scale') {
       tmp.forEach((p, i) => { s += `<g class="handle scale"><circle cx="${p[0]}" cy="${p[1]}" r="0.3"/><text x="${p[0]}" y="${p[1]}">${i + 1}</text></g>`; });
@@ -1291,9 +1328,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   const MODE_TEXT = {
     trace: () => planState.tmp.length
       ? `Углов: ${planState.tmp.length}. Тапните следующий угол; тап по первому или «Готово» — замкнуть.`
-      : 'Тапайте углы комнаты по порядку (по подложке или по сетке).',
+      : 'Тапайте углы комнаты по порядку (по фото плана или по сетке).',
     scale: () => planState.tmp.length ? 'Тапните второй конец известного отрезка' : 'Тапните первый конец стены с известной длиной',
-    underlay: () => 'Тяните подложку пальцем, чтобы совместить с сеткой. «Готово» — закончить.',
+    underlay: () => 'Тяните фото плана пальцем, чтобы совместить с сеткой. «Готово» — закончить.',
   };
   function setMode(m) {
     planState.mode = m; planState.tmp = [];
@@ -1314,9 +1351,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         plan.ox = cm(tmp[0][0] - (tmp[0][0] - plan.ox) * ratio);
         plan.oy = cm(tmp[0][1] - (tmp[0][1] - plan.oy) * ratio);
         await dbPut('projects', project);
-        toast('Масштаб подложки задан');
+        toast('Масштаб задан');
       }
       planState.mode = null; planState.tmp = [];
+      if (planState.drawAfterPlan) { planState.drawAfterPlan = false; planState.mode = 'trace'; toast('Теперь отметьте углы комнаты по плану'); }
       render();
       return;
     }
@@ -1337,6 +1375,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (tmp.length < 3) return toast('Нужно хотя бы 3 угла');
     const name = prompt('Название комнаты:', 'Комната ' + (rooms.length + 1));
     if (name === null) return;
+    planState.lengthsNext = true; // после перерисовки — окно длин стен новой комнаты
     await createRoom(pid, rooms, tmp.map(p => p.slice()), name.trim() || null);
   }
 
@@ -1349,11 +1388,26 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (mode) {
       $('#mode-text').textContent = MODE_TEXT[mode]();
       $('#mode-done').classList.toggle('hidden', mode === 'scale');
+      $('#mode-plan').classList.toggle('hidden', mode !== 'trace' || !plan);
       roomTools.classList.add('hidden'); vTools.classList.add('hidden'); wTools.classList.add('hidden'); hint.classList.add('hidden');
+      $('#room-name').classList.add('hidden');
       return;
     }
     const room = selRoom();
     const sel = room ? planState.sel : null;
+    // название выбранной комнаты — во всю ширину под кнопками сверху; тап — переименовать
+    $('#room-name').classList.toggle('hidden', !room);
+    if (room) {
+      $('#room-name-text').textContent = room.name;
+      $('#room-name').onclick = async () => {
+        const name = prompt('Название комнаты:', room.name);
+        if (!name || !name.trim() || name.trim() === room.name) return;
+        room.name = name.trim();
+        $('#room-name-text').textContent = room.name;
+        await dbPut('rooms', room);
+        draw();
+      };
+    }
     roomTools.classList.toggle('hidden', !room || !!sel);
     vTools.classList.toggle('hidden', !(sel && sel.type === 'vertex'));
     wTools.classList.toggle('hidden', !(sel && sel.type === 'wall'));
@@ -1361,13 +1415,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!room) return;
 
     if (!sel) {
-      const inp = $('#room-name');
-      inp.value = room.name;
-      inp.oninput = () => {
-        room.name = inp.value;
-        clearTimeout(inp._t); inp._t = setTimeout(() => dbPut('rooms', room), 400);
-        draw();
-      };
       const ceilInp = $('#room-ceil');
       ceilInp.value = room.ceil || '';
       if (room.wallTop && Object.keys(room.wallTop).length) ceilInp.title = `Высота потолка. У части стен своя высота по обмеру (${roomHeightText(room)}) — её меняют у стены`;
@@ -1376,6 +1423,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         if (v > 0) room.ceil = v; else delete room.ceil;
         clearTimeout(ceilInp._t); ceilInp._t = setTimeout(() => dbPut('rooms', room), 400);
       };
+      $('#room-lengths').onclick = () => lengthsSheet(room);
       const furnBtn = $('#room-furn');
       furnBtn.classList.toggle('hidden', !(room.objects && room.objects.length));
       furnBtn.innerHTML = `${I('sofa')}Мебель (${(room.objects || []).length})`;
@@ -1441,7 +1489,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     sheet.querySelector('#ps-cancel').onclick = hideSheet;
     if (wire) wire(sheet);
   }
-  function hideSheet() { sheet.classList.add('hidden'); sheet.classList.remove('furn-sheet'); sheet.innerHTML = ''; app.style.paddingBottom = ''; if (planState.furnList) { planState.furnList = false; draw(); } }
+  function hideSheet() {
+    sheet.classList.add('hidden'); sheet.classList.remove('furn-sheet'); sheet.innerHTML = ''; app.style.paddingBottom = '';
+    if (planState.furnList || planState.lengthsOpen) { planState.furnList = false; planState.lengthsOpen = null; draw(); }
+  }
 
   // тап внутри комнаты: поверхности без стен — потолок и пол
   function roomMenu(roomId) {
@@ -1449,10 +1500,17 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!r) return;
     const cnt = sf => counts[`${r.id}:${sf}`] || 0;
     const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico}${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
-    showSheet(`<div class="sh-title">${esc(r.name)}</div>
+    showSheet(`<div class="sh-title sh-title-row"><span>${esc(r.name)}</span><button class="iconbtn" data-rename title="Переименовать комнату" aria-label="Переименовать">${ICONS.edit}</button></div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
       ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
+      sh.querySelector('[data-rename]').onclick = async () => {
+        const name = prompt('Название комнаты:', r.name);
+        if (!name || !name.trim() || name.trim() === r.name) return;
+        r.name = name.trim();
+        await dbPut('rooms', r);
+        hideSheet(); render();
+      };
     });
   }
 
@@ -1488,21 +1546,21 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
 
   function underlaySheet() {
     showSheet(`
-      <div class="sh-title">Подложка: план БТИ, скан, фото плана</div>
-      <p class="mut small">${plan ? `Загружена, масштаб ${(plan.w * plan.k).toFixed(1).replace('.', ',')} м по ширине.` : 'Загрузите план — и обводите комнаты по нему тапами.'}</p>
+      <div class="sh-title">Фото плана: БТИ, план застройщика, скан</div>
+      <p class="mut small">${plan ? `Загружено, масштаб ${(plan.w * plan.k).toFixed(1).replace('.', ',')} м по ширине.` : 'Загрузите план — и рисуйте комнаты по нему тапами по углам.'}</p>
       <button class="btn wide" id="ps-load">${I('image')}${plan ? 'Заменить план' : 'Загрузить план'}</button>
       ${plan ? `
         <button class="btn primary wide" id="ps-scale">${I('ruler')}Задать масштаб (2 точки + длина)</button>
-        <button class="btn wide" id="ps-move">${I('move')}Подвинуть подложку</button>
+        <button class="btn wide" id="ps-move">${I('move')}Подвинуть фото плана</button>
         <button class="btn wide" id="ps-toggle">${planState.underlayHidden ? I('eye') + 'Показать' : I('eyeOff') + 'Скрыть'}</button>
-        <button class="btn danger wide" id="ps-del">Удалить подложку</button>` : ''}`, s => {
+        <button class="btn danger wide" id="ps-del">Удалить фото плана</button>` : ''}`, s => {
       s.querySelector('#ps-load').onclick = () => { hideSheet(); $('#underlay-file').click(); };
       const q = id => s.querySelector(id);
       if (q('#ps-scale')) q('#ps-scale').onclick = () => { hideSheet(); setMode('scale'); };
       if (q('#ps-move')) q('#ps-move').onclick = () => { hideSheet(); setMode('underlay'); };
       if (q('#ps-toggle')) q('#ps-toggle').onclick = () => { planState.underlayHidden = !planState.underlayHidden; hideSheet(); render(); };
       if (q('#ps-del')) q('#ps-del').onclick = async () => {
-        if (!confirm('Удалить подложку? Комнаты останутся.')) return;
+        if (!confirm('Удалить фото плана? Комнаты останутся.')) return;
         delete project.plan; await dbPut('projects', project); hideSheet(); render();
       };
     });
@@ -1527,55 +1585,35 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
   };
 
-  function wizardSheet() {
-    const walls = [];
-    const rowsHTML = () => walls.length
-      ? `<ol class="wz-list">${walls.map((w, i) => `<li>Стена ${i + 1}: <b>${String(w.len).replace('.', ',')} м</b>, угол к следующей ${w.ang}°</li>`).join('')}</ol>`
-      : '<p class="mut small">Идите вдоль стен по часовой стрелке. Угол — внутренний, между этой стеной и следующей (90 — прямой, 270 — внутренний выступ). Последняя стена замкнётся сама.</p>';
-    showSheet(`
-      <div class="sh-title">Комната по обмеру</div>
-      <div id="wz-rows">${rowsHTML()}</div>
-      <div class="wz-inputs">
-        <label>Длина, м <input id="wz-len" class="inp" type="number" step="0.01" min="0.1" inputmode="decimal"></label>
-        <label>Угол, ° <input id="wz-ang" class="inp" type="number" step="1" min="1" max="359" value="90" inputmode="numeric"></label>
-      </div>
-      <button class="btn wide" id="wz-add">+ Добавить стену</button>
-      <button class="btn primary wide" id="wz-close">Замкнуть контур и создать комнату</button>`, s => {
-      const lenI = s.querySelector('#wz-len'), angI = s.querySelector('#wz-ang');
-      lenI.focus();
-      s.querySelector('#wz-add').onclick = () => {
-        const len = parseFloat(String(lenI.value).replace(',', '.')), ang = parseFloat(angI.value);
-        if (!(len > 0)) return toast('Введите длину стены');
-        if (!(ang > 0 && ang < 360)) return toast('Угол от 1 до 359°');
-        if (walls.length >= MAX_CORNERS - 1) return toast(`Максимум ${MAX_CORNERS} углов`);
-        walls.push({ len, ang });
-        s.querySelector('#wz-rows').innerHTML = rowsHTML();
-        lenI.value = ''; angI.value = '90'; lenI.focus();
-      };
-      s.querySelector('#wz-close').onclick = async () => {
-        // незакрытый ввод в полях тоже считаем стеной
-        const len = parseFloat(String(lenI.value).replace(',', '.')), ang = parseFloat(angI.value);
-        if (len > 0 && ang > 0 && ang < 360 && walls.length < MAX_CORNERS - 1) walls.push({ len, ang });
-        if (walls.length < 2) return toast('Нужно хотя бы две стены');
-        const [x0, y0] = freeSpot(rooms, 1, 1);
-        const pts = [[x0, y0]];
-        let x = x0, y = y0, th = 0;
-        for (const w of walls) {
-          x += Math.cos(th) * w.len; y += Math.sin(th) * w.len;
-          pts.push([cm(x), cm(y)]);
-          th += (180 - w.ang) * Math.PI / 180; // поворот по часовой на экране
-        }
-        // замыкающая стена идёт от конца последней введённой стены к началу;
-        // если пользователь ввёл и её — конец совпал с началом, дубликат убираем
-        const last = pts[pts.length - 1];
-        if (Math.hypot(last[0] - x0, last[1] - y0) < 0.05) pts.pop();
-        if (pts.length < 3) return toast('Нужно хотя бы две стены');
-        const name = prompt('Название комнаты:', 'Комната ' + (rooms.length + 1));
-        if (name === null) return;
-        hideSheet();
-        await createRoom(pid, rooms, pts, name.trim() || null);
+  // длины стен: комната нарисована примерно (обводкой или как угодно) — вводим измеренные длины, схема подстраивается.
+  // Направления стен сохраняются (близкие к прямым углы — ровно 90°), не введённые стены масштабируются пропорционально,
+  // невязка контура раскладывается методом наименьших квадратов (введённые длины почти не трогаются).
+  function lengthsSheet(room) {
+    const edges = roomEdges(room);
+    // комната с номерами стен должна быть видна над окном — как у списка мебели
+    planState.lengthsOpen = room.id; draw();
+    sheet.classList.add('furn-sheet');
+    app.style.paddingBottom = '60vh';
+    const el = document.querySelector('#plan path.room.sel') || $('#plan-box'), top = document.querySelector('.topbar');
+    if (el) window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + scrollY - (top ? top.offsetHeight : 0) - 12) });
+    const label = e => `Стена ${e.i + 1}`;
+    showSheet(`<div class="sh-title">Длины стен — ${esc(room.name)}</div>
+      <p class="mut small">Номера — как на схеме выше. Введите, что измерили; пустые стены подстроятся.</p>
+      <div class="len-list">${edges.map(e => `<label class="len-row"><span>${esc(label(e))}</span>
+        <input class="inp num" data-len="${e.i}" type="number" step="0.01" min="0.05" inputmode="decimal" placeholder="≈${fmtM(e.len)}"></label>`).join('')}</div>
+      <label class="len-snap"><input type="checkbox" id="len-snap" checked> Выровнять почти прямые углы до 90°</label>
+      <button class="btn primary wide" id="len-apply">Применить</button>`, sh => {
+      sh.querySelector('#len-apply').onclick = async () => {
+        const vals = edges.map(e => { const v = parseFloat(String(sh.querySelector(`[data-len="${e.i}"]`).value).replace(',', '.')); return v > 0 ? v : null; });
+        const res = fitLengths(room.pts, vals, sh.querySelector('#len-snap').checked);
+        if (res.error) return toast(res.error);
+        room.pts = res.pts.map((p, k) => [cm(p[0]), cm(p[1]), ...room.pts[k].slice(2)]);
+        await dbPut('rooms', room);
+        hideSheet(); draw(); updateTools();
+        toast(res.fix > 0.02 ? `Длины не сходились: ${res.fixWall} поправлена на ${Math.round(res.fix * 100)} см` : 'Схема подстроена под длины стен');
       };
     });
+    const first = sheet.querySelector('[data-len]'); if (first) first.focus();
   }
 
   // лидар (только нативная iOS-версия на iPhone Pro)
@@ -1600,15 +1638,25 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
   });
   if (planState.edit) {
-    $('#trace-room').onclick = () => setMode('trace');
-    $('#wizard-room').onclick = wizardSheet;
-    $('#underlay-menu').onclick = underlaySheet;
+    // «Нарисовать»: по сетке или по фото плана (загрузить → масштаб по известной стене → углы по плану)
+    $('#trace-room').onclick = () => {
+      if (plan) return setMode('trace');
+      showSheet(`<div class="sh-title">Как рисуем комнату?</div>
+        <p class="mut small">Отметьте углы примерно — потом введёте длины стен, и схема подстроится.</p>
+        <button class="btn primary wide" id="dr-grid">${I('pen')}По сетке</button>
+        <button class="btn wide" id="dr-plan">${I('image')}По фото плана (БТИ, план застройщика, скан)</button>`, sh => {
+        sh.querySelector('#dr-grid').onclick = () => { hideSheet(); setMode('trace'); };
+        sh.querySelector('#dr-plan').onclick = () => { hideSheet(); planState.drawAfterPlan = true; $('#underlay-file').click(); };
+      });
+    };
+    $('#mode-plan').onclick = () => { planState.drawAfterPlan = true; underlaySheet(); }; // после масштаба — обратно к углам
+    if (planState.lengthsNext) { planState.lengthsNext = false; const r = selRoom(); if (r) lengthsSheet(r); }
     $('#mode-done').onclick = async () => {
       if (planState.mode === 'trace') return finishTrace();
       if (planState.mode === 'underlay') { await dbPut('projects', project); }
       planState.mode = null; planState.tmp = []; render();
     };
-    $('#mode-cancel').onclick = () => { planState.mode = null; planState.tmp = []; render(); };
+    $('#mode-cancel').onclick = () => { planState.mode = null; planState.tmp = []; planState.drawAfterPlan = false; render(); };
     updateTools();
   }
 }
