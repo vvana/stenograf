@@ -625,7 +625,6 @@ async function viewPlan(pid) {
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <button type="button" class="rt-title hidden" id="room-name" title="Переименовать комнату"><span id="room-name-text"></span>${ICONS.edit}</button>
         <span id="create-tools" class="tools">
-          <button class="btn small-btn" id="add-room">+ Комната</button>
           <button class="btn small-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${I('pen')}Нарисовать</button>
         </span>
         <span id="mode-tools" class="tools hidden">
@@ -705,17 +704,6 @@ async function viewPlan(pid) {
   };
   const sharePlanBtn = $('#share-plan');
   if (sharePlanBtn) sharePlanBtn.onclick = () => exportProject(pid, false);
-  if (planState.edit) {
-    $('#add-room').onclick = async () => {
-      const t = prompt('Размеры комнаты, м: ширина и глубина через пробел (например 4,2 3,1). Пусто — 4 × 3,5', '');
-      if (t === null) return;
-      const nums = String(t).replace(/,/g, '.').match(/\d+(\.\d+)?/g) || [];
-      const w = parseFloat(nums[0]) > 0 ? parseFloat(nums[0]) : 4;
-      const h = parseFloat(nums[1]) > 0 ? parseFloat(nums[1]) : 3.5;
-      const [x, y] = freeSpot(rooms, w, h);
-      await createRoom(pid, rooms, [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], null);
-    };
-  }
   setupPlan(pid, rooms, counts, points, project, shots, openShot);
 }
 
@@ -1018,7 +1006,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         const cnt = counts[key] || 0;
         // номера стен и в редакторе
         if (planState.edit && showNums) {
-          dims.push({ cls: 'wall-num', fs: 0.2, x: e.mid[0] + e.nx * NUM_OFF, y: e.mid[1] + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1) });
+          // у выбранной комнаты в середине стены кружок «+» — номер сдвигаем вдоль стены рядом с ним
+          const sh = planState.selected === r.id && planState.lengthsOpen !== r.id && e.len > 0.9 ? 0.3 : 0;
+          dims.push({ cls: 'wall-num', fs: 0.2, x: e.mid[0] + e.ux * sh + e.nx * NUM_OFF, y: e.mid[1] + e.uy * sh + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1 - sh) });
         }
         if (!planState.edit) {
           s += `<line class="wall-hit" data-wall="${key}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
@@ -1395,6 +1385,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
     const room = selRoom();
     const sel = room ? planState.sel : null;
+    $('#create-tools').classList.toggle('hidden', !!room); // выбрана комната — «Нарисовать» не нужен (тап мимо комнат вернёт его)
     // название выбранной комнаты — во всю ширину под кнопками сверху; тап — переименовать
     $('#room-name').classList.toggle('hidden', !room);
     if (room) {
