@@ -734,3 +734,6 @@ select.inp {
 
 .len-ceil { margin: 8px 0 4px; }
 .len-ceil span { white-space: normal; }
+
+/* в редакторе название комнаты на схеме — тап открывает переименование */
+#plan .room-label.editable { pointer-events: auto; cursor: pointer; }

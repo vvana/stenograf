@@ -627,9 +627,9 @@ async function viewPlan(pid) {
         <span id="wall-tools" class="tools hidden">
           <label>Длина, м <input id="w-len" class="inp num" type="number" step="0.01" min="0.1" max="50"></label>
           <label>h, м <input id="w-h" class="inp num" type="number" step="0.01" min="1" max="10" title="Высота этой стены"></label>
-          <button class="btn small-btn" id="add-vertex">+ Угол на стене</button>
+          <button class="btn small-btn" id="add-vertex">Добавить угол</button>
         </span>
-        <details class="ihint" id="editor-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тапните комнату. Тяните вершины за кружки, «+» на стене добавляет угол, тап по стене — задать длину. Комната — многоугольник до 10 углов; по умолчанию углы 90°, любой можно изменить.</span></summary></details>
+        <details class="ihint" id="editor-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тапните комнату. Тяните углы за кружки; тап по стене — её длина, высота и «Добавить угол». Комната — многоугольник до 10 углов; по умолчанию углы 90°, любой можно изменить.</span></summary></details>
       </div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
@@ -977,16 +977,14 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
-        <text class="room-label" style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>
+        <text class="room-label${planState.edit ? ' editable' : ''}" ${planState.edit ? `data-rename-room="${r.id}"` : ''} style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>
         <text class="room-label room-h" style="font-size:${Math.min(0.26, nameFs).toFixed(3)}px" x="${cx}" y="${cy + nameFs}">${roomHeightText(r)}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
         // номера стен и в редакторе
         if (planState.edit && showNums) {
-          // у выбранной комнаты в середине стены кружок «+» — номер сдвигаем вдоль стены рядом с ним
-          const sh = planState.selected === r.id && planState.lengthsOpen !== r.id && e.len > 0.9 ? 0.3 : 0;
-          dims.push({ cls: 'wall-num', fs: 0.2, x: e.mid[0] + e.ux * sh + e.nx * NUM_OFF, y: e.mid[1] + e.uy * sh + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1 - sh) });
+          dims.push({ cls: 'wall-num', fs: 0.2, x: e.mid[0] + e.nx * NUM_OFF, y: e.mid[1] + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1) });
         }
         if (!planState.edit) {
           s += `<line class="wall-hit" data-wall="${key}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
@@ -1064,11 +1062,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.8}">${extra.join('   ')}</text>`;
       }
       if (planState.edit && sel && planState.lengthsOpen !== r.id) {
-        if (r.pts.length < MAX_CORNERS) {
-          for (const e of edges) {
-            s += `<g class="handle add" data-add="${e.i}"><circle class="handle-hit" cx="${e.mid[0]}" cy="${e.mid[1]}" r="0.3"/><circle cx="${e.mid[0]}" cy="${e.mid[1]}" r="0.13"/><text x="${e.mid[0]}" y="${e.mid[1]}">+</text></g>`;
-          }
-        }
         r.pts.forEach((p, i) => {
           const vs = planState.sel && planState.sel.type === 'vertex' && planState.sel.i === i;
           // видимый кружок маленький, касание ловит невидимый круг побольше
@@ -1118,6 +1111,19 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   function toWorld(e) { // координаты схемы с учётом масштаба/сдвига вида
     const g = svg.querySelector('.plan-view') || svg;
     return new DOMPoint(e.clientX, e.clientY).matrixTransform(g.getScreenCTM().inverse());
+  }
+
+  // переименовать комнату (тап по названию на схеме или по строке с названием в редакторе)
+  async function renameRoom(id) {
+    const room = rooms.find(r => r.id === id);
+    if (!room) return;
+    const name = prompt('Название комнаты:', room.name);
+    if (!name || !name.trim() || name.trim() === room.name) return;
+    pushUndo();
+    room.name = name.trim();
+    await dbPut('rooms', room);
+    if (planState.selected === id && $('#room-name-text')) $('#room-name-text').textContent = room.name;
+    draw();
   }
 
   // --- отмена ---
@@ -1173,6 +1179,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const t = e.target.closest('[data-drag]');
     const room = selRoom();
     if (addEl && room) { drag = { kind: 'tap-add', i: +addEl.dataset.add, sx: e.clientX, sy: e.clientY, moved: false }; return; }
+    const nameEl = e.target.closest('[data-rename-room]');
+    if (nameEl) { drag = { kind: 'tap-rename', id: nameEl.dataset.renameRoom, sx: e.clientX, sy: e.clientY, moved: false }; return; }
     if (edgeEl && room) { drag = { kind: 'tap-edge', i: +edgeEl.dataset.edge, sx: e.clientX, sy: e.clientY, moved: false }; return; }
     if (!t) {
       if (planState.selected !== null || planState.sel) { planState.selected = null; planState.sel = null; updateTools(); draw(); }
@@ -1227,6 +1235,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (d.kind === 'tap-mode') { if (!d.moved) await modeTap(d.world); return; }
     if (d.kind === 'underlay') { if (d.moved) { pushUndo({ plan: { k: plan.k, ox: d.orig.ox, oy: d.orig.oy } }, d.snap); await dbPut('projects', project); } return; }
     const room = selRoom();
+    if (d.kind === 'tap-rename') { if (!d.moved) await renameRoom(d.id); return; }
     if (d.kind === 'tap-add') { if (!d.moved && room) await insertVertex(room, d.i); return; }
     if (d.kind === 'tap-edge') { if (!d.moved) { planState.sel = { type: 'wall', i: d.i }; updateTools(); draw(); } return; }
     if (d.kind === 'vertex' && !d.moved) { planState.sel = { type: 'vertex', i: d.i }; updateTools(); draw(); return; }
@@ -1423,15 +1432,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     $('#room-name').classList.toggle('hidden', !room);
     if (room) {
       $('#room-name-text').textContent = room.name;
-      $('#room-name').onclick = async () => {
-        const name = prompt('Название комнаты:', room.name);
-        if (!name || !name.trim() || name.trim() === room.name) return;
-        pushUndo();
-        room.name = name.trim();
-        $('#room-name-text').textContent = room.name;
-        await dbPut('rooms', room);
-        draw();
-      };
+      $('#room-name').onclick = () => renameRoom(room.id);
     }
     roomTools.classList.toggle('hidden', !room || !!sel);
     vTools.classList.toggle('hidden', !(sel && sel.type === 'vertex'));
