@@ -653,7 +653,7 @@ async function viewPlan(pid) {
       </div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
-        ${planState.edit ? '<div class="plan-edit-badge">Редактирование</div>' : ''}
+        ${planState.edit ? '<div class="plan-edit-badge"><span>Редактирование</span></div>' : ''}
         ${project.north && rooms.length ? `<div class="plan-north" id="plan-north" title="Север${project.north.true ? '' : ' (магнитный)'} — по компасу при обмере"><svg viewBox="-20 -24 40 44"><path d="M0 -13L5 0H-5z" class="pn-n"/><path d="M0 13L-5 0H5z" class="pn-s"/><text x="0" y="-16" class="pn-t">С</text></svg></div>` : ''}
         <div class="plan-tools">
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
@@ -961,7 +961,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     minX = Math.min(minX, plan.ox - 0.5); minY = Math.min(minY, plan.oy - 0.5);
     maxX = Math.max(maxX, plan.ox + plan.w * plan.k + 0.5); maxY = Math.max(maxY, plan.oy + plan.h * plan.k + 0.5);
   }
-  if (planState.edit) { maxX += 2; maxY += 2; }
   const vb = { x: minX, y: minY, w: Math.max(maxX - minX, 6), h: Math.max(maxY - minY, 6) };
 
   box.innerHTML = `<svg id="plan" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" preserveAspectRatio="xMidYMid meet"></svg>`;
