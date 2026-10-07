@@ -382,6 +382,7 @@ async function viewProjects() {
             <div class="card project-card swipe-body" data-nav="#/p/${p.id}">
               <div class="project-name">${esc(p.name)}</div>
               <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
+              <button class="card-edit" data-nonav data-rename="${p.id}" title="Переименовать объект" aria-label="Переименовать объект">${ICONS.edit}</button>
             </div>
           </div>`).join('')}
       </div>
@@ -392,6 +393,17 @@ async function viewProjects() {
       </div>
       <p class="mut small center">Данные хранятся только на этом устройстве.<br>Периодически сохраняйте резервную копию.</p>
     </div>`;
+
+  // переименование объекта — карандаш справа в карточке (единственное место)
+  app.querySelectorAll('[data-rename]').forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const p = projects.find(x => x.id === b.dataset.rename);
+    if (!p) return;
+    const name = prompt('Название объекта:', p.name);
+    if (!name || !name.trim()) return;
+    p.name = name.trim();
+    await dbPut('projects', p); render();
+  });
 
   $('#add-project').onclick = async () => {
     const name = prompt('Название объекта (например, «Квартира на Ленина»):');
@@ -624,13 +636,15 @@ async function viewPlan(pid) {
     if (n) points[p.wallKey] = (points[p.wallKey] || 0) + n;
   });
 
+  const lidarNow = typeof lidarSupportedCache !== 'undefined' && lidarSupportedCache === true;
   app.innerHTML = `
     ${header('Схема', '#/')}
     <div class="plan-wrap">
       <div class="plan-actions">
-        <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
-        <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
-        ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Создать</span></button><span class="pa-btn pa-spacer hidden" aria-hidden="true"></span>` : ''}
+        ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}
+        <button class="pa-btn pa-scan2 ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
+        <button class="pa-btn pa-scan ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
+        ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Создать</span></button><span class="pa-btn pa-spacer ${lidarNow ? '' : 'hidden'}" aria-hidden="true"></span>` : ''}
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
         ${planState.edit ? `<!-- выбрана комната: «Размеры» и «Мебель» на месте «Создать» -->
@@ -2538,10 +2552,6 @@ async function viewMore(pid) {
     ${header('Ещё', `#/p/${pid}`)}
     <div class="pad">
       <div class="cards">
-        <div class="card proj-name-card">
-          <div class="proj-name-row"><b>${esc(project.name)}</b><button class="iconbtn" id="rename-project" title="Переименовать объект" aria-label="Переименовать объект">${ICONS.edit}</button></div>
-          <div class="mut small">${rooms.length} комн. · ${photos.length} фото</div>
-        </div>
         <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
         ${project.hdCapture || project.hdScan || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
@@ -2559,12 +2569,6 @@ async function viewMore(pid) {
     const el = $('#diag');
     if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
   }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
-  $('#rename-project').onclick = async () => {
-    const name = prompt('Название объекта:', project.name);
-    if (!name || !name.trim()) return;
-    project.name = name.trim();
-    await dbPut('projects', project); render();
-  };
   $('#set-name').onclick = () => {
     const t = prompt('Ваше имя и роль (подпись на фото и пометках):', userName());
     if (t === null) return;
