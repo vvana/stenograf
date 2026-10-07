@@ -39,6 +39,7 @@ jobs:
           PLIST=App/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Камера нужна для фото стен и обмера комнат лидаром'" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :UIRequiresFullScreen bool true" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Геопозиция нужна, чтобы при обмере определить стороны света по компасу (истинный север) и отметить место съёмки на фото'" "$PLIST" || true
           # всегда светлое оформление (и тёмный текст строки состояния), даже при тёмной теме iPhone
           /usr/libexec/PlistBuddy -c "Add :UIUserInterfaceStyle string Light" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIUserInterfaceStyle Light" "$PLIST"
           # HD-пакеты (Documents) видны в «Файлы → На iPhone → Fixpoint» и в Windows-приложении Apple Devices / iTunes

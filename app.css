@@ -140,6 +140,8 @@ body {
 .plan-box { padding: 8px 10px; }
 .plan-frame { position: relative; }
 .plan-tools { position: absolute; top: 16px; right: 18px; display: flex; gap: 8px; }
+/* в редакторе — надпись в строке с кнопками схемы (слева) */
+.plan-edit-badge { position: absolute; top: 16px; left: 18px; height: 37px; display: flex; align-items: center; font: 600 14px system-ui, -apple-system, sans-serif; color: var(--acc); pointer-events: none; }
 .plan-tool {
   width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); box-shadow: var(--shadow);
   display: inline-flex; align-items: center; justify-content: center; color: var(--top-ink); cursor: pointer; padding: 0;
@@ -546,7 +548,10 @@ body {
 .tpl-txt { display: flex; flex-direction: column; line-height: 1.25; }
 .tpl-txt small { color: var(--mut); font-weight: 400; font-size: 12px; }
 .stage-hint { color: var(--mut); }
-.hint-i { color: var(--acc); cursor: pointer; margin-left: 6px; font-size: 14px; }
+.hint-i { display: inline-flex; vertical-align: -4px; margin-left: 6px; padding: 0; border: 0; background: none; cursor: pointer; line-height: 0; }
+.hint-i svg { width: 20px; height: 20px; fill: none; stroke: var(--mut); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.hint-i.open svg { stroke: var(--acc); }
+.stage-hint-text { margin: 6px 0 2px; line-height: 1.45; }
 .seal-info code, .seal-table code { font-size: 11px; background: var(--code, rgba(128,128,128,.15)); border-radius: 4px; padding: 1px 4px; }
 .seal-line { color: var(--mut); font-size: 12px; }
 .seal-table { font-size: 12px; }
@@ -737,3 +742,13 @@ select.inp {
 
 /* в редакторе название комнаты на схеме — тап открывает переименование */
 #plan .room-label.editable { pointer-events: auto; cursor: pointer; }
+
+/* главный экран: отступ кнопок от списка объектов */
+#add-project { margin-top: 40px; }
+
+/* стороны света: стрелка «С» в левом нижнем углу схемы (по компасу при обмере) */
+.plan-north { position: absolute; left: 14px; bottom: 14px; width: 48px; height: 52px; pointer-events: none; }
+.plan-north svg { width: 48px; height: 52px; transition: transform .15s; overflow: visible; }
+.plan-north .pn-n { fill: #c0392b; }
+.plan-north .pn-s { fill: var(--card); stroke: var(--mut); stroke-width: 0.8; }
+.plan-north .pn-t { font: 700 9px system-ui, -apple-system, sans-serif; fill: #c0392b; text-anchor: middle; }

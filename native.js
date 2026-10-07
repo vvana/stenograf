@@ -599,12 +599,22 @@ function roomPlanModels(project, rooms) {
 
 /* ---------- сценарии ---------- */
 
+// север из скана (мир сессии) → направление на схеме: угол схемы = угол мира + turn
+async function saveNorth(pid, scan, turn) {
+  if (typeof scan.north !== 'number' || typeof turn !== 'number') return;
+  const p = await dbGet('projects', pid);
+  if (!p) return;
+  p.north = { ang: +(((scan.north + turn) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)).toFixed(4), true: !!scan.northTrue, n: scan.northSamples || 0, at: Date.now() };
+  await dbPut('projects', p);
+}
+
 async function lidarMeasure(pid, rooms, room) {
   let scan;
   try { scan = await Native.RP.scan({ mode: 'measure' }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const name = room ? null : (prompt('Название комнаты:', 'Комната ' + (rooms.length + 1)) || null);
-  const { room: r, idMap } = await applyScan(pid, rooms, room, scan, name);
+  const { room: r, idMap, turn } = await applyScan(pid, rooms, room, scan, name);
+  await saveNorth(pid, scan, turn);
   if (scan.usdz) { r.usdz = await b64Blob(scan.usdz, 'model/vnd.usdz+zip'); r.usdzAt = Date.now(); await dbPut('rooms', r); }
   toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м`);
   const res = scanToPolygon(scan);
@@ -618,6 +628,7 @@ async function lidarApartment(pid, rooms, stageId) {
   try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { results, wallMap } = await applyStructure(pid, rooms, scan);
+  if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
   await saveProjectUsdz(pid, scan);
   let mirrors = 0;
   for (const r of results) mirrors += await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
@@ -641,6 +652,19 @@ async function lidarApartment(pid, rooms, stageId) {
   return results;
 }
 
+// пол или потолок одной комнаты отдельным коротким сканом → ровный снимок сверху на этап (как в обходе)
+async function lidarSurface(pid, room, stageId, surface) {
+  let scan;
+  try { scan = await Native.RP.scan({ mode: 'surface', overlay: { surface } }); }
+  catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
+  const { toPlan, turn } = matchScanToRoom(room, scan);
+  if (!toPlan) throw new Error('скан не совпал со схемой комнаты — в начале скана обведите камерой стены');
+  await saveNorth(pid, scan, turn);
+  const n = await savePlanes(pid, stageId, (scan.planes || []).filter(o => o.surface === surface), () => ({ room, toPlan }));
+  toast(n ? `${surface === 'f' ? 'Пол' : 'Потолок'} снят` : 'Снято слишком мало — поводите телефоном по поверхности дольше');
+  return n;
+}
+
 // AR-призрак: старое фото приклеивается к стене в живой картинке (нативно)
 async function lidarGhost(photo, wallSize) {
   const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(photo.blob); });
@@ -657,6 +681,7 @@ async function lidarFinal(pid, project, rooms, opts = {}) {
   try { scan = await Native.RP.scan({ mode: 'final', hd: !!opts.hd }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { results, transform } = await applyStructure(pid, rooms, scan);
+  if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
   await saveProjectUsdz(pid, scan);
   if (scan.usdz) project = await dbGet('projects', pid);
   for (const r of results) await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
@@ -684,6 +709,7 @@ async function lidarWalk(pid, room, stageId) {
   try { scan = await Native.RP.scan({ mode: 'walk' }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
+  if (toPlan) await saveNorth(pid, scan, turn);
   const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap, toPlan ? { toPlan, turn, floorY: scan.floorY } : null);
   r.planes = await savePlanes(pid, stageId, scan.planes, () => toPlan ? { room, toPlan } : null);
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;

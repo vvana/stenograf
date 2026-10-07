@@ -511,6 +511,29 @@ function roomCenter(r) {
   if (pointInPoly(c, pts)) return c;
   return pointInPoly(bc, pts) ? bc : c;
 }
+// цепочки стен на одной прямой: runs[i] = { first, idx: [номера стен], edge: общий отрезок (a, b, len, mid, nx, ny, ux, uy) }
+function collinearRuns(r, edges) {
+  const n = edges.length;
+  const straight = i => { // вершина i (между стенами i−1 и i) — без поворота и без скругления
+    const p = edges[(i - 1 + n) % n], q = edges[i];
+    return !(r.pts[i][2] > 0) && Math.abs(p.ux * q.uy - p.uy * q.ux) < 0.01 && p.ux * q.ux + p.uy * q.uy > 0;
+  };
+  let start = 0;
+  while (start < n && straight(start)) start++;
+  if (start === n) return edges.map(e => ({ first: e.i, idx: [e.i], edge: e }));
+  const runs = new Array(n);
+  for (let k = 0; k < n;) {
+    const i0 = (start + k) % n, idx = [i0];
+    k++;
+    while (k < n && straight((start + k) % n)) { idx.push((start + k) % n); k++; }
+    const A = edges[idx[0]], B = edges[idx[idx.length - 1]];
+    const len = idx.reduce((t, i) => t + edges[i].len, 0);
+    const edge = idx.length === 1 ? A : { ...A, b: B.b, len, mid: [(A.a[0] + B.b[0]) / 2, (A.a[1] + B.b[1]) / 2] };
+    for (const i of idx) runs[i] = { first: idx[0], idx, edge };
+  }
+  return runs;
+}
+
 function roomEdges(r) {
   const n = r.pts.length, out = [];
   for (let i = 0; i < n; i++) {
@@ -601,14 +624,12 @@ async function viewPlan(pid) {
       <div class="plan-actions">
         <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
         <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
+        ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Нарисовать</span></button>` : ''}
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
       </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
         <button type="button" class="rt-title hidden" id="room-name" title="Переименовать комнату"><span id="room-name-text"></span>${ICONS.edit}</button>
-        <span id="create-tools" class="tools">
-          <button class="btn small-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${I('pen')}Нарисовать</button>
-        </span>
         <span id="mode-tools" class="tools hidden">
           <button class="btn small-btn primary" id="mode-done">Готово</button>
           <button class="btn small-btn" id="mode-cancel">Отмена</button>
@@ -633,10 +654,12 @@ async function viewPlan(pid) {
       </div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
+        ${planState.edit ? '<div class="plan-edit-badge">Редактирование</div>' : ''}
+        ${project.north && rooms.length ? `<div class="plan-north" id="plan-north" title="Север${project.north.true ? '' : ' (магнитный)'} — по компасу при обмере"><svg viewBox="-20 -24 40 44"><path d="M0 -13L5 0H-5z" class="pn-n"/><path d="M0 13L-5 0H5z" class="pn-s"/><text x="0" y="-16" class="pn-t">С</text></svg></div>` : ''}
         <div class="plan-tools">
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool ${planUndo.stack.length ? '' : 'hidden'}" id="plan-undo" title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
-          ${rooms.length ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
+          ${rooms.length && !planState.edit ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
           ${planState.edit && rooms.length ? `<button class="plan-tool danger hidden" id="clear-plan" title="Удалить выбранную комнату" aria-label="Удалить комнату">${ICONS.trash}</button>` : ''}
         </div>
       </div>
@@ -1027,9 +1050,14 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
           }
         }
       }
-      // размеры стен — снаружи комнаты вдоль стены; у стен со своей высотой — ещё и высота
-      for (const e of edges) {
-        if (planState.edit && sel && planState.sel && planState.sel.type === 'wall' && planState.sel.i === e.i) continue;
+      // размеры стен — снаружи комнаты вдоль стены; у стен со своей высотой — ещё и высота.
+      // Отрезки подряд на одной прямой (угол 180°, без скругления) — это одна стена: подписываем общую длину.
+      const runs = collinearRuns(r, edges);
+      for (const e0 of edges) {
+        const run = runs[e0.i];
+        if (run.first !== e0.i) continue;
+        if (planState.edit && sel && planState.sel && planState.sel.type === 'wall' && run.idx.includes(planState.sel.i)) continue;
+        const e = run.idx.length > 1 ? run.edge : e0;
         if (e.len < 0.25) continue;
         let deg = Math.atan2(e.uy, e.ux) * 180 / Math.PI;
         if (deg > 90.5) deg -= 180; else if (deg <= -89.5) deg += 180;
@@ -1038,7 +1066,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         let out = -1; // -1 — снаружи комнаты, +1 — внутри
         if (nearOther(r, x, y)) { const d = showNums ? 0.38 : DIM_OFF; x = e.mid[0] + e.nx * d; y = e.mid[1] + e.ny * d; out = 1; }
         let txt = fmtM(e.len);
-        if (r.wallTop && r.wallTop[e.id]) {
+        if (run.idx.length === 1 && r.wallTop && r.wallTop[e.id]) {
           const hs = wallTop(r, e.id).map(q => q[1]);
           const h0 = hs[0], h1 = hs[hs.length - 1], lo = Math.min(...hs), hi = Math.max(...hs);
           txt += hi - lo < 0.015 ? ` · h ${fmtM(hi)}` : (Math.abs(Math.min(h0, h1) - lo) < 0.005 && Math.abs(Math.max(h0, h1) - hi) < 0.005 && !hs.some((h, k) => k && Math.abs(h - hs[k - 1]) > 0.005 && Math.abs(wallTop(r, e.id)[k][0] - wallTop(r, e.id)[k - 1][0]) < 1e-3) ? ` · h ${fmtM(h0)}→${fmtM(h1)}` : ` · h ${fmtM(lo)}–${fmtM(hi)}`);
@@ -1101,6 +1129,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       if (tmp.length === 2) s += `<line class="trace-line" x1="${tmp[0][0]}" y1="${tmp[0][1]}" x2="${tmp[1][0]}" y2="${tmp[1][1]}"/>`;
     }
     const { k, r, tx, ty } = planView, c = Math.cos(r) * k, sn = Math.sin(r) * k;
+    // стрелка севера: направление на схеме + поворот вида (стрелка нарисована «вверх» = −90°)
+    const ne = $('#plan-north');
+    if (ne && project.north) ne.querySelector('svg').style.transform = `rotate(${((project.north.ang + r) * 180 / Math.PI + 90).toFixed(1)}deg)`;
     // в просмотре без увеличения смахивание по схеме листает страницу; увеличенная схема и редактор ловят касания сами
     svg.style.touchAction = !planState.edit && k <= 1.05 ? 'pan-y' : 'none';
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
@@ -1396,7 +1427,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!roomTools) return;
     const mode = planState.mode;
     $('#mode-tools').classList.toggle('hidden', !mode);
-    $('#create-tools').classList.toggle('hidden', !!mode);
+    $('#trace-room').classList.toggle('hidden', !!mode);
     if (mode) {
       $('#mode-text').textContent = MODE_TEXT[mode]();
       const mh = $('.mode-hint'); if (mh && mh.dataset.mode !== mode) { mh.dataset.mode = mode; mh.open = mode !== 'trace'; } // масштаб/сдвиг — подсказка сразу открыта
@@ -1410,7 +1441,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
     const room = selRoom();
     const sel = room ? planState.sel : null;
-    $('#create-tools').classList.toggle('hidden', !!room); // выбрана комната — «Нарисовать» не нужен (тап мимо комнат вернёт его)
+    $('#trace-room').classList.toggle('hidden', !!room); // выбрана комната — «Нарисовать» не нужен (тап мимо комнат вернёт его)
     // корзина в углу схемы удаляет выбранную комнату (видна, только когда комната выбрана)
     const trash = $('#clear-plan');
     if (trash) {
@@ -1513,8 +1544,20 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const item = (sf, ico, name) => `<button class="btn wide" data-go="${sf}">${ico}${name}${cnt(sf) ? ` <small class="mut">· ${cnt(sf)} фото</small>` : ''}</button>`;
     showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
-      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}`, sh => {
+      ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}
+      <button class="btn wide hidden" id="rm-remeasure">${ICONS.scan}Переобмерить лидаром</button>`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
+      // переобмер этой комнаты (обмер вынесен из редактора) — только на телефоне с лидаром
+      lidarAvailable().then(ok => {
+        const rb = sh.querySelector('#rm-remeasure');
+        if (!ok || !rb) return;
+        rb.classList.remove('hidden');
+        rb.onclick = async () => {
+          if (!confirm(`Переобмерить «${r.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
+          hideSheet();
+          try { await lidarMeasure(pid, rooms, r); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
+        };
+      });
     });
   }
 
@@ -1636,6 +1679,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → О приложении»');
       return;
     }
+    if (planState.edit) return; // в редакторе только правка схемы; обмер — из обычного режима
     const measBtn = $('#lidar-measure');
     const aptBtn = $('#lidar-apt');
     if (aptBtn) { aptBtn.classList.remove('hidden'); aptBtn.onclick = () => measureApartment(pid); }
@@ -2163,12 +2207,13 @@ async function viewWall(pid, wallKey) {
           const list = byStage[s.id] || [];
           return `<div class="card stage-photos">
             <div class="stage-photos-head">
-              <b>${esc(s.name)}</b>${s.hint ? `<span class="hint-i" title="${esc(s.hint)}" data-hint="${esc(s.hint)}">ⓘ</span>` : ''}
+              <b>${esc(s.name)}</b>${s.hint ? `<button type="button" class="hint-i" title="Что фиксировать" aria-label="Что фиксировать" data-hint-toggle="${s.id}">${ICONS.info}</button>` : ''}
               <span class="btn-pair">
                 <button class="btn small-btn" data-shoot="${s.id}">${I('camera')}Снять</button>
                 <button class="btn small-btn" data-pick="${s.id}">${I('image')}Галерея</button>
               </span>
             </div>
+            ${s.hint ? `<div class="stage-hint-text mut small hidden" data-hint-text="${s.id}">${esc(s.hint)}</div>` : ''}
             ${list.length ? `<div class="thumbs">
               ${list.map(p => {
                 const n = (p.marks || []).length;
@@ -2189,7 +2234,12 @@ async function viewWall(pid, wallKey) {
 
 
 
-  app.querySelectorAll('[data-hint]').forEach(el => { el.onclick = () => toast(el.dataset.hint); });
+  // подсказка этапа «что фиксировать» — раскрывается в карточке, а не всплывающей строкой (длинный текст не помещался)
+  app.querySelectorAll('[data-hint-toggle]').forEach(el => { el.onclick = () => {
+    const t = app.querySelector(`[data-hint-text="${el.dataset.hintToggle}"]`);
+    const open = t.classList.toggle('hidden') === false;
+    el.classList.toggle('open', open);
+  }; });
 
   const addOp = $('#add-opening');
   if (addOp) {
@@ -2222,7 +2272,23 @@ async function viewWall(pid, wallKey) {
   const cam = $('#cam'), gal = $('#gal');
   let pendingStage = null;
   app.querySelectorAll('[data-shoot]').forEach(b => {
-    b.onclick = () => { pendingStage = b.dataset.shoot; cam.click(); };
+    b.onclick = async () => {
+      pendingStage = b.dataset.shoot;
+      // пол/потолок на телефоне с лидаром: скан с ровным снимком сверху или обычное фото
+      if ((side === 'f' || side === 'c') && await lidarAvailable()) {
+        const how = await pickSheet(side === 'f' ? 'Снять пол' : 'Снять потолок', 'Скан лидаром склеивает кадры в ровный снимок всей поверхности сверху. Обычное фото — один кадр камерой.', [
+          { html: `${I('scan')}Сканировать лидаром`, value: 'scan', primary: true },
+          { html: `${I('camera')}Обычное фото`, value: 'photo' },
+        ]);
+        if (!how) return;
+        if (how === 'scan') {
+          try { const n = await lidarSurface(pid, room, pendingStage, side); if (n) render(); }
+          catch (err) { alert('Скан не удался: ' + err.message); }
+          return;
+        }
+      }
+      cam.click();
+    };
   });
   app.querySelectorAll('[data-pick]').forEach(b => {
     b.onclick = () => { pendingStage = b.dataset.pick; gal.click(); };

@@ -3,6 +3,7 @@ import RoomPlan
 import ARKit
 import CoreImage
 import simd
+import CoreLocation
 
 /// Экран сканирования: RoomCaptureView + наша панель кнопок.
 /// mode: "measure" — геометрия одной комнаты; "walk" — плюс автоснимки стен;
@@ -48,12 +49,17 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var lastKeyPos: simd_float3?
     private var lastKeyFwd: simd_float3?
     private var meshAnchors: [ARMeshAnchor] = []
+    // стороны света: компас + направление камеры в мире сессии → азимут севера в осях скана (усреднение по кругу)
+    private let locMgr = CLLocationManager()
+    private var northSin = 0.0, northCos = 0.0, northN = 0
+    private var northTrue = true
     // пол и потолок обхода: кадры со всех сторон (уменьшенные, с позой камеры) → ортофото в конце
     private var surfFrames: [KeyFrame] = []
     private var lastSurfPos: simd_float3?
     private var lastSurfFwd: simd_float3?
     private var prevSurfT: simd_float4x4?
-    private var wantSurfaces: Bool { wantFrames && (mode == "walk" || mode == "multi") }
+    // пол/потолок из кадров: обход этапа и отдельный скан одной поверхности (mode "surface", overlay.surface = "f" | "c")
+    private var wantSurfaces: Bool { (wantFrames && (mode == "walk" || mode == "multi")) || mode == "surface" }
     private let hd: Bool                              // HD-скан: полные кадры + позы для обучения на компьютере
     private var hdCapture: HDCapture?
 
@@ -148,6 +154,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         ])
 
         if mode == "ghost" { setupGhost(bar: bar) }
+        if mode != "ghost" { setupCompass() }
         if hd { hdCapture = HDCapture() }
         if mode == "final" || wantSurfaces { setupCoverage() }
     }
@@ -238,6 +245,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func initialHint() -> String {
         switch mode {
+        case "surface":
+            let what = (overlayParams?["surface"] as? String) == "f" ? "пол" : "потолок"
+            return "Скан: \(what). Сначала обведите камерой стены комнаты, потом медленно ведите телефоном по поверхности — снятое подсвечивается зелёным. В конце «Готово»"
         case "walk": return "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Снятое подсвечивается зелёным"
         case "multi": return wantFrames
             ? "Обход квартиры: пройдите комнату вдоль стен, наклоняя телефон к полу и потолку, пока всё не станет зелёным, затем «Следующая» — и в другую комнату"
@@ -313,6 +323,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        locMgr.stopUpdatingHeading(); locMgr.stopUpdatingLocation()
         stopCoverage()   // CADisplayLink держит контроллер — отпускаем при любом закрытии экрана
     }
 
@@ -596,8 +607,38 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         return out
     }
 
+    /// Компас: истинный север (если разрешена геопозиция), иначе магнитный.
+    private func setupCompass() {
+        guard CLLocationManager.headingAvailable() else { return }
+        locMgr.headingOrientation = .portrait
+        locMgr.desiredAccuracy = kCLLocationAccuracyKilometer
+        if locMgr.authorizationStatus == .notDetermined { locMgr.requestWhenInUseAuthorization() }
+        locMgr.startUpdatingLocation()   // нужна для trueHeading; без разрешения просто не сработает
+        locMgr.startUpdatingHeading()
+    }
+
+    /// Камера смотрит в мире сессии под углом a_cam = atan2(z, x) (по часовой при взгляде сверху),
+    /// компас говорит, что это направление h° от севера по часовой → север в мире: a_cam − h.
+    private func sampleNorth(frame: ARFrame) {
+        guard let h = locMgr.heading, h.headingAccuracy >= 0, h.headingAccuracy <= 30,
+              frame.camera.trackingState == .normal else { return }
+        let T = frame.camera.transform
+        let fx = Double(-T.columns.2.x), fz = Double(-T.columns.2.z)
+        guard (fx * fx + fz * fz).squareRoot() > 0.5 else { return }   // телефон смотрит в пол/потолок — пропуск
+        let useTrue = h.trueHeading >= 0
+        let deg = useTrue ? h.trueHeading : h.magneticHeading
+        let a = atan2(fz, fx) - deg * Double.pi / 180
+        northSin += sin(a); northCos += cos(a); northN += 1
+        if !useTrue { northTrue = false }
+    }
+
     private func buildResult(rooms: [CapturedRoom]) -> [String: Any] {
         var out: [String: Any] = ["mode": mode]
+        if northN >= 5 {
+            out["north"] = atan2(northSin, northCos)
+            out["northTrue"] = northTrue
+            out["northSamples"] = northN
+        }
         if let first = rooms.first, rooms.count == 1 {
             for (k, v) in roomDict(first) { out[k] = v }
         }
@@ -625,6 +666,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private func poll() {
         guard let frame = sharedSession?.currentFrame else { return }
         if mode == "ghost" { pollGhost(frame: frame); return }
+        sampleNorth(frame: frame)
         if mode == "final" { pollKeyFrame(frame: frame) }
         if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
             statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)"

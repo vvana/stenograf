@@ -10,5 +10,5 @@ Pod::Spec.new do |s|
   s.ios.deployment_target = '17.0'
   s.dependency 'Capacitor'
   s.swift_version = '5.1'
-  s.frameworks = 'RoomPlan', 'ARKit', 'CoreImage'
+  s.frameworks = 'RoomPlan', 'ARKit', 'CoreImage', 'CoreLocation'
 end
