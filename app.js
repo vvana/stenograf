@@ -170,9 +170,12 @@ async function render() {
   if (location.hash !== lastRenderedHash) { lastRenderedHash = location.hash; window.scrollTo(0, 0); }
   const slide = swipeNav.dir; swipeNav.dir = 0;
   try {
+    headerSub = '';
     if (parts.length === 0) return await viewProjects();
     if (parts[0] === 'p' && parts[1]) {
       const pid = parts[1];
+      const pr = await dbGet('projects', pid);
+      headerSub = pr ? pr.name : '';
       if (parts[2] === 'stages') return await viewStages(pid);
       if (parts[2] === 'st' && parts[3]) return await viewStageAlbum(pid, parts[3]);
       if (parts[2] === 'more') return await viewMore(pid);
@@ -234,10 +237,13 @@ const swipeNav = { dir: 0 };
 
 // знак приложения «Слои в скане» (как иконка): три слоя-этапа
 const LOGO = '<svg viewBox="0 0 120 120" aria-hidden="true"><path d="M60 89.9L99.1 73.8 60 57.7 20.9 73.8Z" fill="#c4cad6"/><path d="M60 76.1L99.1 60 60 43.9 20.9 60Z" fill="#8a97b0"/><path d="M60 62.3L99.1 46.2 60 30.1 20.9 46.2Z" fill="#3f4f73"/></svg>';
+// название открытого объекта — мелко под заголовком на всех его экранах (ставит render)
+let headerSub = '';
 function header(title, backHash, right = '') {
   return `<header class="topbar">
     ${backHash !== null ? `<button class="iconbtn" data-nav="${esc(backHash)}" aria-label="Назад">←</button>` : '<span></span>'}
-    <h1>${backHash === null ? `<span class="logo">${LOGO}</span>` : ''}${esc(title)}</h1>
+    <h1>${backHash === null ? `<span class="logo">${LOGO}</span>` : ''}${headerSub
+      ? `<span class="tb-title">${esc(title)}</span><span class="tb-sub">${esc(headerSub)}</span>` : esc(title)}</h1>
     <div class="topbar-right">${right}</div>
   </header>`;
 }
@@ -619,7 +625,7 @@ async function viewPlan(pid) {
   });
 
   app.innerHTML = `
-    ${header(project.name, '#/')}
+    ${header('Схема', '#/')}
     <div class="plan-wrap">
       <div class="plan-actions">
         <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
@@ -1235,8 +1241,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const nameEl = e.target.closest('[data-rename-room]');
     if (nameEl) { drag = { kind: 'tap-rename', id: nameEl.dataset.renameRoom, sx: e.clientX, sy: e.clientY, moved: false }; return; }
     if (edgeEl && room) { drag = { kind: 'tap-edge', i: +edgeEl.dataset.edge, sx: e.clientX, sy: e.clientY, moved: false }; return; }
-    if (!t) {
-      if (planState.selected !== null || planState.sel) { planState.selected = null; planState.sel = null; updateTools(); draw(); }
+    if (!t) { // пустое место: тап — снять выбор, ведение пальцем — сдвиг схемы (ниже, в жестах)
+      drag = { kind: 'tap-empty', sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     if (t.dataset.drag === 'vertex') {
@@ -1288,6 +1294,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (d.kind === 'tap-mode') { if (!d.moved) await modeTap(d.world); return; }
     if (d.kind === 'underlay') { if (d.moved) { pushUndo({ plan: { k: plan.k, ox: d.orig.ox, oy: d.orig.oy } }, d.snap); await dbPut('projects', project); } return; }
     const room = selRoom();
+    if (d.kind === 'tap-empty') { if (!d.moved && (planState.selected !== null || planState.sel)) { planState.selected = null; planState.sel = null; updateTools(); draw(); } return; }
     if (d.kind === 'tap-rename') { if (!d.moved) await renameRoom(d.id); return; }
     if (d.kind === 'tap-add') { if (!d.moved && room) await insertVertex(room, d.i); return; }
     if (d.kind === 'tap-edge') { if (!d.moved) { planState.sel = { type: 'wall', i: d.i }; updateTools(); draw(); } return; }
@@ -1315,11 +1322,13 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       }
       drag = null; pinchStart();
     }
-    else if (fingers.size === 1) gest = { two: false, v: { ...planView }, p: units(e.clientX, e.clientY), panning: false };
+    // в редакторе один палец сдвигает схему с пустого места (и в рисовании: тап — угол, ведение — сдвиг)
+    else if (fingers.size === 1) gest = { two: false, v: { ...planView }, p: units(e.clientX, e.clientY), panning: false,
+      editPan: planState.edit && !!drag && (drag.kind === 'tap-empty' || drag.kind === 'tap-mode') };
   });
   svg.addEventListener('pointermove', e => {
     const f = fingers.get(e.pointerId);
-    if (!f || !gest || (planState.edit && !gest.two)) return;   // в редакторе один палец — правка, не сдвиг вида
+    if (!f || !gest || (planState.edit && !gest.two && !gest.editPan)) return;   // в редакторе один палец — правка (с пустого места — сдвиг вида)
     f.x = e.clientX; f.y = e.clientY;
     if (gest.two && fingers.size >= 2) {
       const [a, b] = [...fingers.values()];
@@ -1332,7 +1341,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const qx = v0.tx - m0[0], qy = v0.ty - m0[1], cs = Math.cos(dr), sn = Math.sin(dr);
       Object.assign(planView, { k: v0.k * ds, r: v0.r + dr, tx: ds * (cs * qx - sn * qy) + m1[0], ty: ds * (sn * qx + cs * qy) + m1[1] });
       draw();
-    } else if (!gest.two && planView.k > 1.05) {
+    } else if (!gest.two && (planView.k > 1.05 || gest.editPan)) {
       if (!gest.panning && Math.hypot(f.x - f.sx, f.y - f.sy) < 8) return;
       gest.panning = true; if (drag) drag.moved = true;
       const P = units(f.x, f.y);
@@ -1553,10 +1562,37 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   /* --- листы: подложка и мастер обмера --- */
   const sheet = $('#plan-sheet');
   function showSheet(html, wire) {
-    sheet.innerHTML = html + '<button class="btn ghost wide" id="ps-cancel">Отмена</button>';
+    sheet.innerHTML = '<div class="sh-grab" aria-hidden="true"></div>' + html + '<button class="btn ghost wide" id="ps-cancel">Отмена</button>';
+    sheet.style.transform = ''; sheet.scrollTop = 0;
     sheet.classList.remove('hidden');
     sheet.querySelector('#ps-cancel').onclick = hideSheet;
     if (wire) wire(sheet);
+  }
+  // окно закрывается и смахиванием вниз (когда оно не прокручено): тянется за пальцем, дальше 80 px или резкий рывок — закрыть
+  if (sheet) {
+    let sw = null;
+    sheet.addEventListener('touchstart', e => {
+      sw = e.touches.length === 1 && sheet.scrollTop <= 0 ? { y: e.touches[0].clientY, t: Date.now(), dy: 0, on: false } : null;
+    }, { passive: true });
+    sheet.addEventListener('touchmove', e => {
+      if (!sw) return;
+      const dy = e.touches[0].clientY - sw.y;
+      if (!sw.on && (dy < 6 || sheet.scrollTop > 0)) { if (dy < -6) sw = null; return; } // вверх — обычная прокрутка окна
+      sw.on = true; sw.dy = Math.max(0, dy);
+      e.preventDefault();
+      sheet.style.transition = 'none'; sheet.style.transform = `translateY(${sw.dy}px)`;
+    }, { passive: false });
+    sheet.addEventListener('touchend', () => {
+      if (!sw || !sw.on) { sw = null; return; }
+      const fast = sw.dy / Math.max(1, Date.now() - sw.t) > 0.6;
+      sheet.style.transition = 'transform .18s ease';
+      if (sw.dy > 80 || (fast && sw.dy > 30)) {
+        if (document.activeElement && sheet.contains(document.activeElement)) document.activeElement.blur(); // убрать клавиатуру
+        sheet.style.transform = 'translateY(100%)';
+        setTimeout(() => { sheet.style.transition = ''; sheet.style.transform = ''; hideSheet(); }, 180);
+      } else { sheet.style.transform = ''; setTimeout(() => { sheet.style.transition = ''; }, 180); }
+      sw = null;
+    });
   }
   function hideSheet() {
     sheet.classList.add('hidden'); sheet.classList.remove('furn-sheet'); sheet.innerHTML = ''; app.style.paddingBottom = '';
@@ -1684,11 +1720,11 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const ceilHint = room.wallTop && Object.keys(room.wallTop).length ? ` <span class="mut small">(у части стен своя высота по обмеру: ${esc(roomHeightText(room))})</span>` : '';
     showSheet(`<div class="sh-title">Размеры — ${esc(room.name)}</div>
       <div class="len-mini-wrap">${mini}</div>
-      <label class="len-row len-ceil"><span>Высота потолка, м${ceilHint}</span>
-        <input class="inp num" id="len-ceil" type="number" step="0.01" min="2" max="6" inputmode="decimal" value="${room.ceil || ''}" placeholder="${fmtM(DEFAULT_CEIL)}"></label>
+      <label class="len-row len-ceil"><span>Высота потолка${ceilHint}</span>
+        <span class="len-inp"><input class="inp num" id="len-ceil" type="number" step="0.01" min="2" max="6" inputmode="decimal" value="${room.ceil || ''}" placeholder="${fmtM(DEFAULT_CEIL)}"><i>м</i></span></label>
       <p class="mut small">Длины стен — номера как на схеме выше (стена выбранного поля подсвечена). Введите, что измерили; пустые стены подстроятся.</p>
       <div class="len-list">${edges.map(e => `<label class="len-row"><span>${esc(label(e))}</span>
-        <input class="inp num" data-len="${e.i}" type="number" step="0.01" min="0.05" inputmode="decimal" placeholder="≈${fmtM(e.len)}"></label>`).join('')}</div>
+        <span class="len-inp"><input class="inp num" data-len="${e.i}" type="number" step="0.01" min="0.05" inputmode="decimal" placeholder="≈${fmtM(e.len)}"><i>м</i></span></label>`).join('')}</div>
       <label class="len-snap"><input type="checkbox" id="len-snap" checked> Выровнять почти прямые углы до 90°</label>
       <button class="btn primary wide" id="len-apply">Применить</button>`, sh => {
       const mark = i => sh.querySelectorAll('[data-mini],[data-mini-num]').forEach(n => n.classList.toggle('on', (n.dataset.mini ?? n.dataset.miniNum) === String(i)));
