@@ -991,9 +991,13 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (planState.edit) {
       // сетка на всю видимую область с учётом масштаба/сдвига вида, а не только на исходные рамки схемы
       const g = gridArea();
+      // шаг сетки зависит от масштаба: клетка не мельче ~10 px (5 см … 5 м); метровые линии заметнее (при шаге ≥ 1 м — каждые 5 м)
+      const ctm = svg.getScreenCTM(), pxM = (ctm ? ctm.a : 40) * planView.k;
+      const STEP = [0.05, 0.1, 0.25, 0.5, 1, 2, 5].find(v => v * pxM >= 10) || 5, MAJ = STEP < 1 ? 1 : 5 * (STEP < 5 ? 1 : 2);
+      const cls = v => Math.abs(v / MAJ - Math.round(v / MAJ)) < 1e-6 ? ' class="m"' : '';
       s += '<g class="grid">';
-      for (let gx = Math.ceil(g.x); gx <= g.x + g.w; gx++) s += `<line x1="${gx}" y1="${g.y}" x2="${gx}" y2="${g.y + g.h}"/>`;
-      for (let gy = Math.ceil(g.y); gy <= g.y + g.h; gy++) s += `<line x1="${g.x}" y1="${gy}" x2="${g.x + g.w}" y2="${gy}"/>`;
+      for (let i = Math.ceil(g.x / STEP); i * STEP <= g.x + g.w; i++) { const gx = +(i * STEP).toFixed(2); s += `<line${cls(gx)} x1="${gx}" y1="${g.y}" x2="${gx}" y2="${g.y + g.h}"/>`; }
+      for (let i = Math.ceil(g.y / STEP); i * STEP <= g.y + g.h; i++) { const gy = +(i * STEP).toFixed(2); s += `<line${cls(gy)} x1="${g.x}" y1="${gy}" x2="${g.x + g.w}" y2="${gy}"/>`; }
       s += '</g>';
     }
     const dims = []; // размеры стен — отдельным слоем поверх всех комнат, чтобы соседняя комната их не закрывала
@@ -1057,8 +1061,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
           const [ax, ay] = P(t0), [bx, by] = P(t1);
           const deg = Math.atan2(e.uy, e.ux) * 180 / Math.PI;
           const gap = `<rect class="op-gap" x="0" y="-0.075" width="${t1 - t0}" height="0.15" transform="translate(${ax} ${ay}) rotate(${deg})"/>`;
-          if (o.kind === 'window') {
-            s += `<g transform="translate(${ax} ${ay}) rotate(${deg})"><rect class="op-win" x="0" y="-0.075" width="${t1 - t0}" height="0.15"/><line class="op-win-l" x1="0" y1="0" x2="${t1 - t0}" y2="0"/></g>`;
+          if (o.kind === 'window') { // толщина окна с обводкой = толщине стены (.wall-outline 0,12)
+            s += `<g transform="translate(${ax} ${ay}) rotate(${deg})"><rect class="op-win" x="0" y="-0.051" width="${t1 - t0}" height="0.102"/><line class="op-win-l" x1="0" y1="0" x2="${t1 - t0}" y2="0"/></g>`;
           } else if (o.passage) {
             s += gap + `<line class="op-jamb" x1="${ax - e.nx * 0.08}" y1="${ay - e.ny * 0.08}" x2="${ax + e.nx * 0.08}" y2="${ay + e.ny * 0.08}"/><line class="op-jamb" x1="${bx - e.nx * 0.08}" y1="${by - e.ny * 0.08}" x2="${bx + e.nx * 0.08}" y2="${by + e.ny * 0.08}"/>`;
           } else {
@@ -1669,15 +1673,27 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const el = document.querySelector('#plan path.room.sel') || $('#plan-box'), top = document.querySelector('.topbar');
     if (el) window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + scrollY - (top ? top.offsetHeight : 0) - 12) });
     const label = e => `Стена ${e.i + 1}`;
+    // мини-схема комнаты прямо в окне: на телефоне клавиатура и окно закрывают большую схему.
+    // Номера стен снаружи, стена, чьё поле в фокусе, подсвечена.
+    const bb = roomBBox(room), sz = Math.max(bb.w, bb.h, 1), off = sz * 0.09, fs = sz * 0.085, pad = off + fs;
+    const mini = `<svg class="len-mini" viewBox="${bb.x - pad} ${bb.y - pad} ${bb.w + 2 * pad} ${bb.h + 2 * pad}" style="--sw:${(sz * 0.022).toFixed(3)}">
+      <path class="lm-room" d="${roomPath(room)}"/>
+      ${edges.map(e => `<line class="lm-wall" data-mini="${e.i}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`).join('')}
+      ${edges.map(e => `<text class="lm-num" data-mini-num="${e.i}" x="${(e.mid[0] - e.nx * off).toFixed(3)}" y="${(e.mid[1] - e.ny * off).toFixed(3)}" font-size="${fs.toFixed(3)}">${e.i + 1}</text>`).join('')}
+    </svg>`;
     const ceilHint = room.wallTop && Object.keys(room.wallTop).length ? ` <span class="mut small">(у части стен своя высота по обмеру: ${esc(roomHeightText(room))})</span>` : '';
     showSheet(`<div class="sh-title">Размеры — ${esc(room.name)}</div>
+      <div class="len-mini-wrap">${mini}</div>
       <label class="len-row len-ceil"><span>Высота потолка, м${ceilHint}</span>
         <input class="inp num" id="len-ceil" type="number" step="0.01" min="2" max="6" inputmode="decimal" value="${room.ceil || ''}" placeholder="${fmtM(DEFAULT_CEIL)}"></label>
-      <p class="mut small">Длины стен — номера как на схеме выше. Введите, что измерили; пустые стены подстроятся.</p>
+      <p class="mut small">Длины стен — номера как на схеме выше (стена выбранного поля подсвечена). Введите, что измерили; пустые стены подстроятся.</p>
       <div class="len-list">${edges.map(e => `<label class="len-row"><span>${esc(label(e))}</span>
         <input class="inp num" data-len="${e.i}" type="number" step="0.01" min="0.05" inputmode="decimal" placeholder="≈${fmtM(e.len)}"></label>`).join('')}</div>
       <label class="len-snap"><input type="checkbox" id="len-snap" checked> Выровнять почти прямые углы до 90°</label>
       <button class="btn primary wide" id="len-apply">Применить</button>`, sh => {
+      const mark = i => sh.querySelectorAll('[data-mini],[data-mini-num]').forEach(n => n.classList.toggle('on', (n.dataset.mini ?? n.dataset.miniNum) === String(i)));
+      sh.querySelectorAll('[data-len]').forEach(inp => { inp.addEventListener('focus', () => mark(inp.dataset.len)); });
+      sh.querySelector('#len-ceil').addEventListener('focus', () => mark(-1));
       sh.querySelector('#len-apply').onclick = async () => {
         const vals = edges.map(e => { const v = parseFloat(String(sh.querySelector(`[data-len="${e.i}"]`).value).replace(',', '.')); return v > 0 ? v : null; });
         const cv = parseFloat(String(sh.querySelector('#len-ceil').value).replace(',', '.'));
