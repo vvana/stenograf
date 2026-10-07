@@ -132,7 +132,12 @@ body {
 }
 /* пустая панель (ничего не выбрано) не занимает места — схема при входе в редактор не сдвигается */
 .editor-bar:not(:has(> :not(.hidden))) { display: none; }
-#room-tools { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; align-items: flex-end; }
+/* выбрана комната: «Размеры» / «Мебель» в ряду действий схемы, той же высоты, что крупные кнопки */
+#room-tools { display: flex; gap: 8px; flex: 1; align-items: stretch; }
+#room-tools .btn { flex: 1 1 auto; min-height: 59px; border-radius: 12px; justify-content: center; white-space: nowrap; }
+.plan-actions:has(#room-tools:not(.hidden)) .pa-spacer { display: none; }
+.plan-actions:has(#room-tools:not(.hidden)) #toggle-edit { flex: 0 0 84px; }
+.plan-actions #toggle-edit { order: 2; } /* «Готово» / «Редактор» всегда справа */
 /* комната в редакторе: название текстом с карандашом (тап — переименовать), высота — подписанное поле */
 .editor-bar .tools label.rt-field { flex-direction: column; align-items: stretch; gap: 3px; }
 .rt-ceil { flex: 0 0 auto; }
@@ -730,10 +735,13 @@ select.inp {
 .len-snap input { width: 18px; height: 18px; accent-color: var(--acc); }
 
 /* режим рисования: кнопки в одну линию, под ними — раскрывающаяся подсказка */
-#mode-tools { flex-wrap: wrap; }
+/* режим рисования: «Готово / Отмена / Фото плана» в ряду действий схемы, той же высоты, что крупные кнопки */
+#mode-tools { flex: 1; display: flex; gap: 8px; align-items: stretch; }
+#mode-tools .btn { flex: 1 1 auto; min-height: 59px; border-radius: 12px; justify-content: center; }
+#mode-tools .btn.primary { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
+.plan-actions.in-mode .pa-spacer { display: none; }
 /* раскрывающаяся подсказка под значком «i»: текст начинается в той же строке, что и значок */
-.mode-hint { flex: 1 1 100%; }
-#editor-hint { padding: 0 12px; }
+#editor-hint, #mode-hint { padding: 0 12px; }
 .ihint { font-size: 13px; color: var(--mut); }
 .ihint summary { cursor: pointer; list-style: none; display: flex; align-items: flex-start; gap: 6px; padding: 2px 0; }
 .ihint summary::-webkit-details-marker { display: none; }

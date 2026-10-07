@@ -624,22 +624,23 @@ async function viewPlan(pid) {
       <div class="plan-actions">
         <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
         <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
-        ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Нарисовать</span></button><span class="pa-btn pa-spacer hidden" aria-hidden="true"></span>` : ''}
+        ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Создать</span></button><span class="pa-btn pa-spacer hidden" aria-hidden="true"></span>` : ''}
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
-      </div>
-      <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
-        <button type="button" class="rt-title hidden" id="room-name" title="Переименовать комнату"><span id="room-name-text"></span>${ICONS.edit}</button>
+        ${planState.edit ? `<!-- выбрана комната: «Размеры» и «Мебель» на месте «Создать» -->
+        <span id="room-tools" class="tools hidden">
+          <button class="btn small-btn" id="room-lengths" title="Высота потолка и длины стен — схема подстроится">${I('ruler')}Размеры</button>
+          <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
+        </span>` : ''}
+        ${planState.edit ? `<!-- рисование / масштаб подложки: свои кнопки на месте ряда действий («Готово» редактора скрыт) -->
         <span id="mode-tools" class="tools hidden">
           <button class="btn small-btn primary" id="mode-done">Готово</button>
           <button class="btn small-btn" id="mode-cancel">Отмена</button>
           <button class="btn small-btn hidden" id="mode-plan" title="Загрузить фото плана (БТИ, план застройщика, скан) и рисовать по нему">${I('layers')}Фото плана</button>
-          <details class="mode-hint ihint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span id="mode-text" class="ihint-text"></span></summary></details>
-        </span>
-        <span id="room-tools" class="tools hidden">
-          <button class="btn small-btn" id="room-lengths" title="Высота потолка и длины стен — схема подстроится">${I('ruler')}Размеры</button>
-          <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
-        </span>
+        </span>` : ''}
+      </div>
+      <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
+        <button type="button" class="rt-title hidden" id="room-name" title="Переименовать комнату"><span id="room-name-text"></span>${ICONS.edit}</button>
         <span id="vertex-tools" class="tools hidden">
           <label>Угол° <input id="v-angle" class="inp num" type="number" step="1" min="1" max="359"></label>
           <label>R, см <input id="v-radius" class="inp num" type="number" step="1" min="0" max="200"></label>
@@ -653,7 +654,7 @@ async function viewPlan(pid) {
       </div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
-        ${planState.edit ? '<div class="plan-edit-badge"><span>Редактирование</span></div>' : ''}
+        ${planState.edit ? '<div class="plan-edit-badge"><span id="plan-badge-text">Редактирование</span></div>' : ''}
         ${project.north && rooms.length ? `<div class="plan-north" id="plan-north" title="Север${project.north.true ? '' : ' (магнитный)'} — по компасу при обмере"><svg viewBox="-20 -24 40 44"><path d="M0 -13L5 0H-5z" class="pn-n"/><path d="M0 13L-5 0H5z" class="pn-s"/><text x="0" y="-16" class="pn-t">С</text></svg></div>` : ''}
         <div class="plan-tools">
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
@@ -662,7 +663,8 @@ async function viewPlan(pid) {
           ${planState.edit && rooms.length ? `<button class="plan-tool danger hidden" id="clear-plan" title="Удалить выбранную комнату" aria-label="Удалить комнату">${ICONS.trash}</button>` : ''}
         </div>
       </div>
-      <!-- подсказка редактора — под схемой -->
+      <!-- подсказки редактора и режима рисования — под схемой -->
+      <details class="mode-hint ihint hidden" id="mode-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span id="mode-text" class="ihint-text"></span></summary></details>
       <details class="ihint ${planState.edit ? '' : 'hidden'}" id="editor-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тапните комнату. Тяните углы за кружки; тап по стене — её длина, высота и «Добавить угол». Комната — многоугольник до 10 углов; по умолчанию углы 90°, любой можно изменить.</span></summary></details>
       ${showShots ? `<div class="shot-bar">
         <span class="mut small">${I('camera')}Точки съёмки:</span>
@@ -1443,7 +1445,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!roomTools) return;
     const mode = planState.mode;
     $('#mode-tools').classList.toggle('hidden', !mode);
+    $('#mode-hint').classList.toggle('hidden', !mode);
     $('#trace-room').classList.toggle('hidden', !!mode);
+    $('#toggle-edit').classList.toggle('hidden', !!mode); // в режиме одна кнопка «Готово» — режима
+    $('.plan-actions').classList.toggle('in-mode', !!mode);
+    // надпись на схеме: что сейчас делаем
+    $('#plan-badge-text').textContent = { trace: 'Создание комнаты', scale: 'Масштаб фото плана', underlay: 'Сдвиг фото плана' }[mode] || 'Редактирование';
     if (mode) {
       $('#mode-text').textContent = MODE_TEXT[mode]();
       const mh = $('.mode-hint'); if (mh && mh.dataset.mode !== mode) { mh.dataset.mode = mode; mh.open = mode !== 'trace'; } // масштаб/сдвиг — подсказка сразу открыта
@@ -1457,7 +1464,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
     const room = selRoom();
     const sel = room ? planState.sel : null;
-    $('#trace-room').classList.toggle('hidden', !!room); // выбрана комната — «Нарисовать» не нужен (тап мимо комнат вернёт его)
+    $('#trace-room').classList.toggle('hidden', !!room); // выбрана комната — «Создать» не нужен (тап мимо комнат вернёт его)
     // корзина в углу схемы удаляет выбранную комнату (видна, только когда комната выбрана)
     const trash = $('#clear-plan');
     if (trash) {
@@ -1696,7 +1703,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       return;
     }
     // в редакторе только правка схемы; обмер — из обычного режима. Пустое место на месте «Обмера комнаты»,
-    // чтобы «Нарисовать» и «Готово» стояли там же и тех же размеров, что «Обмер квартиры» и «Редактор»
+    // чтобы «Создать» и «Готово» стояли там же и тех же размеров, что «Обмер квартиры» и «Редактор»
     if (planState.edit) { const sp = $('.pa-spacer'); if (sp) sp.classList.remove('hidden'); return; }
     const measBtn = $('#lidar-measure');
     const aptBtn = $('#lidar-apt');
@@ -1714,7 +1721,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
   });
   if (planState.edit) {
-    // «Нарисовать» — сразу рисование по сетке; фото плана подгружается кнопкой в панели режима
+    // «Создать» — сразу рисование по сетке; фото плана подгружается кнопкой в панели режима
     $('#trace-room').onclick = () => setMode('trace');
     $('#mode-plan').onclick = () => { // после загрузки/масштаба — обратно к углам
       planState.drawAfterPlan = true;
