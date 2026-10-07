@@ -624,7 +624,7 @@ async function viewPlan(pid) {
       <div class="plan-actions">
         <button class="pa-btn pa-scan2 hidden" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
         <button class="pa-btn pa-scan hidden" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
-        ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Нарисовать</span></button>` : ''}
+        ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Нарисовать</span></button><span class="pa-btn pa-spacer hidden" aria-hidden="true"></span>` : ''}
         <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
       </div>
@@ -650,7 +650,6 @@ async function viewPlan(pid) {
           <label>h, м <input id="w-h" class="inp num" type="number" step="0.01" min="1" max="10" title="Высота этой стены"></label>
           <button class="btn small-btn" id="add-vertex">Добавить угол</button>
         </span>
-        <details class="ihint" id="editor-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тапните комнату. Тяните углы за кружки; тап по стене — её длина, высота и «Добавить угол». Комната — многоугольник до 10 углов; по умолчанию углы 90°, любой можно изменить.</span></summary></details>
       </div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
@@ -663,6 +662,8 @@ async function viewPlan(pid) {
           ${planState.edit && rooms.length ? `<button class="plan-tool danger hidden" id="clear-plan" title="Удалить выбранную комнату" aria-label="Удалить комнату">${ICONS.trash}</button>` : ''}
         </div>
       </div>
+      <!-- подсказка редактора — под схемой -->
+      <details class="ihint ${planState.edit ? '' : 'hidden'}" id="editor-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тапните комнату. Тяните углы за кружки; тап по стене — её длина, высота и «Добавить угол». Комната — многоугольник до 10 углов; по умолчанию углы 90°, любой можно изменить.</span></summary></details>
       ${showShots ? `<div class="shot-bar">
         <span class="mut small">${I('camera')}Точки съёмки:</span>
         ${shotStages.map(s => `<button class="chip ${s.id === planState.shotStage ? 'on' : ''}" data-shot-stage="${s.id}">${esc(s.name)}</button>`).join('')}
@@ -967,15 +968,31 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   const svg = $('#plan');
   const selRoom = () => rooms.find(r => r.id === planState.selected);
 
+  // видимый прямоугольник svg → координаты схемы (обратно к матрице вида), с запасом в 1 м
+  function gridArea() {
+    const ctm = svg.getScreenCTM(), rc = svg.getBoundingClientRect();
+    if (!ctm || !rc.width) return vb;
+    const inv = ctm.inverse(), { k, r, tx, ty } = planView, cs = Math.cos(r), sn = Math.sin(r);
+    const pts = [[rc.left, rc.top], [rc.right, rc.top], [rc.left, rc.bottom], [rc.right, rc.bottom]].map(([X, Y]) => {
+      const px = inv.a * X + inv.c * Y + inv.e - tx, py = inv.b * X + inv.d * Y + inv.f - ty;
+      return [(cs * px + sn * py) / k, (-sn * px + cs * py) / k];
+    });
+    const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+    const x = Math.floor(Math.min(...xs)) - 1, y = Math.floor(Math.min(...ys)) - 1;
+    return { x, y, w: Math.ceil(Math.max(...xs)) + 1 - x, h: Math.ceil(Math.max(...ys)) + 1 - y };
+  }
+
   function draw() {
     let s = '';
     if (planURL && !planState.underlayHidden) {
       s += `<image class="underlay ${planState.edit ? 'edit' : ''}" href="${planURL}" x="${plan.ox}" y="${plan.oy}" width="${plan.w * plan.k}" height="${plan.h * plan.k}" preserveAspectRatio="none"/>`;
     }
     if (planState.edit) {
+      // сетка на всю видимую область с учётом масштаба/сдвига вида, а не только на исходные рамки схемы
+      const g = gridArea();
       s += '<g class="grid">';
-      for (let gx = Math.ceil(vb.x); gx <= vb.x + vb.w; gx++) s += `<line x1="${gx}" y1="${vb.y}" x2="${gx}" y2="${vb.y + vb.h}"/>`;
-      for (let gy = Math.ceil(vb.y); gy <= vb.y + vb.h; gy++) s += `<line x1="${vb.x}" y1="${gy}" x2="${vb.x + vb.w}" y2="${gy}"/>`;
+      for (let gx = Math.ceil(g.x); gx <= g.x + g.w; gx++) s += `<line x1="${gx}" y1="${g.y}" x2="${gx}" y2="${g.y + g.h}"/>`;
+      for (let gy = Math.ceil(g.y); gy <= g.y + g.h; gy++) s += `<line x1="${g.x}" y1="${gy}" x2="${g.x + g.w}" y2="${gy}"/>`;
       s += '</g>';
     }
     const dims = []; // размеры стен — отдельным слоем поверх всех комнат, чтобы соседняя комната их не закрывала
@@ -1679,7 +1696,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → О приложении»');
       return;
     }
-    if (planState.edit) return; // в редакторе только правка схемы; обмер — из обычного режима
+    // в редакторе только правка схемы; обмер — из обычного режима. Пустое место на месте «Обмера комнаты»,
+    // чтобы «Нарисовать» и «Готово» стояли там же и тех же размеров, что «Обмер квартиры» и «Редактор»
+    if (planState.edit) { const sp = $('.pa-spacer'); if (sp) sp.classList.remove('hidden'); return; }
     const measBtn = $('#lidar-measure');
     const aptBtn = $('#lidar-apt');
     if (aptBtn) { aptBtn.classList.remove('hidden'); aptBtn.onclick = () => measureApartment(pid); }
