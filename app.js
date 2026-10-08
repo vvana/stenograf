@@ -552,6 +552,23 @@ function collinearRuns(r, edges) {
   return runs;
 }
 
+// ширина текста в долях размера шрифта (для овала под названием на схеме)
+const textEm = (() => { let ctx = null; return t => {
+  try { ctx = ctx || document.createElement('canvas').getContext('2d'); ctx.font = '400 100px system-ui, -apple-system, sans-serif'; return ctx.measureText(t).width / 100; }
+  catch { return 0.56 * t.length; }
+}; })();
+// выбранная комната в редакторе: название на белом овале (без значка), тап — переименовать
+function namePill(r, cx, cy, fs0, roomW) { // roomW — ширина, доступная симметрично вокруг cx
+  // овал шире текста — шрифт уменьшается, чтобы овал помещался в комнату
+  const fs = Math.max(0.16, Math.min(fs0, (roomW - 0.35) / (textEm(r.name) + 1.0)));
+  const tw = textEm(r.name) * fs, padX = fs * 0.5, h = fs * 1.55;
+  const w = tw + 2 * padX, x0 = cx - w / 2;
+  return `<g class="name-pill" data-rename-room="${r.id}">
+    <rect x="${x0.toFixed(3)}" y="${(cy - h / 2).toFixed(3)}" width="${w.toFixed(3)}" height="${h.toFixed(3)}" rx="${(h / 2).toFixed(3)}"/>
+    <text class="room-label editable" data-rename-room="${r.id}" style="font-size:${fs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>
+  </g>`;
+}
+
 function roomEdges(r) {
   const n = r.pts.length, out = [];
   for (let i = 0; i < n; i++) {
@@ -592,10 +609,15 @@ function setCornerAngle(r, i, deg) {
   r.pts[idx] = err[0] <= err[1] ? cand[0] : cand[1];
 }
 // задать длину стены i: сдвигаем её конечную вершину вдоль стены
+// новая длина стены i: её конец и вся следующая стена сдвигаются вдоль стены i (следующая стена сохраняет угол и длину,
+// меняется стена после неё) — у прямоугольной комнаты углы остаются прямыми
 function setWallLength(r, i, len) {
   const n = r.pts.length, A = r.pts[i], B = r.pts[(i + 1) % n];
   const d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1e-9;
-  r.pts[(i + 1) % n] = [cm(A[0] + (B[0] - A[0]) / d * len), cm(A[1] + (B[1] - A[1]) / d * len), ...B.slice(2)];
+  const dx = (B[0] - A[0]) / d * (len - d), dy = (B[1] - A[1]) / d * (len - d);
+  const move = k => { const P = r.pts[k]; r.pts[k] = [cm(P[0] + dx), cm(P[1] + dy), ...P.slice(2)]; };
+  move((i + 1) % n);
+  if (n >= 3) move((i + 2) % n);
 }
 const cm = v => Math.round(v * 100) / 100;
 
@@ -651,29 +673,28 @@ async function viewPlan(pid) {
         <span id="room-tools" class="tools hidden">
           <button class="btn small-btn" id="room-lengths" title="Высота потолка и длины стен — схема подстроится">${I('ruler')}Размеры</button>
           <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
+        </span>
+        <span id="wall-tools" class="tools hidden">
+          <button class="pa-btn" id="add-vertex" title="Разбить стену углом посередине">${ICONS.corner}<span>Добавить угол</span></button>
         </span>` : ''}
         ${planState.edit ? `<!-- рисование / масштаб подложки: свои кнопки на месте ряда действий («Готово» редактора скрыт) -->
         <span id="mode-tools" class="tools hidden">
-          <button class="btn small-btn primary" id="mode-done">Готово</button>
+          <button class="btn small-btn primary" id="mode-done">Сохранить</button>
           <button class="btn small-btn" id="mode-cancel">Отмена</button>
           <button class="btn small-btn hidden" id="mode-plan" title="Загрузить фото плана (БТИ, план застройщика, скан) и рисовать по нему">${I('layers')}Фото плана</button>
         </span>` : ''}
       </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
-        <button type="button" class="rt-title hidden" id="room-name" title="Переименовать комнату"><span id="room-name-text"></span>${ICONS.edit}</button>
         <span id="vertex-tools" class="tools hidden">
           <label>Угол° <input id="v-angle" class="inp num" type="number" step="1" min="1" max="359"></label>
           <label>R, см <input id="v-radius" class="inp num" type="number" step="1" min="0" max="200"></label>
           <button class="btn small-btn danger" id="del-vertex">Убрать угол</button>
         </span>
-        <span id="wall-tools" class="tools hidden">
-          <label>Длина, м <input id="w-len" class="inp num" type="number" step="0.01" min="0.1" max="50"></label>
-          <label>h, м <input id="w-h" class="inp num" type="number" step="0.01" min="1" max="10" title="Высота этой стены"></label>
-          <button class="btn small-btn" id="add-vertex">Добавить угол</button>
-        </span>
       </div>
       <div class="plan-frame">
         <div id="plan-box" class="plan-box"></div>
+        ${planState.edit ? `<!-- длина выбранной стены — поле прямо у стены на схеме (ставит placeLenInput) -->
+        <label class="len-float hidden" id="w-len-wrap"><input id="w-len" class="inp num" type="text" inputmode="decimal" autocomplete="off" aria-label="Длина стены, м"><i>м</i></label>` : ''}
         ${planState.edit ? '<div class="plan-edit-badge"><span id="plan-badge-text">Редактирование</span></div>' : ''}
         ${project.north && rooms.length ? `<div class="plan-north" id="plan-north" title="Север${project.north.true ? '' : ' (магнитный)'} — по компасу при обмере"><svg viewBox="-20 -24 40 44"><path d="M0 -13L5 0H-5z" class="pn-n"/><path d="M0 13L-5 0H5z" class="pn-s"/><text x="0" y="-16" class="pn-t">С</text></svg></div>` : ''}
         <div class="plan-tools">
@@ -698,7 +719,7 @@ async function viewPlan(pid) {
           <div class="empty-ico">${ICONS.plan}</div>
           <p><b>Схемы пока нет.</b></p>
           <p class="mut">Нажмите «Редактор» сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
-        </div>` : planState.edit ? '' : `<p class="mut small center pad-h">Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.</p>`}
+        </div>` : planState.edit ? '' : `<details class="ihint" id="view-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.</span></summary></details>`}
     </div>
     ${bottomNav(pid, 'plan')}`;
 
@@ -942,6 +963,7 @@ const ICONS = {
   floor: svgIco('<path d="M4 19h16"/><path d="M12 4v11M8 11l4 4 4-4"/>'),
   walk: svgIco('<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/><circle cx="12" cy="11" r="2" fill="currentColor" stroke="none"/>'), // «обход»: комната-куб с точкой съёмки
   building: svgIco('<path d="M4 21V6l8-3v18M12 21V9l8 3v9M2.5 21h19M7 8.5h2M7 12.5h2M7 16.5h2M15 14h2M15 17.5h2"/>'),
+  corner: svgIco('<path d="M5 19V6a1 1 0 0 1 1-1h8"/><path d="M17 13v8M13 17h8"/>'),
   edit: svgIco('<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>'),
   door: svgIco('<path d="M6 21V3h11v18M4 21h16"/><path d="M14 12h.01"/>'),
   window: svgIco('<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/>'),
@@ -1005,6 +1027,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
 
   function draw() {
     let s = '';
+    let lenAt = null; // где поставить поле длины выбранной стены
     if (planURL && !planState.underlayHidden) {
       s += `<image class="underlay ${planState.edit ? 'edit' : ''}" href="${planURL}" x="${plan.ox}" y="${plan.oy}" width="${plan.w * plan.k}" height="${plan.h * plan.k}" preserveAspectRatio="none"/>`;
     }
@@ -1042,7 +1065,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
-        <text class="room-label${planState.edit ? ' editable' : ''}" ${planState.edit ? `data-rename-room="${r.id}"` : ''} style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>
+        ${planState.edit && sel ? namePill(r, cx, cy, nameFs, 2 * Math.min(cx - bb.x, bb.x + bb.w - cx)) : `<text class="room-label${planState.edit ? ' editable' : ''}" ${planState.edit ? `data-rename-room="${r.id}"` : ''} style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>`}
         <text class="room-label room-h" style="font-size:${Math.min(0.26, nameFs).toFixed(3)}px" x="${cx}" y="${cy + nameFs}">${roomHeightText(r)}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
@@ -1068,7 +1091,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         } else if (sel) {
           const ws = planState.sel && planState.sel.type === 'wall' && planState.sel.i === e.i;
           s += `<line class="wall-hit edit ${ws ? 'sel' : ''}" data-edge="${e.i}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
-          if (ws) s += `<text class="wall-len" x="${e.mid[0] + e.nx * 0.3}" y="${e.mid[1] + e.ny * 0.3}">${e.len.toFixed(2).replace('.', ',')} м</text>`;
+          if (ws) lenAt = { x: e.mid[0] + e.nx * 0.42, y: e.mid[1] + e.ny * 0.42, len: e.len };
         }
       }
       // проёмы как на архитектурном плане: окно — вставка в стене, дверь — разрыв, полотно и дуга открывания, проход — разрыв
@@ -1177,6 +1200,21 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     // в просмотре без увеличения смахивание по схеме листает страницу; увеличенная схема и редактор ловят касания сами
     svg.style.touchAction = !planState.edit && k <= 1.05 ? 'pan-y' : 'none';
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
+    placeLenInput(lenAt);
+  }
+  // поле длины выбранной стены поверх схемы: в экранных координатах точки у середины стены (изнутри)
+  function placeLenInput(at) {
+    const wrap = $('#w-len-wrap');
+    if (!wrap) return;
+    wrap.classList.toggle('hidden', !at);
+    if (!at) return;
+    const g = svg.querySelector('.plan-view'), m = g && g.getScreenCTM(), fr = wrap.parentElement.getBoundingClientRect();
+    if (!m) return;
+    const X = m.a * at.x + m.c * at.y + m.e - fr.left, Y = m.b * at.x + m.d * at.y + m.f - fr.top;
+    wrap.style.left = `${Math.max(4, Math.min(fr.width - wrap.offsetWidth - 4, X - wrap.offsetWidth / 2))}px`;
+    wrap.style.top = `${Math.max(4, Math.min(fr.height - wrap.offsetHeight - 4, Y - wrap.offsetHeight / 2))}px`;
+    const inp = $('#w-len');
+    if (document.activeElement !== inp) inp.value = at.len.toFixed(2).replace('.', ',');
   }
   if (planView.pid !== pid) { resetPlanView(); planView.pid = pid; planUndo.stack = []; }
   draw();
@@ -1195,7 +1233,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     pushUndo();
     room.name = name.trim();
     await dbPut('rooms', room);
-    if (planState.selected === id && $('#room-name-text')) $('#room-name-text').textContent = room.name;
     draw();
   }
 
@@ -1413,10 +1450,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   /* --- режимы: обводка, масштаб подложки, сдвиг подложки --- */
   const MODE_TEXT = {
     trace: () => planState.tmp.length
-      ? `Углов: ${planState.tmp.length}. Тапните следующий угол; тап по первому или «Готово» — замкнуть.`
+      ? `Углов: ${planState.tmp.length}. Тапните следующий угол; тап по первому или «Сохранить» — замкнуть.`
       : 'Тапайте углы комнаты по порядку (по фото плана или по сетке).',
     scale: () => planState.tmp.length ? 'Тапните второй конец известного отрезка' : 'Тапните первый конец стены с известной длиной',
-    underlay: () => 'Тяните фото плана пальцем, чтобы совместить с сеткой. «Готово» — закончить.',
+    underlay: () => 'Тяните фото плана пальцем, чтобы совместить с сеткой. «Сохранить» — закончить.',
   };
   function setMode(m) {
     planState.mode = m; planState.tmp = [];
@@ -1474,7 +1511,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     $('#mode-tools').classList.toggle('hidden', !mode);
     $('#mode-hint').classList.toggle('hidden', !mode);
     $('#trace-room').classList.toggle('hidden', !!mode);
-    $('#toggle-edit').classList.toggle('hidden', !!mode); // в режиме одна кнопка «Готово» — режима
+    $('#toggle-edit').classList.toggle('hidden', !!mode); // в режиме вместо «Готово» редактора — «Сохранить» режима
     $('.plan-actions').classList.toggle('in-mode', !!mode);
     // надпись на схеме: что сейчас делаем
     $('#plan-badge-text').textContent = { trace: 'Создание комнаты', scale: 'Масштаб фото плана', underlay: 'Сдвиг фото плана' }[mode] || 'Редактирование';
@@ -1485,7 +1522,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       $('#mode-plan').classList.toggle('hidden', mode !== 'trace');
       $('#mode-plan').innerHTML = `${I('image')}Фото плана`; // короткая подпись — три кнопки в одну линию
       roomTools.classList.add('hidden'); vTools.classList.add('hidden'); wTools.classList.add('hidden'); hint.classList.add('hidden');
-      $('#room-name').classList.add('hidden');
       if ($('#clear-plan')) $('#clear-plan').classList.add('hidden');
       return;
     }
@@ -1508,12 +1544,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         planState.selected = null; planState.sel = null;
         render();
       } : null;
-    }
-    // название выбранной комнаты — во всю ширину под кнопками сверху; тап — переименовать
-    $('#room-name').classList.toggle('hidden', !room);
-    if (room) {
-      $('#room-name-text').textContent = room.name;
-      $('#room-name').onclick = () => renameRoom(room.id);
     }
     roomTools.classList.toggle('hidden', !room || !!sel);
     vTools.classList.toggle('hidden', !(sel && sel.type === 'vertex'));
@@ -1550,25 +1580,15 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     } else if (sel.type === 'wall') {
       const i = sel.i;
       const len = $('#w-len');
-      len.value = roomEdges(room)[i].len.toFixed(2);
+      len.value = roomEdges(room)[i].len.toFixed(2).replace('.', ',');
       len.onchange = async () => {
         const v = parseFloat(String(len.value).replace(',', '.'));
-        if (!(v > 0)) return;
+        if (!(v > 0 && v <= 50)) { len.value = roomEdges(room)[i].len.toFixed(2).replace('.', ','); return; }
         pushUndo();
         setWallLength(room, i, v);
         await dbPut('rooms', room); draw();
       };
-      const wh = $('#w-h'), wid = roomEdges(room)[i].id;
-      wh.value = wallMaxH(room, wid).toFixed(2);
-      if (!wallIsFlat(room, wid)) wh.title = 'Верх стены неровный (скос/короб по обмеру): ' + wallTop(room, wid).map(([f, h]) => `${Math.round(f * 100)}% → ${fmtM(h)}`).join(', ') + '. Новое значение сделает стену ровной.';
-      wh.onchange = async () => {
-        const v = parseFloat(String(wh.value).replace(',', '.'));
-        if (!(v > 0)) return;
-        pushUndo();
-        room.wallTop = { ...(room.wallTop || {}) };
-        if (Math.abs(v - roomCeil(room)) < 0.005) delete room.wallTop[wid]; else room.wallTop[wid] = [[0, cm(v)], [1, cm(v)]];
-        await dbPut('rooms', room); draw();
-      };
+      len.onkeydown = e => { if (e.key === 'Enter') len.blur(); };
       $('#add-vertex').onclick = () => insertVertex(room, i);
     }
   }
@@ -2172,7 +2192,7 @@ async function viewStageAlbum(pid, stageId) {
         <span class="mut small">${mine.length} фото</span>
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
-      <button class="btn wide hidden" id="album-walk">${I('walk')}Начать обход</button>
+      <button class="btn wide big-btn hidden" id="album-walk">${I('walk')}Начать обход</button>
       ${stage.hint ? `<p class="mut small">${esc(stage.hint)}</p>` : ''}
       ${rooms.length ? `<div class="card where-card">
         <b>Где нужен этап</b>
@@ -2190,7 +2210,7 @@ async function viewStageAlbum(pid, stageId) {
       </div>` : ''}
       ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p>
         <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Начать обход» выше — лидар снимет стены сам.</p>
-        <button class="btn primary" data-nav="#/p/${pid}">Открыть схему</button></div>`}
+        <button class="btn primary big-btn" data-nav="#/p/${pid}">Открыть схему</button></div>`}
       ${groups.map(g => `<div class="album-group">
         <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side))} <span class="mut small">· ${g.list.length}</span> ›</div>
         ${thumbs(g.list)}

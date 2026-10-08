@@ -145,6 +145,14 @@ body {
 .editor-bar:not(:has(> :not(.hidden))) { display: none; }
 /* выбрана комната: «Размеры» / «Мебель» в ряду действий схемы, той же высоты, что крупные кнопки */
 #room-tools { display: flex; gap: 8px; flex: 1; align-items: stretch; }
+/* «Добавить угол» — та же большая кнопка на месте «Создать», того же размера (пустое место под лидар и «Готово» не меняются) */
+#wall-tools { display: contents; } /* кнопка — прямой участник ряда, как «Создать» (у обёртки нет своих отступов) */
+.plan-actions .pa-spacer { order: 1; } /* пустое место (как «Обмер комнаты» в просмотре) — всегда между левой кнопкой и «Готово» */
+/* поле длины выбранной стены прямо на схеме */
+.len-float { position: absolute; z-index: 3; display: flex; }
+.len-float .inp.num { width: 80px; padding: 6px 22px 6px 8px; font: 600 16px system-ui, -apple-system, sans-serif; color: var(--acc);
+  border: 1.5px solid var(--acc); border-radius: 999px; background: var(--card); box-shadow: var(--shadow); text-align: center; }
+.len-float i { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font: 600 14px system-ui, -apple-system, sans-serif; font-style: normal; color: var(--acc); pointer-events: none; }
 #room-tools .btn { flex: 1 1 auto; min-height: 59px; border-radius: 12px; justify-content: center; white-space: nowrap; }
 .plan-actions:has(#room-tools:not(.hidden)) .pa-spacer { display: none; }
 .plan-actions:has(#room-tools:not(.hidden)) #toggle-edit { flex: 0 0 84px; }
@@ -160,7 +168,11 @@ body {
 .plan-tools { position: absolute; top: 16px; right: 18px; display: flex; gap: 8px; }
 /* в редакторе — надпись по центру строки с кнопками схемы */
 .plan-edit-badge { position: absolute; top: 16px; left: 0; right: 0; height: 37px; display: flex; align-items: center; justify-content: center; font: 600 14px system-ui, -apple-system, sans-serif; color: var(--acc); pointer-events: none; }
-.plan-edit-badge span { padding: 6px 14px; border-radius: 999px; background: var(--card); box-shadow: var(--shadow); border: 1px solid var(--line); }
+.plan-edit-badge > span { padding: 6px 14px; border-radius: 999px; background: var(--card); box-shadow: var(--shadow); border: 1px solid var(--line); }
+/* выбранная комната в редакторе: название на самой схеме — на белом овале (тап — переименовать) */
+#plan .name-pill { cursor: pointer; pointer-events: auto; }
+#plan .name-pill rect { fill: var(--card); stroke: var(--line); stroke-width: 1px; vector-effect: non-scaling-stroke; filter: drop-shadow(0 1px 2px rgba(0,0,0,.12)); }
+#plan .name-pill .room-label { fill: var(--ink); }
 .plan-tool {
   width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); box-shadow: var(--shadow);
   display: inline-flex; align-items: center; justify-content: center; color: var(--top-ink); cursor: pointer; padding: 0;
@@ -603,7 +615,7 @@ body {
 /* панель действий схемы: крупные значки с подписями */
 .plan-actions { display: flex; gap: 8px; padding: 10px 10px 0; }
 .pa-btn {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px 7px;
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px 7px; min-height: 59px; /* как у кнопок режима и «Размеры» — ряд не меняет высоту */
   border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--top-ink);
   font: 600 12px/1.15 system-ui, -apple-system, sans-serif; cursor: pointer; box-shadow: var(--shadow);
 }
@@ -684,16 +696,19 @@ select.inp {
 .room-tag.all { background: var(--line); color: var(--mut); }
 .where-card { margin: 10px 0 4px; }
 .where-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 6px; }
+.where-quick .btn { min-height: 44px; border-radius: 12px; font-size: 14px; padding: 0 14px; } /* выше: удобнее попадать пальцем */
 .where-quick .btn.on { background: color-mix(in srgb, var(--acc) 14%, var(--card)); border-color: var(--acc); color: var(--acc); }
 .where-row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--line); font-size: 15px; }
 .where-row input { width: 20px; height: 20px; accent-color: var(--acc); }
 .where-src { margin-left: auto; }
 .stage-toolbar { gap: 8px; }
+/* кнопки над этапами — той же высоты, что крупные кнопки на «Схеме» */
+.stage-toolbar .btn, .btn.big-btn { min-height: 59px; border-radius: 12px; padding-left: 16px; padding-right: 16px; }
 #album-walk { margin: 8px 0 4px; }
 /* схема: «Редактор» + «Обмер лидаром» в одном ряду */
 .plan-actions:has(.pa-scan:not(.hidden)) #toggle-edit, .plan-actions:has(.pa-spacer:not(.hidden)) #toggle-edit { flex: 0 0 84px; }
 .pa-btn.pa-spacer { visibility: hidden; }
-.plan-actions:has(.pa-spacer:not(.hidden)) #trace-room { font-size: 13px; }
+.plan-actions:has(.pa-spacer:not(.hidden)) #trace-room, .plan-actions #add-vertex { font-size: 13px; }
 .pa-btn.pa-scan { flex: 1; background: var(--acc); border-color: var(--acc); color: #fff; font-size: 13px; }
 .stage-lidar { padding: 10px 0 0; }
 .pa-btn.pa-scan2 { flex: 1; border-color: var(--acc); color: var(--acc); font-size: 13px; }
@@ -767,7 +782,7 @@ select.inp {
 #mode-tools .btn.primary { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
 .plan-actions.in-mode .pa-spacer { display: none; }
 /* раскрывающаяся подсказка под значком «i»: текст начинается в той же строке, что и значок */
-#editor-hint, #mode-hint { padding: 0 12px; }
+#editor-hint, #mode-hint, #view-hint { padding: 0 12px; }
 .ihint { font-size: 13px; color: var(--mut); }
 .ihint summary { cursor: pointer; list-style: none; display: flex; align-items: flex-start; gap: 6px; padding: 2px 0; }
 .ihint summary::-webkit-details-marker { display: none; }
