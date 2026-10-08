@@ -80,7 +80,7 @@ async function viewTour(pid, roomId = null) {
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
-    ${header('3D', `#/p/${pid}`)}
+    ${header('3D', false)}
     <div class="tour">
       <canvas id="tour-canvas"></canvas>
       <div class="tour-top">

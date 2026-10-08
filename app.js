@@ -223,6 +223,7 @@ const swipeNav = { dir: 0 };
     const items = [...document.querySelectorAll('.bottomnav .nav-item')];
     const i = items.findIndex(b => b.classList.contains('active'));
     const k = dx < 0 ? i + 1 : i - 1;   // влево — следующая вкладка, вправо — предыдущая
+    if (i === 0 && k < 0) { swipeNav.dir = -1; nav('#/'); return; } // вправо со «Схемы» — к списку объектов
     if (i < 0 || k < 0 || k >= items.length) return;
     swipeNav.dir = dx < 0 ? 1 : -1;
     nav(items[k].dataset.nav);
@@ -237,11 +238,13 @@ const swipeNav = { dir: 0 };
 
 // знак приложения «Слои в скане» (как иконка): три слоя-этапа
 const LOGO = '<svg viewBox="0 0 120 120" aria-hidden="true"><path d="M60 89.9L99.1 73.8 60 57.7 20.9 73.8Z" fill="#c4cad6"/><path d="M60 76.1L99.1 60 60 43.9 20.9 60Z" fill="#8a97b0"/><path d="M60 62.3L99.1 46.2 60 30.1 20.9 46.2Z" fill="#3f4f73"/></svg>';
+// backHash: адрес для стрелки «назад»; null — главный экран (знак вместо стрелки); false — без стрелки
+// (экраны с нижним меню: по ним ходят вкладками и свайпом — решение пользователя 2026-10-08)
 // название открытого объекта — мелко под заголовком на всех его экранах (ставит render)
 let headerSub = '';
 function header(title, backHash, right = '') {
   return `<header class="topbar">
-    ${backHash !== null ? `<button class="iconbtn" data-nav="${esc(backHash)}" aria-label="Назад">←</button>` : '<span></span>'}
+    ${backHash ? `<button class="iconbtn" data-nav="${esc(backHash)}" aria-label="Назад">←</button>` : '<span></span>'}
     <h1>${backHash === null ? `<span class="logo">${LOGO}</span>` : ''}${headerSub
       ? `<span class="tb-title">${esc(title)}</span><span class="tb-sub">${esc(headerSub)}</span>` : esc(title)}</h1>
     <div class="topbar-right">${right}</div>
@@ -368,7 +371,7 @@ async function viewProjects() {
 
   app.innerHTML = `
     ${header('Fixpoint', null)}
-    <div class="pad">
+    <div class="pad home-pad">
       ${projects.length === 0 ? `
         <div class="empty">
           <div class="empty-ico logo-big">${LOGO}</div>
@@ -386,12 +389,15 @@ async function viewProjects() {
             </div>
           </div>`).join('')}
       </div>
-      <button class="btn primary wide" id="add-project">+ Новый объект</button>
-      <div class="backup-row">
-        <button class="btn ghost" id="export-all">${I('download')}Резервная копия</button>
-        <button class="btn ghost" id="import-all">${I('upload')}Импорт файла</button>
+      <!-- кнопки — внизу экрана (при длинном списке объектов уезжают ниже вместе с ним) -->
+      <div class="home-bottom">
+        <button class="btn primary wide" id="add-project">+ Новый объект</button>
+        <div class="backup-row">
+          <button class="btn ghost" id="export-all">${I('download')}Резервная копия</button>
+          <button class="btn ghost" id="import-all">${I('upload')}Импорт файла</button>
+        </div>
+        <p class="mut small center">Данные хранятся только на этом устройстве.<br>Периодически сохраняйте резервную копию.</p>
       </div>
-      <p class="mut small center">Данные хранятся только на этом устройстве.<br>Периодически сохраняйте резервную копию.</p>
     </div>`;
 
   // переименование объекта — карандаш справа в карточке (единственное место)
@@ -660,7 +666,7 @@ async function viewPlan(pid) {
 
   const lidarNow = typeof lidarSupportedCache !== 'undefined' && lidarSupportedCache === true;
   app.innerHTML = `
-    ${header('Схема', '#/')}
+    ${header('Схема', false)}
     <div class="plan-wrap">
       <div class="plan-actions">
         ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}
@@ -1969,7 +1975,7 @@ async function viewHD(pid) {
   let capOk = false;
   if (cap && Native.RP && Native.RP.fileInfo) { try { capOk = !!(await Native.RP.fileInfo({ path: cap.path })).exists; } catch {} }
   app.innerHTML = `
-    ${header('HD-скан', `#/p/${pid}/more`)}
+    ${header('HD-скан', false)}
     <div class="pad"><div class="cards">
       <div class="card">
         <b>1. Пакет для компьютера</b>
@@ -2057,7 +2063,7 @@ async function viewStages(pid) {
   photos.forEach(p => { counts[p.stageId] = (counts[p.stageId] || 0) + 1; });
 
   app.innerHTML = `
-    ${header('Этапы ремонта', `#/p/${pid}`)}
+    ${header('Этапы ремонта', false)}
     <div class="pad">
       <div class="stage-toolbar">
         <button class="btn small-btn hidden" id="final-stage" title="3D-модель квартиры с текстурами — в конце ремонта">${I('flag')}Финальный скан</button>
@@ -2247,7 +2253,7 @@ async function viewStageAlbum(pid, stageId) {
   }).join('')}</div>`;
 
   app.innerHTML = `
-    ${header(stage.name, `#/p/${pid}/stages`, `<button class="iconbtn" id="rename-stage" title="Переименовать этап">${ICONS.edit}</button>`)}
+    ${header(stage.name, false, `<button class="iconbtn" id="rename-stage" title="Переименовать этап">${ICONS.edit}</button>`)}
     <div class="pad">
       <div class="album-head">
         <span class="mut small">${mine.length} фото</span>
@@ -2630,7 +2636,7 @@ async function viewMore(pid) {
   if (!project) return nav('');
 
   app.innerHTML = `
-    ${header('Ещё', `#/p/${pid}`)}
+    ${header('Ещё', false)}
     <div class="pad">
       <div class="cards">
         <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
