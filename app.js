@@ -458,9 +458,9 @@ function normalizeRoom(r) {
 }
 function newWallId() { return 'k' + uid().replace(/-/g, '').slice(0, 6); }
 
-const WALL_DIM_FS = 0.2; // размер подписей на схеме (длины стен, радиусы) — один для всех стен
+const WALL_DIM_FS = 0.28; // размер подписей на схеме (длины стен, радиусы) — один для всех стен
 const NUM_OFF = 0.15;     // номер стены — вплотную к стене изнутри
-const DIM_OFF = 0.23;     // подпись размера — вплотную к стене (от оси стены до центра текста, м)
+const DIM_OFF = 0.27;     // подпись размера — вплотную к стене (от оси стены до центра текста, м)
 // разнести подписи размеров и номера стен, если они наезжают: каждая едет вдоль своей стены (не дальше её концов) в сторону от соседки,
 // а если ехать некуда — отходит от стены. Рамка подписи — по оценке ширины текста.
 function layoutDims(list) {
@@ -1060,13 +1060,15 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const nameFs = Math.max(0.2, Math.min(0.42, (bb.w - 0.9) / (0.56 * Math.max(1, r.name.length))));
       // название и высота — неподвижные препятствия для подписей стен
       dims.push({ cls: 'obstacle', fixed: true, fs: nameFs, x: cx, y: cy, deg: 0, txt: r.name, ux: 0, uy: 0, nx: 0, ny: 0, slide: 0 });
-      dims.push({ cls: 'obstacle', fixed: true, fs: Math.min(0.26, nameFs), x: cx, y: cy + nameFs, deg: 0, txt: roomHeightText(r).replace(/<[^>]*>/g, ''), ux: 0, uy: 0, nx: 0, ny: 0, slide: 0 });
+      // высота потолка — тем же размером, что размеры стен (WALL_DIM_FS); строкой ниже названия (и его овала в редакторе)
+      const hY = cy + nameFs * 0.85 + WALL_DIM_FS * 0.65;
+      dims.push({ cls: 'obstacle', fixed: true, fs: WALL_DIM_FS, x: cx, y: hY, deg: 0, txt: roomHeightText(r).replace(/<[^>]*>/g, ''), ux: 0, uy: 0, nx: 0, ny: 0, slide: 0 });
       s += `<g>
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
         ${planState.edit && sel ? namePill(r, cx, cy, nameFs, 2 * Math.min(cx - bb.x, bb.x + bb.w - cx)) : `<text class="room-label${planState.edit ? ' editable' : ''}" ${planState.edit ? `data-rename-room="${r.id}"` : ''} style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>`}
-        <text class="room-label room-h" style="font-size:${Math.min(0.26, nameFs).toFixed(3)}px" x="${cx}" y="${cy + nameFs}">${roomHeightText(r)}</text>`;
+        <text class="room-label room-h" style="font-size:${WALL_DIM_FS}px" x="${cx}" y="${hY.toFixed(3)}">${roomHeightText(r)}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
@@ -1091,7 +1093,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         } else if (sel) {
           const ws = planState.sel && planState.sel.type === 'wall' && planState.sel.i === e.i;
           s += `<line class="wall-hit edit ${ws ? 'sel' : ''}" data-edge="${e.i}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
-          if (ws) lenAt = { x: e.mid[0] + e.nx * 0.42, y: e.mid[1] + e.ny * 0.42, len: e.len };
         }
       }
       // проёмы как на архитектурном плане: окно — вставка в стене, дверь — разрыв, полотно и дуга открывания, проход — разрыв
@@ -1121,7 +1122,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       for (const e0 of edges) {
         const run = runs[e0.i];
         if (run.first !== e0.i) continue;
-        if (planState.edit && sel && planState.sel && planState.sel.type === 'wall' && run.idx.includes(planState.sel.i)) continue;
+        if (planState.edit && sel && planState.sel && planState.sel.type === 'wall' && run.idx.includes(planState.sel.i)) {
+          // выбранная стена: вместо подписи — поле ввода на том же месте (снаружи, а у соседней комнаты — внутри)
+          const es = edges[planState.sel.i], out = nearOther(r, es.mid[0] - es.nx * DIM_OFF, es.mid[1] - es.ny * DIM_OFF) ? 1 : -1;
+          lenAt = { x: es.mid[0], y: es.mid[1], nx: es.nx * out, ny: es.ny * out, len: es.len };
+          continue;
+        }
         const e = run.idx.length > 1 ? run.edge : e0;
         if (e.len < 0.25) continue;
         let deg = Math.atan2(e.uy, e.ux) * 180 / Math.PI;
@@ -1200,9 +1206,22 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     // в просмотре без увеличения смахивание по схеме листает страницу; увеличенная схема и редактор ловят касания сами
     svg.style.touchAction = !planState.edit && k <= 1.05 ? 'pan-y' : 'none';
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
+    fitNamePills();
     placeLenInput(lenAt);
   }
-  // поле длины выбранной стены поверх схемы: в экранных координатах точки у середины стены (изнутри)
+  // овал под названием выбранной комнаты — ровно по фактическому контуру текста (getBBox), а не по оценке ширины
+  function fitNamePills() {
+    svg.querySelectorAll('.name-pill').forEach(g => {
+      const t = g.querySelector('text'), rc = g.querySelector('rect');
+      let b; try { b = t.getBBox(); } catch { return; }
+      if (!b || !b.width) return;
+      const fs = parseFloat(t.style.fontSize) || 0.3, px = fs * 0.5, py = fs * 0.22, h = b.height + 2 * py;
+      rc.setAttribute('x', b.x - px); rc.setAttribute('y', b.y - py);
+      rc.setAttribute('width', b.width + 2 * px); rc.setAttribute('height', h); rc.setAttribute('rx', h / 2);
+    });
+  }
+  // поле длины выбранной стены поверх схемы — там, где у стены стоит размер: от середины стены по нормали (наружу),
+  // чтобы край поля был вплотную к стене
   function placeLenInput(at) {
     const wrap = $('#w-len-wrap');
     if (!wrap) return;
@@ -1210,7 +1229,13 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!at) return;
     const g = svg.querySelector('.plan-view'), m = g && g.getScreenCTM(), fr = wrap.parentElement.getBoundingClientRect();
     if (!m) return;
-    const X = m.a * at.x + m.c * at.y + m.e - fr.left, Y = m.b * at.x + m.d * at.y + m.f - fr.top;
+    const X0 = m.a * at.x + m.c * at.y + m.e - fr.left, Y0 = m.b * at.x + m.d * at.y + m.f - fr.top;
+    let sx = m.a * at.nx + m.c * at.ny, sy = m.b * at.nx + m.d * at.ny; const sl = Math.hypot(sx, sy) || 1; sx /= sl; sy /= sl;
+    const W = wrap.offsetWidth, H = wrap.offsetHeight;
+    const half = Math.abs(sx) * W / 2 + Math.abs(sy) * H / 2 + 5; // 5 px — зазор от линии стены
+    const fits = (x, y) => x - W / 2 >= 4 && x + W / 2 <= fr.width - 4 && y - H / 2 >= 4 && y + H / 2 <= fr.height - 4;
+    let X = X0 + sx * half, Y = Y0 + sy * half;
+    if (!fits(X, Y) && fits(X0 - sx * half, Y0 - sy * half)) { X = X0 - sx * half; Y = Y0 - sy * half; } // у края схемы — с другой стороны стены
     wrap.style.left = `${Math.max(4, Math.min(fr.width - wrap.offsetWidth - 4, X - wrap.offsetWidth / 2))}px`;
     wrap.style.top = `${Math.max(4, Math.min(fr.height - wrap.offsetHeight - 4, Y - wrap.offsetHeight / 2))}px`;
     const inp = $('#w-len');
@@ -1745,11 +1770,47 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const label = e => `Стена ${e.i + 1}`;
     // мини-схема комнаты прямо в окне: на телефоне клавиатура и окно закрывают большую схему.
     // Номера стен снаружи, стена, чьё поле в фокусе, подсвечена.
-    const bb = roomBBox(room), sz = Math.max(bb.w, bb.h, 1), off = sz * 0.09, fs = sz * 0.085, pad = off + fs;
+    const bb = roomBBox(room), sz = Math.max(bb.w, bb.h, 1), fs = sz * 0.14, cr = fs * 0.78, off = cr + sz * 0.03;
+    // кружки номеров снаружи у середины стен; у коротких соседних стен (ниша, выступ) кружки раздвигаются вдоль стен и наружу
+    const numPos = edges.map(e => [e.mid[0] - e.nx * off, e.mid[1] - e.ny * off]);
+    const clear = cr + sz * 0.024 * 1.1 + sz * 0.025; // кружок не ближе к стене: радиус + полтолщины подсвеченной стены + зазор
+    const need = cr * 2.15;
+    const wallGap = (x, y) => Math.min(...edges.map(e => { const t = Math.max(0, Math.min(e.len, (x - e.a[0]) * e.ux + (y - e.a[1]) * e.uy)); return Math.hypot(x - e.a[0] - e.ux * t, y - e.a[1] - e.uy * t); }));
+    // кружки рядом друг с другом: номер короткой стены — внутрь комнаты, если там есть место
+    for (let a = 0; a < numPos.length; a++) for (let b = 0; b < numPos.length; b++) {
+      if (a === b || Math.hypot(numPos[a][0] - numPos[b][0], numPos[a][1] - numPos[b][1]) >= need) continue;
+      const k = edges[a].len <= edges[b].len ? a : b, e = edges[k], d = Math.max(off, clear);
+      // место внутри у этой стены: от середины к краям, пока не найдётся свободное
+      for (const f of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9, 0, 1]) {
+        const inPos = [e.a[0] + e.ux * e.len * f + e.nx * d, e.a[1] + e.uy * e.len * f + e.ny * d];
+        const free = pointInPoly(inPos, room.pts) && wallGap(inPos[0], inPos[1]) >= clear - 1e-6
+          && numPos.every((p, j) => j === k || Math.hypot(p[0] - inPos[0], p[1] - inPos[1]) >= need);
+        if (free) { numPos[k] = inPos; break; }
+      }
+    }
+    for (let it = 0; it < 200; it++) {
+      let moved = false;
+      for (let a = 0; a < numPos.length; a++) for (let b = a + 1; b < numPos.length; b++) {
+        const dx = numPos[b][0] - numPos[a][0], dy = numPos[b][1] - numPos[a][1], d = Math.hypot(dx, dy);
+        if (d >= need) continue;
+        const k = (need - d) / 2 + 1e-4, ux = d > 1e-6 ? dx / d : 1, uy = d > 1e-6 ? dy / d : 0;
+        numPos[a][0] -= ux * k; numPos[a][1] -= uy * k; numPos[b][0] += ux * k; numPos[b][1] += uy * k; moved = true;
+      }
+      for (const p of numPos) for (const e of edges) { // отодвинуть от стен
+        const t = Math.max(0, Math.min(e.len, (p[0] - e.a[0]) * e.ux + (p[1] - e.a[1]) * e.uy));
+        const qx = e.a[0] + e.ux * t, qy = e.a[1] + e.uy * t, dx = p[0] - qx, dy = p[1] - qy, d = Math.hypot(dx, dy);
+        if (d >= clear) continue;
+        const ux = d > 1e-6 ? dx / d : -e.nx, uy = d > 1e-6 ? dy / d : -e.ny;
+        p[0] = qx + ux * (clear + 1e-4); p[1] = qy + uy * (clear + 1e-4); moved = true;
+      }
+      if (!moved) break;
+    }
+    const nx0 = Math.min(...numPos.map(p => p[0])), nx1 = Math.max(...numPos.map(p => p[0])), ny0 = Math.min(...numPos.map(p => p[1])), ny1 = Math.max(...numPos.map(p => p[1]));
+    const pad = Math.max(0, bb.x - nx0, nx1 - bb.x - bb.w, bb.y - ny0, ny1 - bb.y - bb.h) + cr + sz * 0.02;
     const mini = `<svg class="len-mini" viewBox="${bb.x - pad} ${bb.y - pad} ${bb.w + 2 * pad} ${bb.h + 2 * pad}" style="--sw:${(sz * 0.022).toFixed(3)}">
       <path class="lm-room" d="${roomPath(room)}"/>
       ${edges.map(e => `<line class="lm-wall" data-mini="${e.i}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`).join('')}
-      ${edges.map(e => `<text class="lm-num" data-mini-num="${e.i}" x="${(e.mid[0] - e.nx * off).toFixed(3)}" y="${(e.mid[1] - e.ny * off).toFixed(3)}" font-size="${fs.toFixed(3)}">${e.i + 1}</text>`).join('')}
+      ${numPos.map(([px, py], k) => { const e = edges[k], x = px.toFixed(3), y = py.toFixed(3); return `<g class="lm-num" data-mini-num="${e.i}"><text x="${x}" y="${y}" dy="0.36em" font-size="${fs.toFixed(3)}">${e.i + 1}</text></g>`; }).join('')}
     </svg>`;
     const ceilHint = room.wallTop && Object.keys(room.wallTop).length ? ` <span class="mut small">(у части стен своя высота по обмеру: ${esc(roomHeightText(room))})</span>` : '';
     showSheet(`<div class="sh-title">Размеры — ${esc(room.name)}</div>
