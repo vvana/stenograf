@@ -804,6 +804,7 @@ select.inp {
 #app:has(.home-pad) { padding-bottom: 0; } /* на главном нет нижнего меню — без запаса под него */
 .home-pad { display: flex; flex-direction: column; min-height: calc(100dvh - 49px - env(safe-area-inset-top)); box-sizing: border-box; }
 .home-bottom { margin-top: auto; padding-top: 40px; padding-bottom: env(safe-area-inset-bottom); }
+.home-hint { margin-top: 16px; } /* «Данные хранятся только на этом устройстве…» — под «i», чуть ниже кнопок */
 
 /* стороны света: стрелка «С» в левом нижнем углу схемы (по компасу при обмере) */
 .plan-north { position: absolute; left: 14px; bottom: 14px; width: 48px; height: 52px; pointer-events: none; }

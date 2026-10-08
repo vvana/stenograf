@@ -396,7 +396,7 @@ async function viewProjects() {
           <button class="btn ghost" id="export-all">${I('download')}Резервная копия</button>
           <button class="btn ghost" id="import-all">${I('upload')}Импорт файла</button>
         </div>
-        <p class="mut small center">Данные хранятся только на этом устройстве.<br>Периодически сохраняйте резервную копию.</p>
+        <details class="ihint home-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Данные хранятся только на этом устройстве. Периодически сохраняйте резервную копию.</span></summary></details>
       </div>
     </div>`;
 
@@ -666,7 +666,7 @@ async function viewPlan(pid) {
 
   const lidarNow = typeof lidarSupportedCache !== 'undefined' && lidarSupportedCache === true;
   app.innerHTML = `
-    ${header('Схема', false)}
+    ${header('Схема', '#/')}
     <div class="plan-wrap">
       <div class="plan-actions">
         ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}
