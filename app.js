@@ -245,8 +245,9 @@ let headerSub = '';
 function header(title, backHash, right = '') {
   return `<header class="topbar">
     ${backHash ? `<button class="iconbtn" data-nav="${esc(backHash)}" aria-label="Назад">←</button>` : '<span></span>'}
-    <h1>${backHash === null ? `<span class="logo">${LOGO}</span>` : ''}${headerSub
-      ? `<span class="tb-title">${esc(title)}</span><span class="tb-sub">${esc(headerSub)}</span>` : esc(title)}</h1>
+    <h1>${headerSub
+      ? `<span class="tb-title">${backHash === null ? `<span class="logo">${LOGO}</span>` : ''}${esc(title)}</span><span class="tb-sub">${esc(headerSub)}</span>`
+      : `${backHash === null ? `<span class="logo">${LOGO}</span>` : ''}${esc(title)}`}</h1>
     <div class="topbar-right">${right}</div>
   </header>`;
 }
@@ -372,6 +373,7 @@ async function viewProjects() {
   app.innerHTML = `
     ${header('Fixpoint', null)}
     <div class="pad home-pad">
+      <div class="home-title">Объекты</div>
       ${projects.length === 0 ? `
         <div class="empty">
           <div class="empty-ico logo-big">${LOGO}</div>
@@ -969,6 +971,7 @@ const ICONS = {
   floor: svgIco('<path d="M4 19h16"/><path d="M12 4v11M8 11l4 4 4-4"/>'),
   walk: svgIco('<path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/><circle cx="12" cy="11" r="2" fill="currentColor" stroke="none"/>'), // «обход»: комната-куб с точкой съёмки
   building: svgIco('<path d="M4 21V6l8-3v18M12 21V9l8 3v9M2.5 21h19M7 8.5h2M7 12.5h2M7 16.5h2M15 14h2M15 17.5h2"/>'),
+  objects: svgIco('<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/>'),
   corner: svgIco('<path d="M5 19V6a1 1 0 0 1 1-1h8"/><path d="M17 13v8M13 17h8"/>'),
   edit: svgIco('<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>'),
   door: svgIco('<path d="M6 21V3h11v18M4 21h16"/><path d="M14 12h.01"/>'),
@@ -2637,7 +2640,7 @@ async function viewMore(pid) {
 
   app.innerHTML = `
     ${header('Ещё', false)}
-    <div class="pad">
+    <div class="pad more-pad">
       <div class="cards">
         <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
@@ -2648,6 +2651,7 @@ async function viewMore(pid) {
           <button class="btn ghost wide" id="set-name">${I('user')}Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
       </div>
+      <button class="btn wide all-objects" data-nav="#/">${I('objects')}Все объекты</button>
       <details class="about"><summary>${I('info')}О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
     </div>
     ${bottomNav(pid, 'more')}`;

@@ -803,8 +803,13 @@ select.inp {
 /* главный экран: список объектов сверху, «Новый объект» и резервная копия — у низа экрана */
 #app:has(.home-pad) { padding-bottom: 0; } /* на главном нет нижнего меню — без запаса под него */
 .home-pad { display: flex; flex-direction: column; min-height: calc(100dvh - 49px - env(safe-area-inset-top)); box-sizing: border-box; }
+.home-title { text-align: center; font: 600 15px system-ui, -apple-system, sans-serif; color: var(--ink); margin: -2px 0 10px; } /* «Объекты» — между шапкой и списком */
 .home-bottom { margin-top: auto; padding-top: 40px; padding-bottom: env(safe-area-inset-bottom); }
-.home-hint { margin-top: 16px; } /* «Данные хранятся только на этом устройстве…» — под «i», чуть ниже кнопок */
+.home-hint { margin-top: 16px; }
+/* «Все объекты» — под «Командой объекта»; «О приложении» (i) — у низа экрана над нижним меню */
+.more-pad { display: flex; flex-direction: column; min-height: calc(100dvh - 60px - 64px - env(safe-area-inset-top)); box-sizing: border-box; }
+.more-pad .btn.all-objects { margin-top: 10px; }
+.more-pad .about { margin-top: auto; padding-top: 16px; } /* «Данные хранятся только на этом устройстве…» — под «i», чуть ниже кнопок */
 
 /* стороны света: стрелка «С» в левом нижнем углу схемы (по компасу при обмере) */
 .plan-north { position: absolute; left: 14px; bottom: 14px; width: 48px; height: 52px; pointer-events: none; }
