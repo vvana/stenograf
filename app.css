@@ -230,6 +230,9 @@ body {
 #plan .op-jamb { stroke: var(--ink); stroke-width: 0.03; pointer-events: none; }
 #plan .op-leaf { stroke: #8a6a45; stroke-width: 0.035; stroke-linecap: round; pointer-events: none; }
 #plan .op-arc { fill: none; stroke: #8a6a45; stroke-width: 0.015; stroke-dasharray: 0.06 0.04; pointer-events: none; }
+/* подписи на схеме центрируются по высоте через dy="0.35em" в разметке: dominant-baseline на iPhone (WebKit) не срабатывал,
+   и размеры над/слева от стен стояли дальше, чем под/справа */
+#plan .wall-dim, #plan .wall-num, #plan .room-label, #plan .room-cnt, #plan .wall-len { dominant-baseline: auto !important; }
 #plan .wall-dim {
   fill: var(--ink); font-weight: 600; text-anchor: middle; dominant-baseline: central;
   pointer-events: none; user-select: none;
@@ -806,10 +809,9 @@ select.inp {
 .home-title { text-align: center; font: 600 15px system-ui, -apple-system, sans-serif; color: var(--ink); margin: -2px 0 10px; } /* «Объекты» — между шапкой и списком */
 .home-bottom { margin-top: auto; padding-top: 40px; padding-bottom: env(safe-area-inset-bottom); }
 .home-hint { margin-top: 16px; }
-/* «Все объекты» — под «Командой объекта»; «О приложении» (i) — у низа экрана над нижним меню */
-.more-pad { display: flex; flex-direction: column; min-height: calc(100dvh - 60px - 64px - env(safe-area-inset-top)); box-sizing: border-box; }
+/* «Все объекты» — под «Командой объекта», «О приложении» (i) — сразу под ней */
 .more-pad .btn.all-objects { margin-top: 10px; }
-.more-pad .about { margin-top: auto; padding-top: 16px; } /* «Данные хранятся только на этом устройстве…» — под «i», чуть ниже кнопок */
+.more-pad .about { margin-top: 12px; } /* «Данные хранятся только на этом устройстве…» — под «i», чуть ниже кнопок */
 
 /* стороны света: стрелка «С» в левом нижнем углу схемы (по компасу при обмере) */
 .plan-north { position: absolute; left: 14px; bottom: 14px; width: 48px; height: 52px; pointer-events: none; }

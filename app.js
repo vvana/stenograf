@@ -573,7 +573,7 @@ function namePill(r, cx, cy, fs0, roomW) { // roomW — ширина, досту
   const w = tw + 2 * padX, x0 = cx - w / 2;
   return `<g class="name-pill" data-rename-room="${r.id}">
     <rect x="${x0.toFixed(3)}" y="${(cy - h / 2).toFixed(3)}" width="${w.toFixed(3)}" height="${h.toFixed(3)}" rx="${(h / 2).toFixed(3)}"/>
-    <text class="room-label editable" data-rename-room="${r.id}" style="font-size:${fs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>
+    <text class="room-label editable" data-rename-room="${r.id}" style="font-size:${fs.toFixed(3)}px" x="${cx}" y="${cy}" dy="0.35em">${esc(r.name)}</text>
   </g>`;
 }
 
@@ -1076,8 +1076,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
         ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
-        ${planState.edit && sel ? namePill(r, cx, cy, nameFs, 2 * Math.min(cx - bb.x, bb.x + bb.w - cx)) : `<text class="room-label${planState.edit ? ' editable' : ''}" ${planState.edit ? `data-rename-room="${r.id}"` : ''} style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}">${esc(r.name)}</text>`}
-        <text class="room-label room-h" style="font-size:${WALL_DIM_FS}px" x="${cx}" y="${hY.toFixed(3)}">${roomHeightText(r)}</text>`;
+        ${planState.edit && sel ? namePill(r, cx, cy, nameFs, 2 * Math.min(cx - bb.x, bb.x + bb.w - cx)) : `<text class="room-label${planState.edit ? ' editable' : ''}" ${planState.edit ? `data-rename-room="${r.id}"` : ''} style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}" dy="0.35em">${esc(r.name)}</text>`}
+        <text class="room-label room-h" style="font-size:${WALL_DIM_FS}px" x="${cx}" y="${hY.toFixed(3)}" dy="0.35em">${roomHeightText(r)}</text>`;
       for (const e of edges) {
         const key = `${r.id}:${e.id}`;
         const cnt = counts[key] || 0;
@@ -1167,7 +1167,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         // пол и потолок — в меню по тапу внутри комнаты; здесь только счётчик, если фото уже есть
         const extra = [['c', '⬆'], ['f', '⬇']]
           .map(([sf, ico]) => { const n = counts[`${r.id}:${sf}`] || 0; return n ? `${ico} ${n}` : ''; }).filter(Boolean);
-        if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.8}">${extra.join('   ')}</text>`;
+        if (extra.length) s += `<text class="room-cnt" x="${cx}" y="${cy + 0.8}" dy="0.35em">${extra.join('   ')}</text>`;
       }
       if (planState.edit && sel && planState.lengthsOpen !== r.id) {
         r.pts.forEach((p, i) => {
@@ -1176,15 +1176,15 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
           s += `<g data-drag="vertex" data-i="${i}"><circle class="handle-hit" cx="${p[0]}" cy="${p[1]}" r="0.34"/><circle class="handle v ${vs ? 'sel' : ''}" cx="${p[0]}" cy="${p[1]}" r="0.15"/></g>`;
           if (vs) {
             const a = Math.round(cornerAngle(r, i));
-            s += `<text class="wall-len" x="${p[0] + 0.4}" y="${p[1] - 0.4}">${a}°</text>`;
+            s += `<text class="wall-len" x="${p[0] + 0.4}" y="${p[1] - 0.4}" dy="0.35em">${a}°</text>`;
           }
         });
       }
       s += '</g>';
     }
     s += layoutDims(dims).filter(d => d.cls !== 'obstacle').map(d => d.cls === 'wall-num'
-      ? `<text class="wall-num" x="${d.x.toFixed(3)}" y="${d.y.toFixed(3)}">${d.txt}</text>`
-      : `<text class="wall-dim" style="font-size:${WALL_DIM_FS}px" transform="translate(${d.x.toFixed(3)} ${d.y.toFixed(3)}) rotate(${d.deg})">${d.txt}</text>`).join('');
+      ? `<text class="wall-num" x="${d.x.toFixed(3)}" y="${d.y.toFixed(3)}" dy="0.35em">${d.txt}</text>`
+      : `<text class="wall-dim" style="font-size:${WALL_DIM_FS}px" transform="translate(${d.x.toFixed(3)} ${d.y.toFixed(3)}) rotate(${d.deg})" dy="0.35em">${d.txt}</text>`).join('');
     // точки съёмки: камера и конус обзора (≈60°) в сторону снятой стены
     if (!planState.edit) {
       for (const p of shots) {
