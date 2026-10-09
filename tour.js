@@ -493,8 +493,26 @@ async function viewTour(pid, roomId = null) {
     const w = Math.max(1, Math.floor(r.width)), h = Math.max(1, Math.floor(r.height));
     renderer.setSize(w, h, false);
     camera.aspect = w / h; camera.updateProjectionMatrix();
-    // узкий (портретный) экран: отодвигаем камеру «домика», чтобы квартира помещалась по ширине
-    if (!orbit.userZoom) orbit.radius = span * 1.55 * Math.max(1, 0.85 / (w / h));
+    // стартовый масштаб: квартира целиком помещается в свободную часть экрана (ниже кнопок сверху, с полями по краям)
+    if (!orbit.userZoom) orbit.radius = orbitMode() ? fitRadius(w, h) : span * 1.55 * Math.max(1, 0.85 / (w / h));
+  }
+  // подбор расстояния камеры: углы габарита квартиры (с высотой стен) должны попасть в кадр
+  function fitRadius(w, h) {
+    const box = canvas.parentElement.getBoundingClientRect(), top = canvas.parentElement.querySelector('.tour-top');
+    const topPx = top ? top.getBoundingClientRect().bottom - box.top + 10 : 60;
+    const nav = document.querySelector('.bottomnav'), navPx = nav ? box.bottom - nav.getBoundingClientRect().top : 0; // сцена уходит под нижнее меню
+    const yTop = 1 - 2 * topPx / h, yBot = -1 + 2 * (navPx + 24) / h, xLim = 1 - 2 * 14 / w;
+    const hMax = Math.max(2.5, ...rooms.map(roomCeil)), pad = 0.2, pts = [];
+    for (const x of [minX - pad, maxX + pad]) for (const z of [minZ - pad, maxZ + pad]) for (const y of [0, hMax]) pts.push(new THREE.Vector3(x, y, z));
+    const v = new THREE.Vector3(), saved = orbit.radius;
+    const fits = rad => {
+      orbit.radius = rad; placeCamera(); camera.updateMatrixWorld();
+      return pts.every(p => { v.copy(p).project(camera); return v.z < 1 && Math.abs(v.x) <= xLim && v.y <= yTop && v.y >= yBot; });
+    };
+    let lo = span * 0.3, hi = span * 10;
+    if (!fits(hi)) { orbit.radius = saved; return span * 1.55 * Math.max(1, 0.85 / (w / h)); }
+    for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+    return hi;
   }
   const pointers = new Map();
   let lastPinch = 0, lastAng = null;
