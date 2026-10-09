@@ -798,7 +798,7 @@ async function viewPlan(pid) {
           <div class="empty-ico">${ICONS.plan}</div>
           <p><b>Схемы пока нет.</b></p>
           <p class="mut">Нажмите «Редактор» сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
-        </div>` : planState.edit ? '' : `<details class="ihint" id="view-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.</span></summary></details>`}
+        </div>` : planState.edit ? '' : `<details class="ihint" id="view-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.infoSq}<span class="ihint-text">Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.</span></summary></details>`}
     </div>
     ${bottomNav(pid, 'plan')}`;
 
@@ -1035,6 +1035,10 @@ const ICONS = {
   calc: svgIco('<rect x="3" y="3" width="15" height="6" rx="2"/><path d="M18 6h2.5v5H12v3"/><rect x="10.5" y="14" width="3" height="7" rx="1"/>'), // валик
   user: svgIco('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'),
   info: svgIco('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.4"/>'),
+  // квадратное «i» по образцу пользователя (2026-10-09) — пока на пробу только у подсказки под схемой (#view-hint)
+  infoSq: svgIco('<rect x="3" y="3" width="18" height="18" rx="5"/>'
+    + '<circle fill="currentColor" stroke="none" cx="11.9" cy="7.4" r="1.55"/>'
+    + '<path fill="currentColor" stroke="none" d="M10 10.2h3.4v6.1h1.1a.8.8 0 0 1 .8.8v.2a.8.8 0 0 1-.8.8h-5a.8.8 0 0 1-.8-.8v-.2a.8.8 0 0 1 .8-.8h1.1v-4.3h-.6a.9.9 0 0 1 0-1.8z"/>'),
   image: svgIco('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>'),
   move: svgIco('<path d="M12 3v18M3 12h18M9.5 5.5L12 3l2.5 2.5M9.5 18.5L12 21l2.5-2.5M5.5 9.5L3 12l2.5 2.5M18.5 9.5L21 12l-2.5 2.5"/>'),
   compare: svgIco('<path d="M7 7h13M16 3l4 4-4 4M17 17H4M8 13l-4 4 4 4"/>'),
