@@ -818,6 +818,11 @@ select.inp {
 .wall-mini .wm-hit { stroke: transparent; cursor: pointer; }
 .wall-mini .wm-num { fill: var(--mut); font-weight: 700; text-anchor: middle; font-family: system-ui, -apple-system, sans-serif; pointer-events: none; }
 .wall-mini .wm-num.on { fill: var(--acc); }
+.wall-mini .sm-room { cursor: pointer; }
+.wall-mini .sm-room path { fill: var(--card); stroke: var(--top-ink); stroke-width: var(--sw); stroke-linejoin: round; }
+.wall-mini .sm-room text { fill: var(--mut); font-weight: 600; text-anchor: middle; font-family: system-ui, -apple-system, sans-serif; pointer-events: none; }
+.wall-mini .sm-room.on path { fill: color-mix(in srgb, var(--acc) 28%, var(--card)); stroke: var(--acc); stroke-width: calc(var(--sw) * 1.8); }
+.wall-mini .sm-room.on text { fill: var(--acc); font-weight: 700; }
 .wall-sheet { position: relative; margin-top: -12px; border-radius: 18px 18px 0 0; background: var(--bg); box-shadow: 0 -6px 18px rgba(0,0,0,.08); min-height: calc(100dvh - 60px - 158px); box-sizing: border-box; }
 .wall-sheet .sh-grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: -4px auto 10px; }
 .wall-sheet.rise { animation: wall-rise .38s ease-out; }

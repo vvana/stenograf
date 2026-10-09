@@ -646,6 +646,21 @@ function wallMiniSvg(room, edges, cur) {
   </svg>`;
 }
 
+// мини-схема для пола/потолка: все комнаты объекта, текущая закрашена; тап по комнате — её пол/потолок
+function surfMiniSvg(rooms, curId) {
+  const bbs = rooms.map(roomBBox);
+  const x0 = Math.min(...bbs.map(b => b.x)), y0 = Math.min(...bbs.map(b => b.y));
+  const x1 = Math.max(...bbs.map(b => b.x + b.w)), y1 = Math.max(...bbs.map(b => b.y + b.h));
+  const sz = Math.max(x1 - x0, y1 - y0, 1), pad = sz * 0.04;
+  return `<svg class="wall-mini-svg" viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}" preserveAspectRatio="xMidYMid meet" style="--sw:${(sz * 0.012).toFixed(3)}">
+    ${rooms.map((r, k) => {
+      const [cx, cy] = roomCenter(r), b = bbs[k];
+      const fs = Math.max(sz * 0.025, Math.min(sz * 0.05, (b.w * 0.9) / (0.56 * Math.max(4, r.name.length))));
+      return `<g class="sm-room${r.id === curId ? ' on' : ''}" data-mini-room="${r.id}"><path d="${roomPath(r)}"/><text x="${cx}" y="${cy}" dy="0.36em" font-size="${fs.toFixed(3)}">${esc(r.name)}</text></g>`;
+    }).join('')}
+  </svg>`;
+}
+
 function isWallId(r, id) { return (r.wallIds || []).includes(id); }
 function isStandardRoom(r) { return r.pts.length === 4 && r.wallIds.every(id => SIDE_NAMES[id]); }
 
@@ -2394,14 +2409,16 @@ async function viewWall(pid, wallKey) {
   // стена: сверху мини-схема комнаты, ниже «шторка» со стеной; соседние стены — свайпом или тапом по мини-схеме
   const wEdges = isWallId(room, side) ? roomEdges(room) : [];
   const wIdx = wEdges.findIndex(e => e.id === side);
+  const isSurf = side === 'c' || side === 'f'; // пол/потолок: мини-схема всех комнат, выбор комнаты
   const anim = wallAnim && wallAnim.room === roomId && Date.now() - wallAnim.at < 1500 ? wallAnim : null;
   wallAnim = null;
 
   app.innerHTML = `
     ${header(wallLabel(room, side), `#/p/${pid}`)}
     ${wIdx >= 0 ? `<div class="wall-mini" id="wall-mini">${wallMiniSvg(room, wEdges, wIdx)}</div>` : ''}
-    <div class="pad ${wIdx >= 0 ? `wall-sheet${anim ? ' rise' : ''}` : ''}" id="wall-sheet">
-      ${wIdx >= 0 ? '<div class="sh-grab" aria-hidden="true"></div>' : ''}
+    ${isSurf ? `<div class="wall-mini" id="wall-mini">${surfMiniSvg(rooms, roomId)}</div>` : ''}
+    <div class="pad ${wIdx >= 0 || isSurf ? `wall-sheet${anim ? ' rise' : ''}` : ''}" id="wall-sheet">
+      ${wIdx >= 0 || isSurf ? '<div class="sh-grab" aria-hidden="true"></div>' : ''}
       ${stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ${I('compare')}Сравнить «до / после»</button>` : `
@@ -2457,6 +2474,30 @@ async function viewWall(pid, wallKey) {
     const open = t.classList.toggle('hidden') === false;
     el.classList.toggle('open', open);
   }; });
+
+  if (isSurf) {
+    // другая комната — тап по ней на мини-схеме или свайп влево/вправо (по порядку комнат, по кругу)
+    const rIdx = rooms.findIndex(r => r.id === roomId);
+    const goRoom = (k, dir) => { swipeNav.dir = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(rooms[k].id + ':' + side)}`); };
+    $('#wall-mini').addEventListener('click', e => {
+      const t = e.target.closest('[data-mini-room]');
+      const k = t ? rooms.findIndex(r => r.id === t.dataset.miniRoom) : -1;
+      if (k >= 0 && k !== rIdx) goRoom(k, k > rIdx ? 1 : -1);
+    });
+    if (rooms.length > 1) {
+      let st = null;
+      for (const el of [$('#wall-mini'), $('#wall-sheet')]) {
+        el.addEventListener('touchstart', e => { st = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null; }, { passive: true });
+        el.addEventListener('touchend', e => {
+          if (!st) return;
+          const c = e.changedTouches[0], dx = c.clientX - st.x, dy = c.clientY - st.y, dt = Date.now() - st.t; st = null;
+          if (dt > 700 || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+          const n = rooms.length;
+          goRoom(dx < 0 ? (rIdx + 1) % n : (rIdx - 1 + n) % n, dx < 0 ? 1 : -1);
+        }, { passive: true });
+      }
+    }
+  }
 
   if (wIdx >= 0) {
     const goWall = (id, dir) => { swipeNav.dir = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(roomId + ':' + id)}`); };
