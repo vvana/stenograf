@@ -441,6 +441,8 @@ const planView = { k: 1, r: 0, tx: 0, ty: 0, pid: null };
 let wallAnim = null;
 // листание стен/комнат на экране стены: въезжает только содержимое шторки (шапка и мини-схема стоят)
 let wallSlide = 0;
+// обратный переход: при закрытии шторки схема «разворачивается» из мини-схемы на своё место
+let planReturn = null;
 const resetPlanView = () => Object.assign(planView, { k: 1, r: 0, tx: 0, ty: 0 });
 // отмена в редакторе: снимки комнат (и положения фото плана) перед каждым изменением; очищается при выходе из редактора
 const planUndo = { pid: null, stack: [] };
@@ -1328,6 +1330,23 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   }
   if (planView.pid !== pid) { resetPlanView(); planView.pid = pid; planUndo.stack = []; }
   draw();
+  // возврат со шторки стены/пола/потолка: схема «разворачивается» из мини-схемы — комната летит с её места на своё
+  if (planReturn && Date.now() - planReturn.at < 1500 && !planState.edit) {
+    const pr = planReturn, rp = svg.querySelector(`[data-room="${pr.room}"]`);
+    if (rp) {
+      const to = rp.getBoundingClientRect(), o = svg.getBoundingClientRect();
+      if (to.width > 0) {
+        const k = pr.rect.width / to.width;
+        const tx = pr.rect.left - o.left - k * (to.left - o.left), ty = pr.rect.top - o.top - k * (to.top - o.top);
+        svg.style.transformOrigin = '0 0';
+        svg.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
+        svg.getBoundingClientRect(); // применить начальное положение, затем анимировать к обычному (без rAF — в фоне он может не прийти)
+        svg.style.transition = 'transform .38s ease'; svg.style.transform = '';
+        setTimeout(() => { svg.style.transition = ''; svg.style.transformOrigin = ''; }, 450);
+      }
+    }
+  }
+  planReturn = null;
 
   function toWorld(e) { // координаты схемы с учётом масштаба/сдвига вида
     const g = svg.querySelector('.plan-view') || svg;
@@ -2481,73 +2500,77 @@ async function viewWall(pid, wallKey) {
     el.classList.toggle('open', open);
   }; });
 
-  // шторка стены/пола/потолка закрывается (назад к схеме): смахиванием вниз или тапом по пустому месту мини-схемы
+  // шторка стены/пола/потолка. Один обработчик жестов на мини-схеме и шторке:
+  //  • вниз по шторке (страница не прокручена) — шторка едет за пальцем, дальше 110 px или рывок — закрыть, к схеме;
+  //  • влево/вправо — содержимое шторки едет за пальцем, дальше 70 px или рывок — уезжает, въезжает соседняя стена/комната;
+  //  • тап по пустому месту мини-схемы — к схеме, тап по стене/комнате — к ней.
   if (wIdx >= 0 || isSurf) {
-    const sheetEl = $('#wall-sheet'), toPlan = () => nav(`#/p/${pid}`);
-    $('#wall-mini').addEventListener('click', e => { if (!e.target.closest('[data-mini-wall],[data-mini-room]')) toPlan(); });
-    let dn = null;
-    sheetEl.addEventListener('touchstart', e => { dn = e.touches.length === 1 && window.scrollY <= 0 ? { y: e.touches[0].clientY, x: e.touches[0].clientX, t: Date.now(), on: false, dy: 0 } : null; }, { passive: true });
-    sheetEl.addEventListener('touchmove', e => {
-      if (!dn) return;
-      const dy = e.touches[0].clientY - dn.y, dx = e.touches[0].clientX - dn.x;
-      if (!dn.on) { if (dy > 8 && dy > Math.abs(dx) * 1.5 && window.scrollY <= 0) dn.on = true; else if (Math.abs(dx) > 8 || dy < -8) { dn = null; return; } else return; }
-      dn.dy = Math.max(0, dy); e.preventDefault();
-      sheetEl.style.transition = 'none'; sheetEl.style.transform = `translateY(${dn.dy}px)`;
-    }, { passive: false });
-    sheetEl.addEventListener('touchend', () => {
-      if (!dn || !dn.on) { dn = null; return; }
-      const fast = dn.dy / Math.max(1, Date.now() - dn.t) > 0.6, close = dn.dy > 110 || (fast && dn.dy > 40);
-      sheetEl.style.transition = 'transform .2s ease';
-      sheetEl.style.transform = close ? 'translateY(100%)' : '';
-      if (close) setTimeout(toPlan, 180);
-      dn = null;
-    });
-  }
-
-  if (isSurf) {
-    // другая комната — тап по ней на мини-схеме или свайп влево/вправо (по порядку комнат, по кругу)
+    const sheetEl = $('#wall-sheet'), miniEl = $('#wall-mini');
+    const toPlan = (slid = false) => {
+      const rp = miniEl.querySelector('.wm-room') || miniEl.querySelector('.sm-room.on path');
+      planReturn = rp ? { room: roomId, rect: rp.getBoundingClientRect(), at: Date.now() } : null;
+      if (slid) return nav(`#/p/${pid}`);
+      sheetEl.style.transition = 'transform .18s ease'; sheetEl.style.transform = 'translateY(100%)';
+      setTimeout(() => nav(`#/p/${pid}`), 170);
+    };
+    const content = () => [...sheetEl.children].filter(c => !c.classList.contains('sh-grab'));
+    const moveX = (x, ms) => content().forEach(c => { c.style.transition = ms ? `transform ${ms}ms ease` : 'none'; c.style.transform = x ? `translateX(${x}px)` : ''; });
     const rIdx = rooms.findIndex(r => r.id === roomId);
-    const goRoom = (k, dir) => { wallSlide = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(rooms[k].id + ':' + side)}`); };
-    $('#wall-mini').addEventListener('click', e => {
-      const t = e.target.closest('[data-mini-room]');
-      const k = t ? rooms.findIndex(r => r.id === t.dataset.miniRoom) : -1;
-      if (k >= 0 && k !== rIdx) goRoom(k, k > rIdx ? 1 : -1);
+    // соседняя стена (или комната для пола/потолка) по кругу; null — листать некуда
+    const neighbor = dir => {
+      if (wIdx >= 0) { const n = wEdges.length; return `#/p/${pid}/w/${encodeURIComponent(roomId + ':' + wEdges[(wIdx + dir + n) % n].id)}`; }
+      if (rooms.length < 2) return null;
+      const n = rooms.length; return `#/p/${pid}/w/${encodeURIComponent(rooms[(rIdx + dir + n) % n].id + ':' + side)}`;
+    };
+    const go = (hash, dir) => { wallSlide = dir; location.replace(hash); };
+    const scrollsX = el => { for (; el && el !== app; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
+
+    miniEl.addEventListener('click', e => {
+      const w = e.target.closest('[data-mini-wall]'), r = e.target.closest('[data-mini-room]');
+      if (w) { if (w.dataset.miniWall !== side) { const k = wEdges.findIndex(x => x.id === w.dataset.miniWall); go(`#/p/${pid}/w/${encodeURIComponent(roomId + ':' + w.dataset.miniWall)}`, k > wIdx ? 1 : -1); } return; }
+      if (r) { const k = rooms.findIndex(x => x.id === r.dataset.miniRoom); if (k >= 0 && k !== rIdx) go(`#/p/${pid}/w/${encodeURIComponent(rooms[k].id + ':' + side)}`, k > rIdx ? 1 : -1); return; }
+      toPlan();
     });
-    if (rooms.length > 1) {
-      let st = null;
-      for (const el of [$('#wall-mini'), $('#wall-sheet')]) {
-        el.addEventListener('touchstart', e => { st = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null; }, { passive: true });
-        el.addEventListener('touchend', e => {
-          if (!st) return;
-          const c = e.changedTouches[0], dx = c.clientX - st.x, dy = c.clientY - st.y, dt = Date.now() - st.t; st = null;
-          if (dt > 700 || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
-          const n = rooms.length;
-          goRoom(dx < 0 ? (rIdx + 1) % n : (rIdx - 1 + n) % n, dx < 0 ? 1 : -1);
-        }, { passive: true });
-      }
+
+    let g = null;
+    for (const el of [miniEl, sheetEl]) {
+      el.addEventListener('touchstart', e => {
+        g = e.touches.length === 1 && !scrollsX(e.target) ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), mode: null, d: 0, onSheet: el === sheetEl } : null;
+      }, { passive: true });
+      el.addEventListener('touchmove', e => {
+        if (!g) return;
+        const dx = e.touches[0].clientX - g.x, dy = e.touches[0].clientY - g.y;
+        if (!g.mode) {
+          if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.2) g.mode = 'x';
+          else if (g.onSheet && dy > 8 && dy > Math.abs(dx) * 1.5 && window.scrollY <= 0) g.mode = 'down';
+          else if (Math.abs(dx) > 8 || Math.abs(dy) > 8) { g = null; return; }
+          else return;
+        }
+        e.preventDefault();
+        if (g.mode === 'x') { g.d = dx; moveX(neighbor(dx < 0 ? 1 : -1) ? dx : dx * 0.25); }
+        else { g.d = Math.max(0, dy); sheetEl.style.transition = 'none'; sheetEl.style.transform = `translateY(${g.d}px)`; }
+      }, { passive: false });
+      el.addEventListener('touchend', () => {
+        if (!g || !g.mode) { g = null; return; }
+        const v = Math.abs(g.d) / Math.max(1, Date.now() - g.t), fast = v > 0.5;
+        if (g.mode === 'x') {
+          const dir = g.d < 0 ? 1 : -1, hash = neighbor(dir);
+          if (hash && (Math.abs(g.d) > 70 || (fast && Math.abs(g.d) > 30))) {
+            moveX(-dir * innerWidth, 160);
+            setTimeout(() => go(hash, dir), 150);
+          } else moveX(0, 180);
+        } else {
+          const close = g.d > 110 || (fast && g.d > 40);
+          sheetEl.style.transition = 'transform .2s ease';
+          sheetEl.style.transform = close ? 'translateY(100%)' : '';
+          if (close) setTimeout(() => toPlan(true), 180);
+        }
+        g = null;
+      });
     }
   }
 
   if (wIdx >= 0) {
-    const goWall = (id, dir) => { wallSlide = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(roomId + ':' + id)}`); };
-    // тап по стене на мини-схеме
-    $('#wall-mini').addEventListener('click', e => {
-      const t = e.target.closest('[data-mini-wall]');
-      if (t && t.dataset.miniWall !== side) { const k = wEdges.findIndex(x => x.id === t.dataset.miniWall); goWall(t.dataset.miniWall, k > wIdx ? 1 : -1); }
-    });
-    // свайп влево/вправо — следующая/предыдущая стена по кругу (кроме полос, которые сами листаются вбок)
-    let st = null;
-    const scrollsX = el => { for (; el && el !== app; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
-    for (const el of [$('#wall-mini'), $('#wall-sheet')]) {
-      el.addEventListener('touchstart', e => { st = e.touches.length === 1 && !scrollsX(e.target) ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null; }, { passive: true });
-      el.addEventListener('touchend', e => {
-        if (!st) return;
-        const c = e.changedTouches[0], dx = c.clientX - st.x, dy = c.clientY - st.y, dt = Date.now() - st.t; st = null;
-        if (dt > 700 || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
-        const n = wEdges.length, k = dx < 0 ? (wIdx + 1) % n : (wIdx - 1 + n) % n;
-        goWall(wEdges[k].id, dx < 0 ? 1 : -1);
-      }, { passive: true });
-    }
     // переход со схемы: комната «сжимается» из своего места на схеме в мини-схему, шторка выезжает снизу
     if (anim) {
       const svgEl = $('#wall-mini svg'), to = svgEl.querySelector('.wm-room').getBoundingClientRect(), o = svgEl.getBoundingClientRect();
@@ -2556,7 +2579,8 @@ async function viewWall(pid, wallKey) {
         const tx = anim.rect.left - o.left - k * (to.left - o.left), ty = anim.rect.top - o.top - k * (to.top - o.top);
         svgEl.style.transformOrigin = '0 0';
         svgEl.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
-        requestAnimationFrame(() => requestAnimationFrame(() => { svgEl.style.transition = 'transform .38s ease'; svgEl.style.transform = ''; }));
+        svgEl.getBoundingClientRect(); // применить начальное положение, затем анимировать к обычному
+        svgEl.style.transition = 'transform .38s ease'; svgEl.style.transform = '';
       }
     }
   }
