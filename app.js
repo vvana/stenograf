@@ -437,6 +437,8 @@ const planState = { edit: false, selected: null, sel: null, mode: null, tmp: [],
 // вид схемы в просмотре: масштаб k, поворот r (рад), сдвиг t (в единицах схемы) — двумя пальцами, как карта.
 // В редакторе всегда исходный вид.
 const planView = { k: 1, r: 0, tx: 0, ty: 0, pid: null };
+// переход со схемы на экран стены: где была комната на экране (схема «сжимается» в мини-схему наверху)
+let wallAnim = null;
 const resetPlanView = () => Object.assign(planView, { k: 1, r: 0, tx: 0, ty: 0 });
 // отмена в редакторе: снимки комнат (и положения фото плана) перед каждым изменением; очищается при выходе из редактора
 const planUndo = { pid: null, stack: [] };
@@ -590,6 +592,60 @@ function roomEdges(r) {
   return out;
 }
 function roomEdge(r, wallId) { return roomEdges(r).find(e => e.id === wallId) || null; }
+// места номеров стен на мини-схеме: снаружи у середины стен; у соседних коротких стен номер короткой — внутрь комнаты,
+// если там свободно; остальное раздвигается и отодвигается от стен (cr — «радиус» номера, sz — размер комнаты)
+function miniNumPos(room, edges, sz, cr, off) {
+  const numPos = edges.map(e => [e.mid[0] - e.nx * off, e.mid[1] - e.ny * off]);
+  const clear = cr + sz * 0.024 * 1.1 + sz * 0.025; // кружок не ближе к стене: радиус + полтолщины подсвеченной стены + зазор
+  const need = cr * 2.15;
+  const wallGap = (x, y) => Math.min(...edges.map(e => { const t = Math.max(0, Math.min(e.len, (x - e.a[0]) * e.ux + (y - e.a[1]) * e.uy)); return Math.hypot(x - e.a[0] - e.ux * t, y - e.a[1] - e.uy * t); }));
+  // кружки рядом друг с другом: номер короткой стены — внутрь комнаты, если там есть место
+  for (let a = 0; a < numPos.length; a++) for (let b = 0; b < numPos.length; b++) {
+    if (a === b || Math.hypot(numPos[a][0] - numPos[b][0], numPos[a][1] - numPos[b][1]) >= need) continue;
+    const k = edges[a].len <= edges[b].len ? a : b, e = edges[k], d = Math.max(off, clear);
+    // место внутри у этой стены: от середины к краям, пока не найдётся свободное
+    for (const f of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9, 0, 1]) {
+      const inPos = [e.a[0] + e.ux * e.len * f + e.nx * d, e.a[1] + e.uy * e.len * f + e.ny * d];
+      const free = pointInPoly(inPos, room.pts) && wallGap(inPos[0], inPos[1]) >= clear - 1e-6
+        && numPos.every((p, j) => j === k || Math.hypot(p[0] - inPos[0], p[1] - inPos[1]) >= need);
+      if (free) { numPos[k] = inPos; break; }
+    }
+  }
+  for (let it = 0; it < 200; it++) {
+    let moved = false;
+    for (let a = 0; a < numPos.length; a++) for (let b = a + 1; b < numPos.length; b++) {
+      const dx = numPos[b][0] - numPos[a][0], dy = numPos[b][1] - numPos[a][1], d = Math.hypot(dx, dy);
+      if (d >= need) continue;
+      const k = (need - d) / 2 + 1e-4, ux = d > 1e-6 ? dx / d : 1, uy = d > 1e-6 ? dy / d : 0;
+      numPos[a][0] -= ux * k; numPos[a][1] -= uy * k; numPos[b][0] += ux * k; numPos[b][1] += uy * k; moved = true;
+    }
+    for (const p of numPos) for (const e of edges) { // отодвинуть от стен
+      const t = Math.max(0, Math.min(e.len, (p[0] - e.a[0]) * e.ux + (p[1] - e.a[1]) * e.uy));
+      const qx = e.a[0] + e.ux * t, qy = e.a[1] + e.uy * t, dx = p[0] - qx, dy = p[1] - qy, d = Math.hypot(dx, dy);
+      if (d >= clear) continue;
+      const ux = d > 1e-6 ? dx / d : -e.nx, uy = d > 1e-6 ? dy / d : -e.ny;
+      p[0] = qx + ux * (clear + 1e-4); p[1] = qy + uy * (clear + 1e-4); moved = true;
+    }
+    if (!moved) break;
+  }
+  return numPos;
+}
+
+// мини-схема комнаты над экраном стены: текущая стена оранжевая, тап по стене — перейти к ней
+function wallMiniSvg(room, edges, cur) {
+  const bb = roomBBox(room), sz = Math.max(bb.w, bb.h, 1), fs = sz * 0.11, cr = fs * 0.72, off = cr + sz * 0.03;
+  const pos = miniNumPos(room, edges, sz, cr, off);
+  const xs = pos.map(q => q[0]), ys = pos.map(q => q[1]);
+  const pad = Math.max(0, bb.x - Math.min(...xs), Math.max(...xs) - bb.x - bb.w, bb.y - Math.min(...ys), Math.max(...ys) - bb.y - bb.h) + cr + sz * 0.02;
+  const ln = (e, cls, extra = '') => `<line class="${cls}" ${extra} x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
+  return `<svg class="wall-mini-svg" viewBox="${bb.x - pad} ${bb.y - pad} ${bb.w + 2 * pad} ${bb.h + 2 * pad}" preserveAspectRatio="xMidYMid meet" style="--sw:${(sz * 0.022).toFixed(3)}">
+    <path class="wm-room" d="${roomPath(room)}"/>
+    ${edges.map(e => ln(e, 'wm-wall' + (e.i === cur ? ' on' : ''))).join('')}
+    ${edges.map(e => `<text class="wm-num${e.i === cur ? ' on' : ''}" x="${pos[e.i][0].toFixed(3)}" y="${pos[e.i][1].toFixed(3)}" dy="0.36em" font-size="${fs.toFixed(3)}">${e.i + 1}</text>`).join('')}
+    ${edges.map(e => ln(e, 'wm-hit', `data-mini-wall="${e.id}" style="stroke-width:${(sz * 0.14).toFixed(3)}"`)).join('')}
+  </svg>`;
+}
+
 function isWallId(r, id) { return (r.wallIds || []).includes(id); }
 function isStandardRoom(r) { return r.pts.length === 4 && r.wallIds.every(id => SIDE_NAMES[id]); }
 
@@ -1374,7 +1430,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     if (!drag) return;
     const d = drag; drag = null;
     if (d.kind === 'tap-shot') { if (!d.moved && onShot) onShot(d.id); return; }
-    if (d.kind === 'tap-wall') { if (!d.moved) nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`); return; }
+    if (d.kind === 'tap-wall') {
+      if (d.moved) return;
+      const rid = d.key.split(':')[0], rp = svg.querySelector(`[data-room="${rid}"]`);
+      wallAnim = rp ? { room: rid, rect: rp.getBoundingClientRect(), at: Date.now() } : null;
+      nav(`#/p/${pid}/w/${encodeURIComponent(d.key)}`); return;
+    }
     if (d.kind === 'tap-room') { if (!d.moved) roomMenu(d.id); return; }
     if (d.kind === 'tap-mode') { if (!d.moved) await modeTap(d.world); return; }
     if (d.kind === 'underlay') { if (d.moved) { pushUndo({ plan: { k: plan.k, ox: d.orig.ox, oy: d.orig.oy } }, d.snap); await dbPut('projects', project); } return; }
@@ -1676,7 +1737,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
       ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}
-      <button class="btn wide hidden" id="rm-remeasure">${ICONS.scan}Переобмерить лидаром</button>`, sh => {
+      <button class="btn wide hidden" id="rm-remeasure">${I('scan')}Переобмерить лидаром</button>`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
       // переобмер этой комнаты (обмер вынесен из редактора) — только на телефоне с лидаром
       lidarAvailable().then(ok => {
@@ -1781,39 +1842,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     // Номера стен снаружи, стена, чьё поле в фокусе, подсвечена.
     const bb = roomBBox(room), sz = Math.max(bb.w, bb.h, 1), fs = sz * 0.14, cr = fs * 0.78, off = cr + sz * 0.03;
     // кружки номеров снаружи у середины стен; у коротких соседних стен (ниша, выступ) кружки раздвигаются вдоль стен и наружу
-    const numPos = edges.map(e => [e.mid[0] - e.nx * off, e.mid[1] - e.ny * off]);
-    const clear = cr + sz * 0.024 * 1.1 + sz * 0.025; // кружок не ближе к стене: радиус + полтолщины подсвеченной стены + зазор
-    const need = cr * 2.15;
-    const wallGap = (x, y) => Math.min(...edges.map(e => { const t = Math.max(0, Math.min(e.len, (x - e.a[0]) * e.ux + (y - e.a[1]) * e.uy)); return Math.hypot(x - e.a[0] - e.ux * t, y - e.a[1] - e.uy * t); }));
-    // кружки рядом друг с другом: номер короткой стены — внутрь комнаты, если там есть место
-    for (let a = 0; a < numPos.length; a++) for (let b = 0; b < numPos.length; b++) {
-      if (a === b || Math.hypot(numPos[a][0] - numPos[b][0], numPos[a][1] - numPos[b][1]) >= need) continue;
-      const k = edges[a].len <= edges[b].len ? a : b, e = edges[k], d = Math.max(off, clear);
-      // место внутри у этой стены: от середины к краям, пока не найдётся свободное
-      for (const f of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9, 0, 1]) {
-        const inPos = [e.a[0] + e.ux * e.len * f + e.nx * d, e.a[1] + e.uy * e.len * f + e.ny * d];
-        const free = pointInPoly(inPos, room.pts) && wallGap(inPos[0], inPos[1]) >= clear - 1e-6
-          && numPos.every((p, j) => j === k || Math.hypot(p[0] - inPos[0], p[1] - inPos[1]) >= need);
-        if (free) { numPos[k] = inPos; break; }
-      }
-    }
-    for (let it = 0; it < 200; it++) {
-      let moved = false;
-      for (let a = 0; a < numPos.length; a++) for (let b = a + 1; b < numPos.length; b++) {
-        const dx = numPos[b][0] - numPos[a][0], dy = numPos[b][1] - numPos[a][1], d = Math.hypot(dx, dy);
-        if (d >= need) continue;
-        const k = (need - d) / 2 + 1e-4, ux = d > 1e-6 ? dx / d : 1, uy = d > 1e-6 ? dy / d : 0;
-        numPos[a][0] -= ux * k; numPos[a][1] -= uy * k; numPos[b][0] += ux * k; numPos[b][1] += uy * k; moved = true;
-      }
-      for (const p of numPos) for (const e of edges) { // отодвинуть от стен
-        const t = Math.max(0, Math.min(e.len, (p[0] - e.a[0]) * e.ux + (p[1] - e.a[1]) * e.uy));
-        const qx = e.a[0] + e.ux * t, qy = e.a[1] + e.uy * t, dx = p[0] - qx, dy = p[1] - qy, d = Math.hypot(dx, dy);
-        if (d >= clear) continue;
-        const ux = d > 1e-6 ? dx / d : -e.nx, uy = d > 1e-6 ? dy / d : -e.ny;
-        p[0] = qx + ux * (clear + 1e-4); p[1] = qy + uy * (clear + 1e-4); moved = true;
-      }
-      if (!moved) break;
-    }
+    const numPos = miniNumPos(room, edges, sz, cr, off);
     const nx0 = Math.min(...numPos.map(p => p[0])), nx1 = Math.max(...numPos.map(p => p[0])), ny0 = Math.min(...numPos.map(p => p[1])), ny1 = Math.max(...numPos.map(p => p[1]));
     const pad = Math.max(0, bb.x - nx0, nx1 - bb.x - bb.w, bb.y - ny0, ny1 - bb.y - bb.h) + cr + sz * 0.02;
     const mini = `<svg class="len-mini" viewBox="${bb.x - pad} ${bb.y - pad} ${bb.w + 2 * pad} ${bb.h + 2 * pad}" style="--sw:${(sz * 0.022).toFixed(3)}">
@@ -2362,10 +2391,17 @@ async function viewWall(pid, wallKey) {
   wallPhotos.forEach(p => { (byStage[p.stageId] = byStage[p.stageId] || []).push(p); });
   Object.values(byStage).forEach(list => list.sort((a, b) => a.created - b.created));
   const stagesWithPhotos = stages.filter(s => byStage[s.id] && byStage[s.id].length);
+  // стена: сверху мини-схема комнаты, ниже «шторка» со стеной; соседние стены — свайпом или тапом по мини-схеме
+  const wEdges = isWallId(room, side) ? roomEdges(room) : [];
+  const wIdx = wEdges.findIndex(e => e.id === side);
+  const anim = wallAnim && wallAnim.room === roomId && Date.now() - wallAnim.at < 1500 ? wallAnim : null;
+  wallAnim = null;
 
   app.innerHTML = `
     ${header(wallLabel(room, side), `#/p/${pid}`)}
-    <div class="pad">
+    ${wIdx >= 0 ? `<div class="wall-mini" id="wall-mini">${wallMiniSvg(room, wEdges, wIdx)}</div>` : ''}
+    <div class="pad ${wIdx >= 0 ? `wall-sheet${anim ? ' rise' : ''}` : ''}" id="wall-sheet">
+      ${wIdx >= 0 ? '<div class="sh-grab" aria-hidden="true"></div>' : ''}
       ${stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
           ${I('compare')}Сравнить «до / после»</button>` : `
@@ -2421,6 +2457,39 @@ async function viewWall(pid, wallKey) {
     const open = t.classList.toggle('hidden') === false;
     el.classList.toggle('open', open);
   }; });
+
+  if (wIdx >= 0) {
+    const goWall = (id, dir) => { swipeNav.dir = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(roomId + ':' + id)}`); };
+    // тап по стене на мини-схеме
+    $('#wall-mini').addEventListener('click', e => {
+      const t = e.target.closest('[data-mini-wall]');
+      if (t && t.dataset.miniWall !== side) { const k = wEdges.findIndex(x => x.id === t.dataset.miniWall); goWall(t.dataset.miniWall, k > wIdx ? 1 : -1); }
+    });
+    // свайп влево/вправо — следующая/предыдущая стена по кругу (кроме полос, которые сами листаются вбок)
+    let st = null;
+    const scrollsX = el => { for (; el && el !== app; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
+    for (const el of [$('#wall-mini'), $('#wall-sheet')]) {
+      el.addEventListener('touchstart', e => { st = e.touches.length === 1 && !scrollsX(e.target) ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null; }, { passive: true });
+      el.addEventListener('touchend', e => {
+        if (!st) return;
+        const c = e.changedTouches[0], dx = c.clientX - st.x, dy = c.clientY - st.y, dt = Date.now() - st.t; st = null;
+        if (dt > 700 || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+        const n = wEdges.length, k = dx < 0 ? (wIdx + 1) % n : (wIdx - 1 + n) % n;
+        goWall(wEdges[k].id, dx < 0 ? 1 : -1);
+      }, { passive: true });
+    }
+    // переход со схемы: комната «сжимается» из своего места на схеме в мини-схему, шторка выезжает снизу
+    if (anim) {
+      const svgEl = $('#wall-mini svg'), to = svgEl.querySelector('.wm-room').getBoundingClientRect(), o = svgEl.getBoundingClientRect();
+      if (to.width > 0) {
+        const k = anim.rect.width / to.width;
+        const tx = anim.rect.left - o.left - k * (to.left - o.left), ty = anim.rect.top - o.top - k * (to.top - o.top);
+        svgEl.style.transformOrigin = '0 0';
+        svgEl.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
+        requestAnimationFrame(() => requestAnimationFrame(() => { svgEl.style.transition = 'transform .38s ease'; svgEl.style.transform = ''; }));
+      }
+    }
+  }
 
   const addOp = $('#add-opening');
   if (addOp) {
