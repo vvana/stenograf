@@ -1333,7 +1333,17 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   // возврат со шторки стены/пола/потолка: схема «разворачивается» из мини-схемы — комната летит с её места на своё
   if (planReturn && Date.now() - planReturn.at < 1500 && !planState.edit) {
     const pr = planReturn, rp = svg.querySelector(`[data-room="${pr.room}"]`);
-    if (rp) {
+    // копия шторки поверх схемы — уезжает вниз с того места, где её отпустили
+    if (pr.sheet) {
+      const gh = document.createElement('div');
+      gh.className = 'sheet-ghost'; gh.style.top = `${pr.sheet.top}px`; gh.innerHTML = pr.sheet.html;
+      const inner = gh.firstElementChild; inner.style.transition = 'none'; inner.style.transform = `translateY(${pr.sheet.dy}px)`;
+      document.body.appendChild(gh);
+      gh.getBoundingClientRect();
+      inner.style.transition = 'transform .38s ease'; inner.style.transform = 'translateY(105%)';
+      setTimeout(() => gh.remove(), 420);
+    }
+    if (rp && pr.rect) {
       const to = rp.getBoundingClientRect(), o = svg.getBoundingClientRect();
       if (to.width > 0) {
         const k = pr.rect.width / to.width;
@@ -2506,12 +2516,13 @@ async function viewWall(pid, wallKey) {
   //  • тап по пустому месту мини-схемы — к схеме, тап по стене/комнате — к ней.
   if (wIdx >= 0 || isSurf) {
     const sheetEl = $('#wall-sheet'), miniEl = $('#wall-mini');
-    const toPlan = (slid = false) => {
+    // к схеме сразу: копия шторки уезжает вниз уже поверх схемы, одновременно с «разворотом» схемы из мини-схемы
+    const toPlan = () => {
       const rp = miniEl.querySelector('.wm-room') || miniEl.querySelector('.sm-room.on path');
-      planReturn = rp ? { room: roomId, rect: rp.getBoundingClientRect(), at: Date.now() } : null;
-      if (slid) return nav(`#/p/${pid}`);
-      sheetEl.style.transition = 'transform .18s ease'; sheetEl.style.transform = 'translateY(100%)';
-      setTimeout(() => nav(`#/p/${pid}`), 170);
+      const sr = sheetEl.getBoundingClientRect(), m = /translateY\(([-\d.]+)px\)/.exec(sheetEl.style.transform || '');
+      planReturn = { room: roomId, rect: rp ? rp.getBoundingClientRect() : null, at: Date.now(),
+        sheet: { html: sheetEl.outerHTML, top: sr.top - (m ? +m[1] : 0), dy: m ? +m[1] : 0 } };
+      nav(`#/p/${pid}`);
     };
     const content = () => [...sheetEl.children].filter(c => !c.classList.contains('sh-grab'));
     const moveX = (x, ms) => content().forEach(c => { c.style.transition = ms ? `transform ${ms}ms ease` : 'none'; c.style.transform = x ? `translateX(${x}px)` : ''; });
@@ -2561,9 +2572,8 @@ async function viewWall(pid, wallKey) {
           } else moveX(0, 180);
         } else {
           const close = g.d > 110 || (fast && g.d > 40);
-          sheetEl.style.transition = 'transform .2s ease';
-          sheetEl.style.transform = close ? 'translateY(100%)' : '';
-          if (close) setTimeout(() => toPlan(true), 180);
+          if (close) toPlan();
+          else { sheetEl.style.transition = 'transform .2s ease'; sheetEl.style.transform = ''; }
         }
         g = null;
       });
