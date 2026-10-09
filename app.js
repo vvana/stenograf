@@ -448,6 +448,7 @@ let wallSlide = 0;
 let planReturn = null;
 // где комнаты стоят на экране «Схемы» (обычный вид) — цель, к которой растёт мини-схема при закрытии шторки
 const planRoomRects = {};
+let planCardRect = null; // белая карточка схемы (#plan) — до неё растёт белый фон мини-схемы
 const resetPlanView = () => Object.assign(planView, { k: 1, r: 0, tx: 0, ty: 0 });
 // отмена в редакторе: снимки комнат (и положения фото плана) перед каждым изменением; очищается при выходе из редактора
 const planUndo = { pid: null, stack: [] };
@@ -1299,7 +1300,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     svg.style.touchAction = !planState.edit && k <= 1.05 ? 'pan-y' : 'none';
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
     fitNamePills();
-    if (!planState.edit) svg.querySelectorAll('path.room[data-room]').forEach(el => { const b = el.getBoundingClientRect(); if (b.width) planRoomRects[el.dataset.room] = b; });
+    if (!planState.edit) {
+      svg.querySelectorAll('path.room[data-room]').forEach(el => { const b = el.getBoundingClientRect(); if (b.width) planRoomRects[el.dataset.room] = b; });
+      const cb = svg.getBoundingClientRect(); if (cb.width) planCardRect = cb;
+    }
     placeLenInput(lenAt);
   }
   // овал под названием выбранной комнаты — ровно по фактическому контуру текста (getBBox), а не по оценке ширины
@@ -2456,8 +2460,8 @@ async function viewWall(pid, wallKey) {
 
   app.innerHTML = `
     ${header(wallLabel(room, side), wIdx >= 0 || isSurf ? false : `#/p/${pid}`)}
-    ${wIdx >= 0 ? `<div class="wall-mini" id="wall-mini">${wallMiniSvg(room, wEdges, wIdx)}</div>` : ''}
-    ${isSurf ? `<div class="wall-mini" id="wall-mini">${surfMiniSvg(rooms, roomId)}</div>` : ''}
+    ${wIdx >= 0 ? `<div class="wall-mini" id="wall-mini"><div class="wm-bg"></div>${wallMiniSvg(room, wEdges, wIdx)}</div>` : ''}
+    ${isSurf ? `<div class="wall-mini" id="wall-mini"><div class="wm-bg"></div>${surfMiniSvg(rooms, roomId)}</div>` : ''}
     <div class="pad ${wIdx >= 0 || isSurf ? `wall-sheet${anim ? ' rise' : ''}${slideDir ? (slideDir > 0 ? ' ws-l' : ' ws-r') : ''}` : ''}" id="wall-sheet">
       ${wIdx >= 0 || isSurf ? '<div class="sh-grab" aria-hidden="true"></div>' : ''}
       ${stagesWithPhotos.length >= 2 ? `
@@ -2524,16 +2528,26 @@ async function viewWall(pid, wallKey) {
     const sheetEl = $('#wall-sheet'), miniEl = $('#wall-mini');
     // возврат к схеме: шторка опускается, и ровно настолько же мини-схема растёт к тому месту и размеру,
     // где комната стоит на «Схеме» (p — доля пути: 0 — мини-схема, 1 — как на схеме). Когда шторка внизу — открываем схему.
-    const miniSvg = miniEl.querySelector('svg'), target = planRoomRects[roomId];
-    let from = null, origin = null;
+    const miniSvg = miniEl.querySelector('svg'), bgEl = miniEl.querySelector('.wm-bg'), target = planRoomRects[roomId], card = planCardRect;
+    let from = null, origin = null, box = null;
+    const ease = 'cubic-bezier(.2,.7,.3,1)';
     const grow = (p, ms) => {
       if (!target || !miniSvg) return;
-      if (!from) { const rp = miniEl.querySelector('.wm-room') || miniEl.querySelector('.sm-room.on path'); if (!rp) return; from = rp.getBoundingClientRect(); origin = miniSvg.getBoundingClientRect(); }
+      if (!from) { const rp = miniEl.querySelector('.wm-room') || miniEl.querySelector('.sm-room.on path'); if (!rp) return; from = rp.getBoundingClientRect(); origin = miniSvg.getBoundingClientRect(); box = miniEl.getBoundingClientRect(); }
       const k = 1 + (target.width / from.width - 1) * p;
       const L = from.left + (target.left - from.left) * p, T = from.top + (target.top - from.top) * p;
       miniSvg.style.transformOrigin = '0 0';
-      miniSvg.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.7,.3,1)` : 'none';
+      miniSvg.style.transition = ms ? `transform ${ms}ms ${ease}` : 'none';
       miniSvg.style.transform = p ? `translate(${L - origin.left - k * (from.left - origin.left)}px, ${T - origin.top - k * (from.top - origin.top)}px) scale(${k})` : '';
+      // белый фон: из полосы мини-схемы — в карточку схемы (размер, место, скругление и рамка)
+      if (bgEl && card) {
+        const lerp = (a, b) => a + (b - a) * p;
+        bgEl.style.transition = ms ? ['left', 'top', 'width', 'height', 'border-radius', 'border-color'].map(x => `${x} ${ms}ms ${ease}`).join(',') : 'none';
+        bgEl.style.left = `${lerp(0, card.left - box.left)}px`; bgEl.style.top = `${lerp(0, card.top - box.top)}px`;
+        bgEl.style.width = `${lerp(box.width, card.width)}px`; bgEl.style.height = `${lerp(box.height, card.height)}px`;
+        bgEl.style.borderRadius = `${lerp(0, 14)}px`;
+        bgEl.style.borderColor = p ? 'var(--line)' : 'transparent';
+      }
     };
     let closing = false;
     const toPlan = () => {
@@ -2608,8 +2622,17 @@ async function viewWall(pid, wallKey) {
         const tx = anim.rect.left - o.left - k * (to.left - o.left), ty = anim.rect.top - o.top - k * (to.top - o.top);
         svgEl.style.transformOrigin = '0 0';
         svgEl.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
+        // белый фон: из карточки «Схемы» сжимается в полосу мини-схемы
+        const bgEl = $('#wall-mini .wm-bg'), box = $('#wall-mini').getBoundingClientRect(), card = planCardRect;
+        if (bgEl && card) {
+          Object.assign(bgEl.style, { transition: 'none', left: `${card.left - box.left}px`, top: `${card.top - box.top}px`, width: `${card.width}px`, height: `${card.height}px`, borderRadius: '14px', borderColor: 'var(--line)' });
+        }
         svgEl.getBoundingClientRect(); // применить начальное положение, затем анимировать к обычному
         svgEl.style.transition = 'transform .38s ease'; svgEl.style.transform = '';
+        if (bgEl && card) {
+          bgEl.style.transition = ['left', 'top', 'width', 'height', 'border-radius', 'border-color'].map(x => `${x} .38s ease`).join(',');
+          Object.assign(bgEl.style, { left: '0px', top: '0px', width: `${box.width}px`, height: `${box.height}px`, borderRadius: '0px', borderColor: 'transparent' });
+        }
       }
     }
   }
@@ -2843,6 +2866,7 @@ async function viewMore(pid) {
           <button class="btn ghost wide" id="set-name">${I('user')}Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
       </div>
+      <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
       <button class="btn wide all-objects" data-nav="#/">${I('objects')}Все объекты</button>
       <details class="about"><summary>${I('info')}О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
     </div>
@@ -2852,6 +2876,7 @@ async function viewMore(pid) {
     const el = $('#diag');
     if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
   }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
+  $('#export-glb').onclick = () => { tourState.exportGlb = true; nav(`#/p/${pid}/tour`); };
   $('#set-name').onclick = () => {
     const t = prompt('Ваше имя и роль (подпись на фото и пометках):', userName());
     if (t === null) return;

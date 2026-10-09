@@ -85,22 +85,23 @@ async function viewTour(pid, roomId = null) {
       <canvas id="tour-canvas"></canvas>
       <div class="tour-top">
         <div class="tour-row">
-          <select class="inp" id="tour-stage">
+          ${photos.length ? '' : '<div class="inp tour-nophoto">Фото пока нет</div>'}
+          ${photos.length ? `<select class="inp" id="tour-stage">
             <option value="all" ${tourState.stage === 'all' ? 'selected' : ''}>Сейчас — последние фото</option>
             ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
           </select>
-          <button id="tour-photos" class="tour-ico ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото на стенах">${ICONS.camera}</button>
+          <button id="tour-photos" class="tour-switch ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах"><span class="sw-track"><span class="sw-knob"></span></span></button>` : ''}
         </div>
         <div class="tour-modes">
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('eye')}Внутри</button>
           ${project.hdScan && project.hdScan.blob ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}HD</button>` : ''}
           ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}Финал</button>` : ''}
-          ${Native.isNative && roomPlanModels(project, rooms).length ? `<button id="tour-rp" title="Оригинальная модель RoomPlan: 3D и AR">${I('ar')}RoomPlan</button>` : ''}
+          ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
         </div>
       </div>
       <div class="tour-bottom">
-        <button id="tour-glb" class="tour-ico tour-glb" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
+        <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
         <div class="tour-plan" id="tour-plan"></div>
       </div>
       <div class="tour-msg hidden" id="tour-msg"></div>
@@ -631,7 +632,7 @@ async function viewTour(pid, roomId = null) {
   };
   const photosBtn = $('#tour-photos');
   if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
-  $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); };
+  if ($('#tour-stage')) $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); };
 
   /* ---------- экспорт в GLB: стены, полы, потолки, проёмы, мебель, фото выбранного этапа ---------- */
   const glbBtn = $('#tour-glb');
@@ -697,6 +698,8 @@ async function viewTour(pid, roomId = null) {
   const ro = new ResizeObserver(resize); ro.observe(canvas.parentElement);
   resize(); setMode(tourState.mode); frame();
   applyStage();
+  // экспорт GLB запускают из «Ещё»: открываем 3D и собираем модель текущей сцены (кнопка на экране 3D скрыта)
+  if (tourState.exportGlb) { tourState.exportGlb = false; setTimeout(() => { if (glbBtn) glbBtn.click(); }, 400); }
 
   window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId, solidWalls: solidWalls.length, plainFloors: plainFloors.length, photos: tourState.photos, finalLoaded: !!finalMesh, wallPlanesVisible: surfaces.filter(s => !s.key.endsWith(':f') && !s.key.endsWith(':c') && s.mesh.visible).length, floors: plainFloors.map(f => ({ color: f.material.color.getHexString(), visible: f.visible, y: f.position.y, n: f.geometry.attributes.normal.getY(0) })), floorPlanes: surfaces.filter(s => s.key.endsWith(':f')).map(s => ({ key: s.key, visible: s.mesh.visible, map: !!s.mesh.material.map })) });
   window.__tourScene = scene;

@@ -561,11 +561,15 @@ body {
 .tour { position: relative; height: calc(100dvh - 60px - 64px - env(safe-area-inset-bottom) - env(safe-area-inset-top)); min-height: 360px; /* шапка 60 (с названием объекта) + нижнее меню — экран без прокрутки */ overflow: hidden; background: var(--bg); }
 .tour canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .tour-top { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
-.tour-top .inp { pointer-events: auto; max-width: 320px; box-shadow: var(--shadow); }
+.tour-top .inp { pointer-events: auto; max-width: 320px; box-shadow: var(--shadow); height: 42px; border-radius: 12px; font: 600 13px system-ui, -apple-system, sans-serif; color: var(--top-ink); }
 .tour-modes { display: flex; gap: 6px; pointer-events: auto; }
+/* в объекте ещё нет фото — вместо выбора этапа надпись (как поле, но не нажимается) */
+.tour-top .tour-nophoto { display: inline-flex; align-items: center; width: auto; color: var(--mut); pointer-events: none; }
+/* кнопки 3D — в общей стилистике (как «GLB»): высота 42, скругление 12, без «таблеток» */
 .tour-modes button {
-  font: 600 13px system-ui, sans-serif; padding: 8px 12px; border-radius: 999px;
-  border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; box-shadow: var(--shadow);
+  font: 600 13px system-ui, -apple-system, sans-serif; height: 42px; padding: 0 14px; border-radius: 12px;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); background: var(--card); color: var(--top-ink); cursor: pointer; box-shadow: var(--shadow);
 }
 .tour-modes button.active { background: var(--acc); color: var(--acc-ink); border-color: var(--acc); }
 .tour-modes { flex-wrap: wrap; }
@@ -686,7 +690,14 @@ select.inp {
 }
 .tour-ico svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .tour-ico.active { background: var(--acc); border-color: var(--acc); color: #fff; }
-.tour-modes button .ic { margin-right: 5px; }
+/* ползунок «фото выбранного этапа на стенах» — рядом со списком этапов, в карточке той же высоты */
+.tour-switch { flex: 0 0 auto; height: 42px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--card);
+  box-shadow: var(--shadow); display: inline-flex; align-items: center; cursor: pointer; pointer-events: auto; }
+.tour-switch .sw-track { position: relative; width: 44px; height: 26px; border-radius: 13px; background: var(--line); transition: background .18s; }
+.tour-switch .sw-knob { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .18s; }
+.tour-switch.active .sw-track { background: var(--acc); }
+.tour-switch.active .sw-knob { transform: translateX(18px); }
+.tour-modes button .ic { margin-right: 0; }
 .tour-plan { width: 150px; height: 124px; touch-action: none; }
 .tour-plan .tp-cone { fill: color-mix(in srgb, var(--acc) 30%, transparent); stroke: var(--acc); stroke-width: 0.03; }
 .tour-plan .tp-dot { fill: var(--acc); stroke: #fff; stroke-width: 0.05; }
@@ -810,7 +821,10 @@ select.inp {
 .home-bottom { margin-top: auto; padding-top: 40px; padding-bottom: env(safe-area-inset-bottom); }
 .home-hint { margin-top: 16px; }
 /* экран стены: мини-схема комнаты сверху, ниже «шторка» со стеной */
-.wall-mini { height: 170px; padding: 10px 16px 6px; background: var(--card); box-sizing: border-box; }
+.wall-mini { height: 170px; padding: 10px 16px 6px; box-sizing: border-box; position: relative; }
+/* белый фон мини-схемы — слоем: при закрытии шторки растёт до карточки «Схемы» */
+.wall-mini .wm-bg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: var(--card); border: 1px solid transparent; box-sizing: border-box; pointer-events: none; }
+.wall-mini .wall-mini-svg { position: relative; }
 .wall-mini-svg { width: 100%; height: 100%; display: block; overflow: visible; }
 .wall-mini .wm-room { fill: color-mix(in srgb, var(--acc) 9%, var(--card)); stroke: none; }
 .wall-mini .wm-wall { stroke: var(--top-ink); stroke-width: var(--sw); stroke-linecap: round; }
