@@ -439,6 +439,8 @@ const planState = { edit: false, selected: null, sel: null, mode: null, tmp: [],
 const planView = { k: 1, r: 0, tx: 0, ty: 0, pid: null };
 // переход со схемы на экран стены: где была комната на экране (схема «сжимается» в мини-схему наверху)
 let wallAnim = null;
+// листание стен/комнат на экране стены: въезжает только содержимое шторки (шапка и мини-схема стоят)
+let wallSlide = 0;
 const resetPlanView = () => Object.assign(planView, { k: 1, r: 0, tx: 0, ty: 0 });
 // отмена в редакторе: снимки комнат (и положения фото плана) перед каждым изменением; очищается при выходе из редактора
 const planUndo = { pid: null, stack: [] };
@@ -640,7 +642,7 @@ function wallMiniSvg(room, edges, cur) {
   const ln = (e, cls, extra = '') => `<line class="${cls}" ${extra} x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
   return `<svg class="wall-mini-svg" viewBox="${bb.x - pad} ${bb.y - pad} ${bb.w + 2 * pad} ${bb.h + 2 * pad}" preserveAspectRatio="xMidYMid meet" style="--sw:${(sz * 0.022).toFixed(3)}">
     <path class="wm-room" d="${roomPath(room)}"/>
-    ${edges.map(e => ln(e, 'wm-wall' + (e.i === cur ? ' on' : ''))).join('')}
+    ${edges.filter(e => e.i !== cur).map(e => ln(e, 'wm-wall')).join('')}${edges[cur] ? ln(edges[cur], 'wm-wall on') : ''}
     ${edges.map(e => `<text class="wm-num${e.i === cur ? ' on' : ''}" x="${pos[e.i][0].toFixed(3)}" y="${pos[e.i][1].toFixed(3)}" dy="0.36em" font-size="${fs.toFixed(3)}">${e.i + 1}</text>`).join('')}
     ${edges.map(e => ln(e, 'wm-hit', `data-mini-wall="${e.id}" style="stroke-width:${(sz * 0.14).toFixed(3)}"`)).join('')}
   </svg>`;
@@ -798,7 +800,7 @@ async function viewPlan(pid) {
           <div class="empty-ico">${ICONS.plan}</div>
           <p><b>Схемы пока нет.</b></p>
           <p class="mut">Нажмите «Редактор» сверху и добавьте комнаты. Потом тапайте по стенам на схеме, чтобы прикреплять к ним фото.</p>
-        </div>` : planState.edit ? '' : `<details class="ihint" id="view-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.infoSq}<span class="ihint-text">Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.</span></summary></details>`}
+        </div>` : planState.edit ? '' : `<details class="ihint" id="view-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Тап по стене — её фото по этапам. Тап внутри комнаты — потолок и пол.</span></summary></details>`}
     </div>
     ${bottomNav(pid, 'plan')}`;
 
@@ -1034,9 +1036,8 @@ const ICONS = {
   lock: svgIco('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
   calc: svgIco('<rect x="3" y="3" width="15" height="6" rx="2"/><path d="M18 6h2.5v5H12v3"/><rect x="10.5" y="14" width="3" height="7" rx="1"/>'), // валик
   user: svgIco('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'),
-  info: svgIco('<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.6v.4"/>'),
-  // квадратное «i» по образцу пользователя (2026-10-09) — пока на пробу только у подсказки под схемой (#view-hint)
-  infoSq: svgIco('<rect x="3" y="3" width="18" height="18" rx="5"/>'
+  // «i» — скруглённый квадрат с закрашенной i с засечками (по образцу пользователя, 2026-10-09)
+  info: svgIco('<rect x="3" y="3" width="18" height="18" rx="5"/>'
     + '<circle fill="currentColor" stroke="none" cx="11.9" cy="7.4" r="1.55"/>'
     + '<path fill="currentColor" stroke="none" d="M10 10.2h3.4v6.1h1.1a.8.8 0 0 1 .8.8v.2a.8.8 0 0 1-.8.8h-5a.8.8 0 0 1-.8-.8v-.2a.8.8 0 0 1 .8-.8h1.1v-4.3h-.6a.9.9 0 0 1 0-1.8z"/>'),
   image: svgIco('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/>'),
@@ -2416,12 +2417,13 @@ async function viewWall(pid, wallKey) {
   const isSurf = side === 'c' || side === 'f'; // пол/потолок: мини-схема всех комнат, выбор комнаты
   const anim = wallAnim && wallAnim.room === roomId && Date.now() - wallAnim.at < 1500 ? wallAnim : null;
   wallAnim = null;
+  const slideDir = wallSlide; wallSlide = 0;
 
   app.innerHTML = `
-    ${header(wallLabel(room, side), `#/p/${pid}`)}
+    ${header(wallLabel(room, side), wIdx >= 0 || isSurf ? false : `#/p/${pid}`)}
     ${wIdx >= 0 ? `<div class="wall-mini" id="wall-mini">${wallMiniSvg(room, wEdges, wIdx)}</div>` : ''}
     ${isSurf ? `<div class="wall-mini" id="wall-mini">${surfMiniSvg(rooms, roomId)}</div>` : ''}
-    <div class="pad ${wIdx >= 0 || isSurf ? `wall-sheet${anim ? ' rise' : ''}` : ''}" id="wall-sheet">
+    <div class="pad ${wIdx >= 0 || isSurf ? `wall-sheet${anim ? ' rise' : ''}${slideDir ? (slideDir > 0 ? ' ws-l' : ' ws-r') : ''}` : ''}" id="wall-sheet">
       ${wIdx >= 0 || isSurf ? '<div class="sh-grab" aria-hidden="true"></div>' : ''}
       ${stagesWithPhotos.length >= 2 ? `
         <button class="btn primary wide" data-nav="#/p/${pid}/cmp/${encodeURIComponent(wallKey)}">
@@ -2479,10 +2481,33 @@ async function viewWall(pid, wallKey) {
     el.classList.toggle('open', open);
   }; });
 
+  // шторка стены/пола/потолка закрывается (назад к схеме): смахиванием вниз или тапом по пустому месту мини-схемы
+  if (wIdx >= 0 || isSurf) {
+    const sheetEl = $('#wall-sheet'), toPlan = () => nav(`#/p/${pid}`);
+    $('#wall-mini').addEventListener('click', e => { if (!e.target.closest('[data-mini-wall],[data-mini-room]')) toPlan(); });
+    let dn = null;
+    sheetEl.addEventListener('touchstart', e => { dn = e.touches.length === 1 && window.scrollY <= 0 ? { y: e.touches[0].clientY, x: e.touches[0].clientX, t: Date.now(), on: false, dy: 0 } : null; }, { passive: true });
+    sheetEl.addEventListener('touchmove', e => {
+      if (!dn) return;
+      const dy = e.touches[0].clientY - dn.y, dx = e.touches[0].clientX - dn.x;
+      if (!dn.on) { if (dy > 8 && dy > Math.abs(dx) * 1.5 && window.scrollY <= 0) dn.on = true; else if (Math.abs(dx) > 8 || dy < -8) { dn = null; return; } else return; }
+      dn.dy = Math.max(0, dy); e.preventDefault();
+      sheetEl.style.transition = 'none'; sheetEl.style.transform = `translateY(${dn.dy}px)`;
+    }, { passive: false });
+    sheetEl.addEventListener('touchend', () => {
+      if (!dn || !dn.on) { dn = null; return; }
+      const fast = dn.dy / Math.max(1, Date.now() - dn.t) > 0.6, close = dn.dy > 110 || (fast && dn.dy > 40);
+      sheetEl.style.transition = 'transform .2s ease';
+      sheetEl.style.transform = close ? 'translateY(100%)' : '';
+      if (close) setTimeout(toPlan, 180);
+      dn = null;
+    });
+  }
+
   if (isSurf) {
     // другая комната — тап по ней на мини-схеме или свайп влево/вправо (по порядку комнат, по кругу)
     const rIdx = rooms.findIndex(r => r.id === roomId);
-    const goRoom = (k, dir) => { swipeNav.dir = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(rooms[k].id + ':' + side)}`); };
+    const goRoom = (k, dir) => { wallSlide = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(rooms[k].id + ':' + side)}`); };
     $('#wall-mini').addEventListener('click', e => {
       const t = e.target.closest('[data-mini-room]');
       const k = t ? rooms.findIndex(r => r.id === t.dataset.miniRoom) : -1;
@@ -2504,7 +2529,7 @@ async function viewWall(pid, wallKey) {
   }
 
   if (wIdx >= 0) {
-    const goWall = (id, dir) => { swipeNav.dir = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(roomId + ':' + id)}`); };
+    const goWall = (id, dir) => { wallSlide = dir; location.replace(`#/p/${pid}/w/${encodeURIComponent(roomId + ':' + id)}`); };
     // тап по стене на мини-схеме
     $('#wall-mini').addEventListener('click', e => {
       const t = e.target.closest('[data-mini-wall]');
