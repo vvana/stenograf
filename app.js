@@ -196,7 +196,10 @@ async function render() {
       <button class="btn" onclick="location.hash=''">На главную</button></div>`;
   } finally {
     // после перехода свайпом — короткий въезд экрана с нужной стороны
-    if (slide) { app.classList.remove('slide-l', 'slide-r'); void app.offsetWidth; app.classList.add(slide > 0 ? 'slide-l' : 'slide-r'); }
+    // класс въезда снимается всегда: иначе он оставался после свайпа, и каждая перерисовка того же экрана
+    // (вход/выход из редактора, «Отмена») снова «въезжала» сбоку — на iPhone экран дёргался
+    app.classList.remove('slide-l', 'slide-r');
+    if (slide) { void app.offsetWidth; app.classList.add(slide > 0 ? 'slide-l' : 'slide-r'); setTimeout(() => app.classList.remove('slide-l', 'slide-r'), 300); }
   }
 }
 
@@ -443,6 +446,8 @@ let wallAnim = null;
 let wallSlide = 0;
 // обратный переход: при закрытии шторки схема «разворачивается» из мини-схемы на своё место
 let planReturn = null;
+// где комнаты стоят на экране «Схемы» (обычный вид) — цель, к которой растёт мини-схема при закрытии шторки
+const planRoomRects = {};
 const resetPlanView = () => Object.assign(planView, { k: 1, r: 0, tx: 0, ty: 0 });
 // отмена в редакторе: снимки комнат (и положения фото плана) перед каждым изменением; очищается при выходе из редактора
 const planUndo = { pid: null, stack: [] };
@@ -1294,6 +1299,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     svg.style.touchAction = !planState.edit && k <= 1.05 ? 'pan-y' : 'none';
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
     fitNamePills();
+    if (!planState.edit) svg.querySelectorAll('path.room[data-room]').forEach(el => { const b = el.getBoundingClientRect(); if (b.width) planRoomRects[el.dataset.room] = b; });
     placeLenInput(lenAt);
   }
   // овал под названием выбранной комнаты — ровно по фактическому контуру текста (getBBox), а не по оценке ширины
@@ -2516,13 +2522,26 @@ async function viewWall(pid, wallKey) {
   //  • тап по пустому месту мини-схемы — к схеме, тап по стене/комнате — к ней.
   if (wIdx >= 0 || isSurf) {
     const sheetEl = $('#wall-sheet'), miniEl = $('#wall-mini');
-    // к схеме сразу: копия шторки уезжает вниз уже поверх схемы, одновременно с «разворотом» схемы из мини-схемы
+    // возврат к схеме: шторка опускается, и ровно настолько же мини-схема растёт к тому месту и размеру,
+    // где комната стоит на «Схеме» (p — доля пути: 0 — мини-схема, 1 — как на схеме). Когда шторка внизу — открываем схему.
+    const miniSvg = miniEl.querySelector('svg'), target = planRoomRects[roomId];
+    let from = null, origin = null;
+    const grow = (p, ms) => {
+      if (!target || !miniSvg) return;
+      if (!from) { const rp = miniEl.querySelector('.wm-room') || miniEl.querySelector('.sm-room.on path'); if (!rp) return; from = rp.getBoundingClientRect(); origin = miniSvg.getBoundingClientRect(); }
+      const k = 1 + (target.width / from.width - 1) * p;
+      const L = from.left + (target.left - from.left) * p, T = from.top + (target.top - from.top) * p;
+      miniSvg.style.transformOrigin = '0 0';
+      miniSvg.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.7,.3,1)` : 'none';
+      miniSvg.style.transform = p ? `translate(${L - origin.left - k * (from.left - origin.left)}px, ${T - origin.top - k * (from.top - origin.top)}px) scale(${k})` : '';
+    };
+    let closing = false;
     const toPlan = () => {
-      const rp = miniEl.querySelector('.wm-room') || miniEl.querySelector('.sm-room.on path');
-      const sr = sheetEl.getBoundingClientRect(), m = /translateY\(([-\d.]+)px\)/.exec(sheetEl.style.transform || '');
-      planReturn = { room: roomId, rect: rp ? rp.getBoundingClientRect() : null, at: Date.now(),
-        sheet: { html: sheetEl.outerHTML, top: sr.top - (m ? +m[1] : 0), dy: m ? +m[1] : 0 } };
-      nav(`#/p/${pid}`);
+      if (closing) return; closing = true;
+      const ms = 280;
+      sheetEl.style.transition = `transform ${ms}ms cubic-bezier(.2,.7,.3,1)`; sheetEl.style.transform = 'translateY(100%)';
+      grow(1, ms);
+      setTimeout(() => { planReturn = null; nav(`#/p/${pid}`); }, ms);
     };
     const content = () => [...sheetEl.children].filter(c => !c.classList.contains('sh-grab'));
     const moveX = (x, ms) => content().forEach(c => { c.style.transition = ms ? `transform ${ms}ms ease` : 'none'; c.style.transform = x ? `translateX(${x}px)` : ''; });
@@ -2546,7 +2565,7 @@ async function viewWall(pid, wallKey) {
     let g = null;
     for (const el of [miniEl, sheetEl]) {
       el.addEventListener('touchstart', e => {
-        g = e.touches.length === 1 && !scrollsX(e.target) ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), mode: null, d: 0, onSheet: el === sheetEl } : null;
+        g = e.touches.length === 1 && !scrollsX(e.target) ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), mode: null, d: 0, onSheet: el === sheetEl, top0: sheetEl.offsetTop - window.scrollY } : null; // место шторки без учёта анимаций
       }, { passive: true });
       el.addEventListener('touchmove', e => {
         if (!g) return;
@@ -2559,7 +2578,7 @@ async function viewWall(pid, wallKey) {
         }
         e.preventDefault();
         if (g.mode === 'x') { g.d = dx; moveX(neighbor(dx < 0 ? 1 : -1) ? dx : dx * 0.25); }
-        else { g.d = Math.max(0, dy); sheetEl.style.transition = 'none'; sheetEl.style.transform = `translateY(${g.d}px)`; }
+        else { g.d = Math.max(0, dy); sheetEl.style.transition = 'none'; sheetEl.style.transform = `translateY(${g.d}px)`; grow(Math.min(1, g.d / Math.max(1, innerHeight - g.top0))); }
       }, { passive: false });
       el.addEventListener('touchend', () => {
         if (!g || !g.mode) { g = null; return; }
@@ -2573,7 +2592,7 @@ async function viewWall(pid, wallKey) {
         } else {
           const close = g.d > 110 || (fast && g.d > 40);
           if (close) toPlan();
-          else { sheetEl.style.transition = 'transform .2s ease'; sheetEl.style.transform = ''; }
+          else { sheetEl.style.transition = 'transform .2s ease'; sheetEl.style.transform = ''; grow(0, 200); }
         }
         g = null;
       });
