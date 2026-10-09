@@ -2859,15 +2859,15 @@ async function viewMore(pid) {
       <div class="cards">
         <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
-        ${project.hdCapture || project.hdScan || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <div class="card">
           <b>Команда объекта</b>
           <p class="mut small">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
           <button class="btn ghost wide" id="set-name">${I('user')}Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
+        ${project.hdCapture || project.hdScan || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
+        <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
+        <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
-      <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
-      <button class="btn wide all-objects" data-nav="#/">${I('objects')}Все объекты</button>
       <details class="about"><summary>${I('info')}О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
     </div>
     ${bottomNav(pid, 'more')}`;

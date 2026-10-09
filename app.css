@@ -560,7 +560,7 @@ body {
 /* ---------- 3D-тур ---------- */
 .tour { position: relative; height: calc(100dvh - 60px - 64px - env(safe-area-inset-bottom) - env(safe-area-inset-top)); min-height: 360px; /* шапка 60 (с названием объекта) + нижнее меню — экран без прокрутки */ overflow: hidden; background: var(--bg); }
 .tour canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-.tour-top { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.tour-top { position: absolute; top: 10px; left: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
 .tour-top .inp { pointer-events: auto; max-width: 320px; box-shadow: var(--shadow); height: 42px; border-radius: 12px; font: 600 13px system-ui, -apple-system, sans-serif; color: var(--top-ink); }
 .tour-modes { display: flex; gap: 6px; pointer-events: auto; }
 /* в объекте ещё нет фото — вместо выбора этапа надпись (как поле, но не нажимается) */
@@ -716,6 +716,9 @@ select.inp {
 .where-row input { width: 20px; height: 20px; accent-color: var(--acc); }
 .where-src { margin-left: auto; }
 .stage-toolbar { gap: 8px; }
+/* верхний ряд кнопок на «Схеме», «Этапах», «3D» и «Ещё» — на одном уровне: 10 px под шапкой */
+.stage-toolbar { margin-top: -4px; }
+.more-pad .cards { margin-top: -4px; }
 /* кнопки над этапами — той же высоты, что крупные кнопки на «Схеме» */
 .stage-toolbar .btn, .btn.big-btn { min-height: 59px; border-radius: 12px; padding-left: 16px; padding-right: 16px; }
 #album-walk { margin: 8px 0 4px; }
@@ -855,7 +858,8 @@ html:has(.wall-sheet) { overscroll-behavior-y: none; }
 html, body { overflow-x: clip; } /* въезд экранов свайпом не должен раскачивать страницу вбок */
 @keyframes wall-rise { from { transform: translateY(55%); } to { transform: none; } }
 /* «Все объекты» — под «Командой объекта», «О приложении» (i) — сразу под ней */
-.more-pad .btn.all-objects { margin-top: 10px; }
+/* «Ещё»: все кнопки и карточка в одном столбике .cards — одинаковые промежутки 10 px */
+.more-pad .cards > .btn { margin-top: 0; } /* у .btn.wide свой верхний отступ — здесь промежутки задаёт gap */
 .more-pad .about { margin-top: 12px; } /* «Данные хранятся только на этом устройстве…» — под «i», чуть ниже кнопок */
 
 /* стороны света: стрелка «С» в левом нижнем углу схемы (по компасу при обмере) */
