@@ -2839,7 +2839,7 @@ async function viewCompare(pid, wallKey) {
 /* ---------- экран: ещё ---------- */
 
 async function viewMore(pid) {
-  const { project, rooms, photos } = await loadProjectData(pid);
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
 
   app.innerHTML = `
