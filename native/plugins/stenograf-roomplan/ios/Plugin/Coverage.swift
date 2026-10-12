@@ -163,8 +163,22 @@ final class CoverageModel {
 
     func add(_ v: CovView) { views.append(v) }
 
+    /// Сколько ещё не снятых клеток (меньше `need` кадров) попадёт в этот кадр — чтобы не снимать одно и то же место много раз.
+    func freshCells(_ v: CovView, surfaces: [CovSurface]) -> Int {
+        var n = 0
+        for s in surfaces {
+            let have = counts(s)
+            let seen = coverageCounts(s, views: [v])
+            for i in 0..<min(have.count, seen.count) where seen[i] > 0 && have[i] < need { n += 1 }
+        }
+        return n
+    }
+
     func counts(_ s: CovSurface) -> [Int] {
-        if let c = cache[s.key], c.0 == views.count { return c.1 }
+        // кеш годится, только если не изменилось и число клеток: RoomPlan по ходу скана уточняет стены, и у поверхности
+        // с тем же ключом клеток может стать больше (пол/потолок режутся по контуру стен) — раньше старый короткий
+        // массив отдавался для новой сетки, и подсветка падала с выходом за границы массива (приложение закрывалось)
+        if let c = cache[s.key], c.0 == views.count, c.1.count == s.cells.count { return c.1 }
         let c = coverageCounts(s, views: views)
         cache[s.key] = (views.count, c)
         return c
@@ -199,7 +213,7 @@ final class CoverageOverlayView: UIView {
         let path = UIBezierPath()
         for s in surfaces {
             let c = model.counts(s)
-            for (i, cell) in s.cells.enumerated() where c[i] >= model.need {
+            for (i, cell) in s.cells.enumerated() where i < c.count && c[i] >= model.need {
                 var pts: [CGPoint] = []
                 var ok = true
                 for p in cell.corners {

@@ -43,6 +43,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var nextButton: UIButton!
     private var doneButton: UIButton!
     private var pendingAction: String = "done"      // "next" — после обработки комнаты продолжаем
+    // сканы по комнатам: после каждой комнаты — проверка результата («Принять» / «Переснять»), прогресс остальных комнат не теряется
+    private var buttonBar: UIStackView?
+    private var reviewRoom: CapturedRoom?            // комната, которую сейчас показываем на проверку
+    private var reviewPanel: UIView?
+    private var discardCurrent = false               // остановить текущую комнату без обработки и начать её заново
 
     // финальный скан
     private var keyFrames: [KeyFrame] = []
@@ -126,10 +131,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
             bar.addArrangedSubview(nextButton)
         }
-        doneButton = makeButton(isMulti ? "Завершить" : "Готово", color: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
+        doneButton = makeButton(isMulti ? "Сохранить" : "Готово", color: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
         bar.addArrangedSubview(doneButton)
         view.addSubview(bar)
+        buttonBar = bar
 
         statusLabel.textColor = .white
         statusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -234,7 +240,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                                    message: "Не сняты (не зелёные на мини-карте и в камере):\n\n\(shown)",
                                    preferredStyle: .alert)
         ac.addAction(UIAlertAction(title: "Доснять", style: .cancel))
-        ac.addAction(UIAlertAction(title: currentOnly ? "Дальше всё равно" : "Завершить всё равно", style: .default) { [weak self] _ in
+        ac.addAction(UIAlertAction(title: currentOnly ? "Дальше всё равно" : "Сохранить всё равно", style: .default) { [weak self] _ in
             self?.coverageChecked = true
             proceed()
             self?.coverageChecked = false
@@ -251,7 +257,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         case "walk": return "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Снятое подсвечивается зелёным"
         case "multi": return wantFrames
             ? "Обход квартиры: пройдите комнату вдоль стен, наклоняя телефон к полу и потолку, пока всё не станет зелёным, затем «Следующая» — и в другую комнату"
-            : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Завершить»"
+            : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Сохранить»"
         case "final": return hd
             ? "HD-скан: идите медленно и замирайте — кадр снимается, когда телефон неподвижен. Снятое подсвечивается зелёным"
             : "Финальный скан: наводите телефон на всё, что ещё не зелёное. Тап по карте — спрятать подсветку"
@@ -309,6 +315,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // во время скана экран не гаснет и телефон не блокируется (обмер квартиры идёт долго, экрана не касаются)
+        UIApplication.shared.isIdleTimerDisabled = true
         runCapture()
     }
 
@@ -323,6 +331,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        UIApplication.shared.isIdleTimerDisabled = false   // вернуть обычное автогашение экрана
         locMgr.stopUpdatingHeading(); locMgr.stopUpdatingLocation()
         stopCoverage()   // CADisplayLink держит контроллер — отпускаем при любом закрытии экрана
     }
@@ -334,6 +343,45 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     @objc private func cancelTapped() {
         guard !finished else { return }
+        // скан по комнатам: «Отмена» не сбрасывает всё сразу — можно переснять только текущую комнату,
+        // а отмена всего обмера — отдельным пунктом с подтверждением
+        if isMulti {
+            let n = capturedRooms.count
+            let ac = UIAlertController(title: "Что отменить?",
+                                       message: n > 0 ? "Уже принято комнат: \(n). Они сохранятся, если переснять только текущую." : nil,
+                                       preferredStyle: .actionSheet)
+            ac.addAction(UIAlertAction(title: "Переснять эту комнату", style: .default) { [weak self] _ in self?.restartCurrentRoom() })
+            ac.addAction(UIAlertAction(title: "Отменить весь обмер", style: .destructive) { [weak self] _ in self?.confirmCancelAll() })
+            ac.addAction(UIAlertAction(title: "Продолжить скан", style: .cancel))
+            present(ac, animated: true)
+            return
+        }
+        cancelAll()
+    }
+
+    private func confirmCancelAll() {
+        let n = capturedRooms.count + (reviewRoom != nil ? 1 : 0)
+        let ac = UIAlertController(title: "Отменить весь обмер?",
+                                   message: n > 0 ? "Будут потеряны все отсканированные комнаты (\(n)) и текущая." : "Скан будет закрыт без сохранения.",
+                                   preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "Нет, вернуться", style: .cancel))
+        ac.addAction(UIAlertAction(title: "Отменить всё", style: .destructive) { [weak self] _ in self?.cancelAll() })
+        present(ac, animated: true)
+    }
+
+    /// Текущая комната — заново: её скан останавливается без обработки, принятые комнаты остаются.
+    private func restartCurrentRoom() {
+        guard !finished else { return }
+        if reviewRoom != nil { rejectReview(); return }
+        currentSurfaces = []
+        discardCurrent = true
+        nextButton?.isEnabled = false; doneButton.isEnabled = false
+        statusLabel.text = "Начинаю комнату заново…"
+        captureView.captureSession.stop(pauseARSession: false)
+    }
+
+    private func cancelAll() {
+        guard !finished else { return }
         finished = true
         pollTimer?.invalidate()
         stopCoverage()
@@ -344,8 +392,6 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     @objc private func nextTapped() {
         guard confirmCoverage(currentOnly: true, proceed: { [weak self] in self?.nextTapped() }) else { return }
-        doneSurfaces += currentSurfaces
-        currentSurfaces = []
         pendingAction = "next"
         nextButton.isEnabled = false; doneButton.isEnabled = false
         statusLabel.text = "Обрабатываю комнату…"
@@ -355,8 +401,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     @objc private func doneTapped() {
         guard confirmCoverage(currentOnly: false, proceed: { [weak self] in self?.doneTapped() }) else { return }
         pendingAction = "done"
-        pollTimer?.invalidate(); pollTimer = nil
-        stopCoverage()
+        if !isMulti { pollTimer?.invalidate(); pollTimer = nil; stopCoverage() }
         if mode == "ghost" {
             finished = true
             captureView.captureSession.stop(pauseARSession: true)
@@ -375,6 +420,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     // MARK: RoomCaptureViewDelegate
 
     func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool {
+        if discardCurrent {                     // «Переснять эту комнату» во время скана: результат не нужен
+            discardCurrent = false
+            DispatchQueue.main.async { [weak self] in self?.startNextRoom() }
+            return false
+        }
         return true
     }
 
@@ -385,14 +435,133 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             dismiss(animated: true) { self.completion(.failure(ScanError.failed(error.localizedDescription))) }
             return
         }
+        if isMulti {                             // по комнатам: сначала показать результат на проверку
+            showReview(processedResult)
+            return
+        }
         capturedRooms.append(processedResult)
+        finished = true
+        pollTimer?.invalidate()
+        finishSingle(processedResult)
+    }
+
+    // MARK: проверка комнаты после скана
+
+    /// Сводка по комнате: площадь, габариты, сколько стен/проёмов/предметов.
+    private func roomSummary(_ room: CapturedRoom) -> String {
+        var minX = Float.greatestFiniteMagnitude, maxX = -Float.greatestFiniteMagnitude
+        var minZ = Float.greatestFiniteMagnitude, maxZ = -Float.greatestFiniteMagnitude
+        var height: Float = 0
+        for w in room.walls {
+            let c = xyz(w.transform.columns.3)
+            let ax = simd_normalize(xyz(w.transform.columns.0))
+            let half: Float = w.dimensions.x / 2
+            for p in [c - ax * half, c + ax * half] {
+                minX = min(minX, p.x); maxX = max(maxX, p.x)
+                minZ = min(minZ, p.z); maxZ = max(maxZ, p.z)
+            }
+            height = max(height, w.dimensions.y)
+        }
+        var lines: [String] = []
+        if !room.walls.isEmpty {
+            let a: Float = maxX - minX, b: Float = maxZ - minZ
+            var area: Float = 0
+            for f in room.floors { area += f.dimensions.x * f.dimensions.y }
+            let dims = String(format: "%.1f × %.1f × %.1f м", max(a, b), min(a, b), height)
+            lines.append(area > 0.5 ? String(format: "Пол ≈ %.1f м² · габариты %@", area, dims) : "Габариты \(dims)")
+        }
+        lines.append("Стен: \(room.walls.count) · дверей: \(room.doors.count) · окон: \(room.windows.count) · проходов: \(room.openings.count) · предметов: \(room.objects.count)")
+        return lines.joined(separator: "\n")
+    }
+
+    private func showReview(_ room: CapturedRoom) {
+        reviewRoom = room
+        buttonBar?.isHidden = true
+        coverageOverlay?.isHidden = true
+        let n = capturedRooms.count + 1
+        statusLabel.text = "Комната \(n): проверьте результат — модель можно покрутить пальцем"
+
+        let panel = UIView()
+        panel.backgroundColor = UIColor(white: 0.1, alpha: 0.88)
+        panel.layer.cornerRadius = 16
+        panel.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = UILabel()
+        title.text = "Комната \(n)"
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 17, weight: .semibold)
+
+        let info = UILabel()
+        info.text = roomSummary(room)
+        info.textColor = UIColor(white: 0.85, alpha: 1)
+        info.font = .systemFont(ofSize: 14)
+        info.numberOfLines = 0
+
+        let redo = makeButton("Переснять", color: UIColor(white: 0.28, alpha: 1))
+        redo.addTarget(self, action: #selector(rejectReviewTapped), for: .touchUpInside)
+        let ok = makeButton(pendingAction == "next" ? "Принять" : "Принять и сохранить", color: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
+        ok.addTarget(self, action: #selector(acceptReviewTapped), for: .touchUpInside)
+        let buttons = UIStackView(arrangedSubviews: [redo, ok])
+        buttons.axis = .horizontal
+        buttons.distribution = .fillEqually
+        buttons.spacing = 10
+        buttons.heightAnchor.constraint(equalToConstant: 50).isActive = true
+
+        let stack = UIStackView(arrangedSubviews: [title, info, buttons])
+        stack.axis = .vertical
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(stack)
+        view.addSubview(panel)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: panel.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -14),
+            panel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            panel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            panel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+        ])
+        reviewPanel = panel
+    }
+
+    private func hideReview() {
+        reviewPanel?.removeFromSuperview(); reviewPanel = nil
+        reviewRoom = nil
+        buttonBar?.isHidden = false
+        coverageOverlay?.isHidden = false
+    }
+
+    @objc private func acceptReviewTapped() {
+        guard let room = reviewRoom, !finished else { return }
+        hideReview()
+        capturedRooms.append(room)
+        doneSurfaces += currentSurfaces
+        currentSurfaces = []
         if pendingAction == "next" {
             startNextRoom()
             return
         }
+        // последняя комната принята — собираем квартиру
         finished = true
-        pollTimer?.invalidate()
-        if isMulti { finishStructure() } else { finishSingle(processedResult) }
+        pollTimer?.invalidate(); pollTimer = nil
+        stopCoverage()
+        if let anchors = sharedSession?.currentFrame?.anchors {
+            meshAnchors = anchors.compactMap { $0 as? ARMeshAnchor }
+        }
+        buttonBar?.isHidden = true
+        finishStructure()
+    }
+
+    @objc private func rejectReviewTapped() { rejectReview() }
+
+    /// Комната не понравилась — снимаем её заново; принятые раньше комнаты остаются.
+    private func rejectReview() {
+        guard reviewRoom != nil, !finished else { return }
+        hideReview()
+        currentSurfaces = []
+        startNextRoom()
+        statusLabel.text = "Комната \(capturedRooms.count + 1): сканируйте заново. Принятых комнат: \(capturedRooms.count)"
     }
 
     private func startNextRoom() {
@@ -406,7 +575,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         captureView = cv
         latestRoom = nil
         nextButton.isEnabled = true; doneButton.isEnabled = true
-        statusLabel.text = "Комнат отсканировано: \(capturedRooms.count). Перейдите в следующую и продолжайте"
+        statusLabel.text = capturedRooms.isEmpty ? initialHint() : "Комнат принято: \(capturedRooms.count). Перейдите в следующую и продолжайте"
         runCapture()
     }
 
@@ -665,6 +834,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func poll() {
         guard let frame = sharedSession?.currentFrame else { return }
+        if reviewRoom != nil { return }           // идёт проверка комнаты — ничего не снимаем
         if mode == "ghost" { pollGhost(frame: frame); return }
         sampleNorth(frame: frame)
         if mode == "final" { pollKeyFrame(frame: frame) }
@@ -968,32 +1138,53 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     // MARK: финальный скан — ключевые кадры и окраска сетки
 
+    private static let maxKeyFrames = 1000
+
     private func pollKeyFrame(frame: ARFrame) {
         let cam = frame.camera
-        guard cam.trackingState == .normal, keyFrames.count < 70 else { return }
+        // потолок числа кадров: 70 хватало на одну комнату — на квартире кадры кончались, и пол/стены дальше
+        // не снимались и не подсвечивались. 1000 кадров 320 px ≈ 300 МБ памяти (по просьбе пользователя; кадр берётся раз в 35 см / 20°, до предела доходит редко).
+        guard cam.trackingState == .normal else { return }
+        guard keyFrames.count < Self.maxKeyFrames else {
+            statusLabel.text = "Кадров: \(keyFrames.count) — предел, новые не снимаются. Нажмите «Сохранить»"
+            return
+        }
         let T = cam.transform
         let pos = xyz(T.columns.3)
         let fwd = simd_normalize(-xyz(T.columns.2))
-        if let lp = lastKeyPos, let lf = lastKeyFwd {
-            let moved = simd_length(pos - lp)
-            let turned = acos(max(-1, min(1, simd_dot(fwd, lf))))
-            if moved < 0.35 && turned < 0.35 { return }
-        }
         let res = cam.imageResolution
         let targetW = 320
         let targetH = Int(Double(targetW) * Double(res.height) / Double(res.width))
+        let k = Float(targetW) / Float(res.width)
+        let K = cam.intrinsics
+        let view = CovView(inv: T.inverse, fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
+                           w: Float(targetW), h: Float(targetH), pos: pos)
+        var moved: Float = .infinity, turned: Float = .infinity
+        if let lp = lastKeyPos, let lf = lastKeyFwd {
+            moved = simd_length(pos - lp)
+            turned = acos(max(-1, min(1, simd_dot(fwd, lf))))
+        }
+        if let model = coverage, !currentSurfaces.isEmpty {
+            // Приложение знает, что уже снято (зелёная подсветка): кадр берём, только если он снимает ещё не снятое —
+            // не меньше 3 новых клеток 40×40 см. Одно и то же место много раз не фотографируем
+            // (раньше кадр шёл просто по движению — на одну прихожую уходило 70 кадров).
+            if moved < 0.1 && turned < 0.1 { return }               // телефон почти не сдвинулся — нечего проверять
+            let fresh = model.freshCells(view, surfaces: currentSurfaces)
+            // одна-две оставшиеся клетки (угол, край) тоже доснимаем — но только с нового ракурса, не каждые 0,4 с
+            if fresh < 3 && !(fresh >= 1 && (moved >= 0.5 || turned >= 0.5)) { return }
+        } else {
+            // комната ещё не распознана (нет поверхностей для подсветки) — по движению: полметра или ~29°
+            if moved < 0.5 && turned < 0.5 { return }
+        }
         let ci = CIImage(cvPixelBuffer: frame.capturedImage)
         guard let cg = ciContext.createCGImage(ci, from: ci.extent),
               let rgba = rgbaBytes(of: cg, width: targetW, height: targetH) else { return }
-        let k = Float(targetW) / Float(res.width)
-        let K = cam.intrinsics
-        coverage?.add(CovView(inv: T.inverse, fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
-                              w: Float(targetW), h: Float(targetH), pos: pos))
+        coverage?.add(view)
         keyFrames.append(KeyFrame(transformInv: T.inverse,
                                   fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
                                   w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd))
         lastKeyPos = pos; lastKeyFwd = fwd
-        statusLabel.text = "Ключевых кадров: \(keyFrames.count) · комнат: \(capturedRooms.count + 1)"
+        statusLabel.text = "Кадров: \(keyFrames.count) из \(Self.maxKeyFrames) · комнат: \(capturedRooms.count + 1)"
     }
 
     private func jpegData(from pixelBuffer: CVPixelBuffer) -> Data? {
