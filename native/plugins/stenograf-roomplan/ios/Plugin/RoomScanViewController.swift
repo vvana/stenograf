@@ -97,7 +97,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     init(mode: String, maxDim: Int, wantFrames: Bool, overlay: [String: Any]?, hd: Bool = false,
          completion: @escaping (Result<[String: Any], Error>) -> Void) {
         self.mode = mode
-        self.hd = hd && mode == "final"
+        self.hd = hd && (mode == "final" || mode == "walk" || mode == "multi")   // HD-пакет — и в обходе этапа
         self.maxDim = maxDim
         self.wantFrames = wantFrames
         self.overlayParams = overlay
@@ -168,7 +168,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     // MARK: покрытие
 
     private func setupCoverage() {
-        let model = CoverageModel(need: hd ? 2 : 1)   // обход этапа: 1 кадр на клетку
+        let model = CoverageModel(need: hd && mode == "final" ? 2 : 1)   // обход этапа (и HD-обход): 1 кадр на клетку
         coverage = model
         let ov = CoverageOverlayView(frame: view.bounds)
         ov.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -254,8 +254,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         case "surface":
             let what = (overlayParams?["surface"] as? String) == "f" ? "пол" : "потолок"
             return "Скан: \(what). Сначала обведите камерой стены комнаты, потом медленно ведите телефоном по поверхности — снятое подсвечивается зелёным. В конце «Готово»"
-        case "walk": return "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Снятое подсвечивается зелёным"
-        case "multi": return wantFrames
+        case "walk": return hd
+            ? "HD-обход: ведите телефон вдоль стен, к полу и потолку, и замирайте на секунду — HD-кадр снимается, когда телефон неподвижен. Снятое подсвечивается зелёным"
+            : "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Снятое подсвечивается зелёным"
+        case "multi": return hd
+            ? "HD-обход квартиры: пройдите комнату вдоль стен, замирая на секунду — HD-кадр снимается, когда телефон неподвижен. Всё зелёное — «Следующая» и в другую комнату"
+            : wantFrames
             ? "Обход квартиры: пройдите комнату вдоль стен, наклоняя телефон к полу и потолку, пока всё не станет зелёным, затем «Следующая» — и в другую комнату"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Сохранить»"
         case "final": return hd
@@ -586,9 +590,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if let usdz = exportUSDZ({ try room.export(to: $0) }) { dict["usdz"] = usdz }
         sharedSession?.pause()
         let base = dict
+        let hdc = hdCapture
         Task { @MainActor in
             var out = base
             await self.addSurfaces(to: &out, rooms: [room])
+            if let hc = hdc { await self.packHD(hc, into: &out, pointsPLY: nil) }
             self.dismiss(animated: true) { self.completion(.success(out)) }
         }
     }
@@ -625,20 +631,26 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 for (k, v) in mesh { dict[k] = v }
             }
             if let hc = hdc {
-                self.statusLabel.text = "Упаковываю HD-кадры для компьютера…"
                 let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
-                let res = await Task.detached(priority: .userInitiated) { () -> (String?, String?) in
-                    do { return (try hc.finish(pointsPLY: ply).path, nil) } catch { return (nil, error.localizedDescription) }
-                }.value
-                if let path = res.0 {
-                    dict["hdZip"] = path
-                    dict["hdFrames"] = hc.count
-                    dict["hdBytes"] = ((try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? NSNumber)?.intValue ?? 0
-                } else if let err = res.1 { dict["hdError"] = err }
+                await self.packHD(hc, into: &dict, pointsPLY: ply)
             }
             self.sharedSession?.pause()
             self.dismiss(animated: true) { self.completion(.success(dict)) }
         }
+    }
+
+    /// HD-пакет (кадры + позы) → ZIP в Documents; в результат — путь, число кадров и размер. Облако точек есть только у финального скана.
+    private func packHD(_ hc: HDCapture, into dict: inout [String: Any], pointsPLY: Data?) async {
+        guard hc.count > 0 else { hc.discard(); return }
+        statusLabel.text = "Упаковываю HD-кадры для компьютера…"
+        let res = await Task.detached(priority: .userInitiated) { () -> (String?, String?) in
+            do { return (try hc.finish(pointsPLY: pointsPLY).path, nil) } catch { return (nil, error.localizedDescription) }
+        }.value
+        if let path = res.0 {
+            dict["hdZip"] = path
+            dict["hdFrames"] = hc.count
+            dict["hdBytes"] = ((try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? NSNumber)?.intValue ?? 0
+        } else if let err = res.1 { dict["hdError"] = err }
     }
 
     /// Оригинальная модель RoomPlan (USDZ, как в предпросмотре) → base64; при ошибке nil.
@@ -838,7 +850,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if mode == "ghost" { pollGhost(frame: frame); return }
         sampleNorth(frame: frame)
         if mode == "final" { pollKeyFrame(frame: frame) }
-        if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
+        if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext), mode == "final" {
+            // в обходе этапа счётчик HD — в строке «Снято кадров», а зелёная подсветка — только по кадрам стен/пола/потолка
             statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)"
             if let e = hc.last {
                 let p = simd_float3(e.c2w.columns.3.x, e.c2w.columns.3.y, e.c2w.columns.3.z)
@@ -996,7 +1009,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         coverage?.add(CovView(inv: viewM, fx: K0.columns.0.x, fy: K0.columns.1.y, cx: K0.columns.2.x, cy: K0.columns.2.y,
                               w: Float(res.width), h: Float(res.height), pos: camPos, target: .wall(wall.identifier.uuidString)))
         let n = frames.values.reduce(0) { $0 + $1.count }
-        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
+        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" } ?? "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
     }
 
     // MARK: AR-призрак

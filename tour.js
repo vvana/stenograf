@@ -76,7 +76,9 @@ async function viewTour(pid, roomId = null) {
   if (roomId && rooms.some(r => r.id === roomId)) { tourState.roomId = roomId; if (tourState.mode === 'house') tourState.mode = 'inside'; }
   if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
   if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
-  if (tourState.mode === 'hd' && !(project.hdScan && project.hdScan.blob)) tourState.mode = 'house';
+  // HD-модель — у этапа: выбранный этап, если у него она есть, иначе последний этап с моделью
+  const hdStage = () => { const ok = stages.filter(s => s.hdScan && s.hdScan.blob); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
+  if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
@@ -95,7 +97,7 @@ async function viewTour(pid, roomId = null) {
         <div class="tour-modes">
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('eye')}Внутри</button>
-          ${project.hdScan && project.hdScan.blob ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}HD</button>` : ''}
+          ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}HD</button>` : ''}
           ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}Финал</button>` : ''}
           ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
         </div>
@@ -441,20 +443,25 @@ async function viewTour(pid, roomId = null) {
   }
 
   /* ---------- HD-скан: Gaussian splatting, обученный на компьютере по HD-пакету ---------- */
-  let hdViewer = null, hdCenter = null, hdLoading = null;
+  let hdViewer = null, hdCenter = null, hdLoading = null, hdOf = null;
   function loadHD() {
-    if (hdViewer || hdLoading || !(project.hdScan && project.hdScan.blob)) return hdLoading || Promise.resolve();
+    const hs = hdStage();
+    if (hdLoading || !hs) return hdLoading || Promise.resolve();
+    if (hdViewer && hdOf === hs.id) return Promise.resolve();
+    if (hdViewer) { scene.remove(hdViewer); hdViewer.dispose().catch(() => {}); hdViewer = null; hdCenter = null; }   // выбран другой этап
+    const scan = hs.hdScan;
+    hdOf = hs.id;
     hdLoading = (async () => {
       say('Загружаю HD-модель…');
       try {
         const GS = await import('./vendor/gaussian-splats-3d.module.js');
-        const fmt = { ply: GS.SceneFormat.Ply, spz: GS.SceneFormat.Spz, splat: GS.SceneFormat.Splat, ksplat: GS.SceneFormat.KSplat }[project.hdScan.format] ?? GS.SceneFormat.Ply;
+        const fmt = { ply: GS.SceneFormat.Ply, spz: GS.SceneFormat.Spz, splat: GS.SceneFormat.Splat, ksplat: GS.SceneFormat.KSplat }[scan.format] ?? GS.SceneFormat.Ply;
         const v = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false, sceneRevealMode: GS.SceneRevealMode.Instant });
-        const url = URL.createObjectURL(project.hdScan.blob);
-        // пакет снят в координатах AR-сессии финального скана → тот же поворот и сдвиг, что у сетки «Финал»
-        const tr = project.finalScan && project.finalScan.transform || { ang: 0, ox: 0, oy: 0 };
+        const url = URL.createObjectURL(scan.blob);
+        // пакет снят в координатах AR-сессии обхода → тот же поворот и сдвиг, которым обход лёг на схему
+        const tr = hs.hdTransform || { ang: 0, ox: 0, oy: 0 };
         v.rotation.y = -tr.ang; v.position.set(tr.ox, 0, tr.oy);
-        if (project.hdScan.flip) v.rotation.x = Math.PI;   // модель из программ с осью Y вниз
+        if (scan.flip) v.rotation.x = Math.PI;   // модель из программ с осью Y вниз
         try { await v.addSplatScene(url, { format: fmt, showLoadingUI: false, progressiveLoad: false, splatAlphaRemovalThreshold: 5 }); }
         finally { URL.revokeObjectURL(url); }
         scene.add(v); v.updateMatrixWorld(true);
@@ -613,7 +620,7 @@ async function viewTour(pid, roomId = null) {
     const name = ri ? ri.name : '';
     if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем или двумя, щипок — масштаб. Тап по плану — встать в эту точку внутри.';
     else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Ведите точку на плане — чтобы перейти.`;
-    if (tourState.mode === 'hd') hint.textContent = 'HD-скан. Крутите пальцем, щипок — масштаб.';
+    if (tourState.mode === 'hd') hint.textContent = `HD-скан${hdStage() ? ': ' + hdStage().name : ''}. Крутите пальцем, щипок — масштаб.`;
     if (tourState.mode === 'final') hint.textContent = `Финальный скан: ${project.finalScan ? (project.finalScan.vertices || 0) + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
     const pb = $('#tour-photos'); if (pb) pb.classList.toggle('active', tourState.photos);
@@ -650,7 +657,7 @@ async function viewTour(pid, roomId = null) {
   };
   const photosBtn = $('#tour-photos');
   if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
-  if ($('#tour-stage')) $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); };
+  if ($('#tour-stage')) $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); if (tourState.mode === 'hd') loadHD().then(updateHint); };
 
   /* ---------- экспорт в GLB: стены, полы, потолки, проёмы, мебель, фото выбранного этапа ---------- */
   const glbBtn = $('#tour-glb');

@@ -623,13 +623,14 @@ async function lidarMeasure(pid, rooms, room) {
 }
 
 // обмер / обход всей квартиры: несколько комнат подряд (mode 'multi'), с кадрами — на этап
-async function lidarApartment(pid, rooms, stageId) {
+async function lidarApartment(pid, rooms, stageId, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId }); }
+  try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId, hd: !!(stageId && opts.hd) }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
-  const { results, wallMap } = await applyStructure(pid, rooms, scan);
+  const { results, wallMap, transform } = await applyStructure(pid, rooms, scan);
   if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
   await saveProjectUsdz(pid, scan);
+  if (stageId) results.hd = await saveStageHD(stageId, scan, transform);
   let mirrors = 0;
   for (const r of results) mirrors += await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
   let photos = 0;
@@ -648,7 +649,7 @@ async function lidarApartment(pid, rooms, stageId) {
       return room && m.place && m.place.toPlan ? { room, toPlan: m.place.toPlan } : null;
     });
   }
-  toast(`Квартира: ${results.length} комн.${photos ? `, ${photos} фото` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
+  toast(`Квартира: ${results.length} комн.${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
   return results;
 }
 
@@ -675,45 +676,33 @@ async function lidarGhost(photo, wallSize) {
   catch (err) { if (!String(err && err.message).includes('cancelled')) throw err; }
 }
 
-// финальный скан: комнаты + окрашенная сетка квартиры → project.finalScan
-async function lidarFinal(pid, project, rooms, opts = {}) {
-  let scan;
-  try { scan = await Native.RP.scan({ mode: 'final', hd: !!opts.hd }); }
-  catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
-  const { results, transform } = await applyStructure(pid, rooms, scan);
-  if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
-  await saveProjectUsdz(pid, scan);
-  if (scan.usdz) project = await dbGet('projects', pid);
-  for (const r of results) await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
-  if (scan.mesh) {
-    const blob = await (await fetch('data:application/octet-stream;base64,' + scan.mesh)).blob();
-    project.finalScan = { blob, transform, vertices: scan.meshVertices || 0, faces: scan.meshFaces || 0, created: Date.now() };
-    await dbPut('projects', project);
-  }
-  if (scan.hdZip) {
-    // HD-пакет лежит файлом в Documents (сотни МБ — через мост не гоняем), в базе только путь; старый пакет удаляем
-    const p = await dbGet('projects', pid);
-    const old = p.hdCapture && p.hdCapture.path;
-    p.hdCapture = { path: scan.hdZip, frames: scan.hdFrames || 0, bytes: scan.hdBytes || 0, created: Date.now() };
-    await dbPut('projects', p);
-    if (old && old !== scan.hdZip) Native.RP.deleteFile({ path: old }).catch(() => {});
-  }
+// HD-обход: пакет кадров лежит файлом в Documents (сотни МБ — через мост не гоняем), у этапа только путь; старый пакет этапа удаляем.
+// transform — мир AR-сессии → схема ({ang, ox, oy}), чтобы обученная модель встала на план.
+async function saveStageHD(stageId, scan, transform) {
   if (scan.hdError) alert('HD-пакет не собрался: ' + scan.hdError);
-  toast(`Финальный скан: ${results.length} комн., ${scan.meshVertices || 0} вершин${scan.hdZip ? `, HD-кадров: ${scan.hdFrames}` : ''}`);
-  results.hd = !!scan.hdZip;
-  return results;
+  if (!scan.hdZip) return false;
+  const st = await dbGet('stages', stageId);
+  if (!st) return false;
+  const old = st.hdCapture && st.hdCapture.path;
+  st.hdCapture = { path: scan.hdZip, frames: scan.hdFrames || 0, bytes: scan.hdBytes || 0, created: Date.now() };
+  st.hdTransform = transform || null;
+  await dbPut('stages', st);
+  if (old && old !== scan.hdZip) Native.RP.deleteFile({ path: old }).catch(() => {});
+  return true;
 }
 
-async function lidarWalk(pid, room, stageId) {
+async function lidarWalk(pid, room, stageId, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'walk' }); }
+  try { scan = await Native.RP.scan({ mode: 'walk', hd: !!opts.hd }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
   if (toPlan) await saveNorth(pid, scan, turn);
   const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap, toPlan ? { toPlan, turn, floorY: scan.floorY } : null);
   r.planes = await savePlanes(pid, stageId, scan.planes, () => toPlan ? { room, toPlan } : null);
+  const o = toPlan && toPlan([0, 0]);
+  r.hd = await saveStageHD(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null);
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;
   const extra = [['f', 'пол'], ['c', 'потолок']].filter(([sf]) => (scan.planes || []).some(o => o.surface === sf)).map(([, t]) => t);
-  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
+  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${r.hd ? ` · HD-кадров: ${scan.hdFrames}` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
   return r;
 }

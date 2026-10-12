@@ -184,7 +184,7 @@ async function render() {
       if (parts[2] === 'report') return await viewReport(pid);
       if (parts[2] === 'verify') return await viewVerify(pid);
       if (parts[2] === 'calc') return await viewCalc(pid);
-      if (parts[2] === 'hd') return await viewHD(pid);
+      if (parts[2] === 'hd') return await viewHD(pid, parts[3] || null);
       if (parts[2] === 'ghost' && parts[3] && parts[4]) return await viewGhost(pid, parts[3], parts[4]);
       if (parts[2] === 'tour') return await viewTour(pid, parts[3] || null);
       return await viewPlan(pid);
@@ -1997,13 +1997,26 @@ function pickSheet(title, note, items) {
 }
 async function stageWalk(pid, stageId = null) {
   const { rooms, stages } = await loadProjectData(pid);
-  if (!rooms.length) { alert('Сначала обмерьте помещения на схеме — обход снимает их стены.'); return; }
   let st = stages.find(x => x.id === stageId);
   if (!st) {
     const id = await pickSheet('Обход этапа', 'Выберите этап — кадры стен снимутся сами и лягут на него уже откалиброванными.',
       stages.map(x => ({ html: esc(x.name), value: x.id })));
     if (!id) return;
     st = stages.find(x => x.id === id);
+  }
+  // обычный обход или HD: HD — те же фото стен плюс пакет полноразмерных кадров для обучения модели на компьютере
+  const askKind = () => pickSheet(`Обход: ${st.name}`, 'HD — кроме фото стен телефон снимет до 300 кадров в полном разрешении (≈ 300 МБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере. Идите медленно и замирайте на секунду — кадр снимается, когда телефон неподвижен.', [
+    { html: `${I('camera')}Обычный`, value: 'std', primary: true },
+    { html: `${I('flag')}HD — с обработкой на компьютере`, value: 'hd' },
+  ]);
+  const done = res => { if (res && res.hd) nav(`#/p/${pid}/hd/${st.id}`); else render(); };
+  // схемы ещё нет — обход всей квартиры строит её сам: комнаты обмеряются и встают на схему, кадры стен ложатся на этап
+  if (!rooms.length) {
+    if (!confirm(`Схемы пока нет — обход «${st.name}» построит её сам: сканируйте комнаты по очереди («Следующая» между комнатами), стены обмерятся и сразу сфотографируются. Начать?`)) return;
+    const kind = await askKind();
+    if (!kind) return;
+    try { done(await lidarApartment(pid, rooms, st.id, { hd: kind === 'hd' })); } catch (err) { alert('Обход не удался: ' + err.message); }
+    return;
   }
   const ids = stageRoomIds(st, rooms);
   const own = ids ? rooms.filter(r => ids.includes(r.id)) : rooms;
@@ -2016,11 +2029,11 @@ async function stageWalk(pid, stageId = null) {
     if (!v) return;
     room = v === '*' ? null : rooms.find(r => r.id === v);
   }
-  try {
-    if (room) await lidarWalk(pid, room, st.id);
-    else await lidarApartment(pid, rooms, st.id);
-    render();
-  } catch (err) { alert('Обход не удался: ' + err.message); }
+  const kind = await askKind();
+  if (!kind) return;
+  const hd = kind === 'hd';
+  try { done(room ? await lidarWalk(pid, room, st.id, { hd }) : await lidarApartment(pid, rooms, st.id, { hd })); }
+  catch (err) { alert('Обход не удался: ' + err.message); }
 }
 
 // обмер всей квартиры: комнаты подряд в одной сессии, Apple сводит их в одну схему
@@ -2029,51 +2042,28 @@ async function measureApartment(pid) {
   const { rooms } = await loadProjectData(pid);
   try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
 }
-// после финального скана — последний этап «Финальный скан» со статусом «готово» (если уже есть — переносится в конец)
-async function markFinalStage(pid) {
-  const { stages } = await loadProjectData(pid);
-  let st = stages.find(s => s.final) || stages.find(s => s.name.trim().toLowerCase() === 'финальный скан');
-  const maxOrd = Math.max(-1, ...stages.filter(s => s !== st).map(s => s.ord));
-  if (!st) st = { id: uid(), projectId: pid, name: 'Финальный скан', ord: maxOrd + 1, status: 2 };
-  if (st.ord <= maxOrd) st.ord = maxOrd + 1;
-  st.final = true; st.status = 2;
-  await dbPut('stages', st);
-}
-// финальный скан: 3D с текстурами в конце ремонта
-async function finalScan(pid) {
-  const kind = await pickSheet('Финальный скан', '3D-модель готовой квартиры для заказчика и портфолио. Лучше делать в конце ремонта: медленно обойдите все комнаты, поворачивая телефон ко всем поверхностям.', [
-    { html: `${I('tour')}Обычный — 3D сразу на телефоне`, value: 'std', primary: true },
-    { html: `${I('flag')}HD — обработка на компьютере`, value: 'hd' },
-  ]);
-  if (!kind) return;
-  if (kind === 'hd' && !confirm('HD-скан: кроме обычной модели телефон снимет до 300 кадров в полном разрешении (≈ 300 МБ) с положением камеры. Потом пакет переносится на компьютер с видеокартой и обучается в Brush — получится фотореалистичная модель. Идите медленно и замирайте на секунду: кадр снимается, когда телефон неподвижен. Начать?')) return;
-  const { project, rooms } = await loadProjectData(pid);
-  try {
-    const res = await lidarFinal(pid, project, rooms, { hd: kind === 'hd' });
-    if (res) await markFinalStage(pid);
-    if (res && res.hd) { nav(`#/p/${pid}/hd`); return; }
-    if (res) toast('Готово — смотрите в 3D, режим «Финал»');
-  } catch (err) { alert('Скан не удался: ' + err.message); }
-  render();
-}
-
 /* ---------- HD-скан: пакет для компьютера и загрузка обученной модели ---------- */
 const fmtMB = b => (b / 1048576).toFixed(b > 104857600 ? 0 : 1).replace('.', ',') + ' МБ';
-async function viewHD(pid) {
-  const { project } = await loadProjectData(pid);
+async function viewHD(pid, stageId = null) {
+  const { project, stages } = await loadProjectData(pid);
   if (!project) return nav('');
-  const cap = project.hdCapture, hd = project.hdScan;
+  // HD-скан — у этапа: показываем выбранный, иначе последний этап, где он есть
+  const withHD = stages.filter(s => s.hdCapture || s.hdScan);
+  const st = stages.find(s => s.id === stageId) || withHD[withHD.length - 1] || stages[0];
+  if (!st) { app.innerHTML = `${header('HD-скан', false)}<div class="pad"><p class="mut">Сначала добавьте этап — HD-скан снимается обходом этапа.</p></div>${bottomNav(pid, 'more')}`; return; }
+  const cap = st.hdCapture, hd = st.hdScan;
   let capOk = false;
   if (cap && Native.RP && Native.RP.fileInfo) { try { capOk = !!(await Native.RP.fileInfo({ path: cap.path })).exists; } catch {} }
   app.innerHTML = `
     ${header('HD-скан', false)}
     <div class="pad"><div class="cards">
+      <select class="inp" id="hd-stage">${stages.map(s => `<option value="${s.id}" ${s.id === st.id ? 'selected' : ''}>${esc(s.name)}${s.hdScan ? ' · модель' : s.hdCapture ? ' · пакет' : ''}</option>`).join('')}</select>
       <div class="card">
         <b>1. Пакет для компьютера</b>
         ${cap && capOk ? `<p class="mut small">${fmtDate(cap.created)} · ${cap.frames} кадров · ${fmtMB(cap.bytes)}</p>
           <button class="btn primary wide" id="hd-share">${I('share')}Отправить на компьютер</button>
           <button class="btn ghost wide" id="hd-del-cap">${I('trash')}Удалить пакет с телефона</button>`
-        : `<p class="mut small">${cap ? 'Пакет уже удалён с телефона.' : 'Пакета пока нет.'} Снимите его: «Этапы» → «Финальный скан» → «HD — обработка на компьютере».</p>`}
+        : `<p class="mut small">${cap ? 'Пакет уже удалён с телефона.' : 'Пакета пока нет.'} Снимите его: «Этапы» → обход этого этапа → «HD — с обработкой на компьютере».</p>`}
         <p class="mut small">Перенести можно через «Отправить» (Telegram, облако, AirDrop), по кабелю — Windows-приложение Apple Devices → Файлы → Fixpoint, или «Файлы» → «На iPhone» → Fixpoint.</p>
       </div>
       <div class="card">
@@ -2102,7 +2092,7 @@ async function viewHD(pid) {
   on('#hd-del-cap', async () => {
     if (!confirm('Удалить пакет с телефона? Если модель ещё не обучена, HD-скан придётся снимать заново.')) return;
     try { await Native.RP.deleteFile({ path: cap.path }); } catch {}
-    delete project.hdCapture; await dbPut('projects', project); render();
+    delete st.hdCapture; await dbPut('stages', st); render();
   });
   on('#hd-load', () => $('#hd-file').click());
   $('#hd-file').onchange = async e => {
@@ -2110,14 +2100,15 @@ async function viewHD(pid) {
     if (!f) return;
     const format = (f.name.split('.').pop() || 'ply').toLowerCase();
     if (!['ply', 'spz', 'splat', 'ksplat'].includes(format)) { alert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
-    project.hdScan = { blob: f, name: f.name, size: f.size, format, created: Date.now(), flip: false };
-    try { await dbPut('projects', project); } catch (err) { alert('Не удалось сохранить модель (мало места?): ' + err.message); return; }
+    st.hdScan = { blob: f, name: f.name, size: f.size, format, created: Date.now(), flip: false };
+    try { await dbPut('stages', st); } catch (err) { alert('Не удалось сохранить модель (мало места?): ' + err.message); return; }
     toast('HD-модель загружена'); render();
   };
-  on('#hd-view', () => { tourState.mode = 'hd'; nav(`#/p/${pid}/tour`); });
+  $('#hd-stage').onchange = e => nav(`#/p/${pid}/hd/${e.target.value}`);
+  on('#hd-view', () => { tourState.mode = 'hd'; tourState.stage = st.id; nav(`#/p/${pid}/tour`); });
   const flip = $('#hd-flip');
-  if (flip) flip.onchange = async () => { project.hdScan.flip = flip.checked; await dbPut('projects', project); };
-  on('#hd-del', async () => { if (!confirm('Удалить HD-модель с телефона?')) return; delete project.hdScan; await dbPut('projects', project); if (tourState.mode === 'hd') tourState.mode = 'house'; render(); });
+  if (flip) flip.onchange = async () => { st.hdScan.flip = flip.checked; await dbPut('stages', st); };
+  on('#hd-del', async () => { if (!confirm('Удалить HD-модель с телефона?')) return; delete st.hdScan; await dbPut('stages', st); if (tourState.mode === 'hd') tourState.mode = 'house'; render(); });
 }
 
 /* ---------- этапы по помещениям ---------- */
@@ -2157,7 +2148,6 @@ async function viewStages(pid) {
     ${header('Этапы ремонта', false)}
     <div class="pad">
       <div class="stage-toolbar">
-        <button class="btn small-btn hidden" id="final-stage" title="3D-модель квартиры с текстурами — в конце ремонта">${I('flag')}Финальный скан</button>
         <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
       </div>
       <div class="cards" id="stage-list">
@@ -2183,8 +2173,6 @@ async function viewStages(pid) {
   lidarAvailable().then(ok => {
     if (!ok) return;
     app.querySelectorAll('.walk-tile').forEach(b => b.classList.remove('hidden'));
-    const fb = $('#final-stage');
-    if (fb) { fb.classList.remove('hidden'); fb.onclick = () => finalScan(pid); }
   });
   $('#add-stage').onclick = async () => {
     const name = prompt('Название этапа (например, «Электрика», «Штукатурка»):');
@@ -2202,6 +2190,7 @@ async function viewStages(pid) {
     const ph = photos.filter(p => p.stageId === id);
     const ords = stages.map(x => ({ ...x })); // порядок до удаления — для отмены
     for (const p of ph) await dbDel('photos', p.id);
+    if (s.hdCapture && s.hdCapture.path && Native.RP && Native.RP.deleteFile) Native.RP.deleteFile({ path: s.hdCapture.path }).catch(() => {});
     await dbDel('stages', id);
     const rest = stages.filter(x => x.id !== id);
     for (let k = 0; k < rest.length; k++) if (rest[k].ord !== k) { rest[k].ord = k; await dbPut('stages', rest[k]); }
@@ -2864,7 +2853,7 @@ async function viewMore(pid) {
           <p class="mut small">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
           <button class="btn ghost wide" id="set-name">${I('user')}Подпись: ${esc(userName() || 'не задана')}</button>
         </div>
-        ${project.hdCapture || project.hdScan || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
+        ${stages.some(s => s.hdCapture || s.hdScan) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
@@ -2919,7 +2908,7 @@ async function buildExport(kind, projects, rooms, stages, photos) {
     const { usdz, ...rest } = r;
     roomsOut.push(usdz ? { ...rest, usdzData: await blobToDataURL(usdz) } : rest);
   }
-  const payload = { app: 'fixpoint', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages, photos: photosOut };
+  const payload = { app: 'fixpoint', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages: stages.map(({ hdScan, hdCapture, ...s }) => s), photos: photosOut };
   return new Blob([JSON.stringify(payload)], { type: 'application/json' });
 }
 
@@ -3024,7 +3013,11 @@ async function importData(data) {
         if (r.usdzData) { r.usdz = await (await fetch(r.usdzData)).blob(); delete r.usdzData; }
         if (authoritative || !(await dbGet('rooms', r.id))) await dbPut('rooms', r);
       }
-      for (const s of data.stages || []) if (authoritative || !(await dbGet('stages', s.id))) await dbPut('stages', s);
+      for (const s of data.stages || []) {
+        const local = await dbGet('stages', s.id);
+        if (local) for (const k of ['hdScan', 'hdCapture', 'hdTransform']) if (local[k] && !s[k]) s[k] = local[k]; // HD-скан в файле не ездит — свой не теряем
+        if (authoritative || !local) await dbPut('stages', s);
+      }
       for (const ph of data.photos || []) {
         const { data: dataUrl, originalData, ...meta } = ph;
         const mine = await dbGet('photos', ph.id);
