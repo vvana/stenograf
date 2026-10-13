@@ -2006,10 +2006,25 @@ async function stageWalk(pid, stageId = null) {
     st = stages.find(x => x.id === id);
   }
   // обычный обход или HD: HD — те же фото стен плюс пакет полноразмерных кадров для обучения модели на компьютере
-  const askKind = () => pickSheet(`Обход: ${st.name}`, 'HD — кроме фото стен телефон снимет до 300 кадров в полном разрешении (≈ 300 МБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере. Идите медленно и замирайте на секунду — кадр снимается, когда телефон неподвижен.', [
-    { html: `${I('camera')}Обычный`, value: 'std', primary: true },
-    { html: `${I('flag')}HD — с обработкой на компьютере`, value: 'hd' },
-  ]);
+  // лист запуска обхода: галочка «HD», слева крестик (отмена), справа галочка (начать). Возвращает 'std' | 'hd' | null
+  const askKind = () => new Promise(resolve => {
+    const host = document.createElement('div');
+    host.className = 'plan-sheet tpl-sheet walk-sheet';
+    host.innerHTML = `<div class="sh-title">Обход: ${esc(st.name)}</div>
+      <p class="mut small">Снятая область подсвечивается зелёным.</p>
+      <label class="walk-hd"><input type="checkbox" id="walk-hd"><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>HD — с обработкой на компьютере</b>
+        <span class="mut small">Кроме фото стен телефон снимет до 1000 кадров в полном разрешении (до ≈ 1 ГБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере.</span></span></label>
+      <div class="walk-actions">
+        <button class="round-btn" data-k="x" title="Отмена" aria-label="Отмена"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        <button class="round-btn go" data-k="go" title="Начать обход" aria-label="Начать обход"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
+      </div>`;
+    document.body.appendChild(host);
+    host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+      const hd = host.querySelector('#walk-hd').checked;
+      host.remove();
+      resolve(b.dataset.k === 'x' ? null : hd ? 'hd' : 'std');
+    });
+  });
   const done = res => { if (res && res.hd) nav(`#/p/${pid}/hd/${st.id}`); else render(); };
   // схемы ещё нет — обход всей квартиры строит её сам: комнаты обмеряются и встают на схему, кадры стен ложатся на этап
   if (!rooms.length) {

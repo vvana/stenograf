@@ -517,6 +517,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         glass.layer.borderWidth = 1
         glass.layer.borderColor = UIColor(white: 1, alpha: 0.3).cgColor
         glass.contentView.backgroundColor = UIColor(white: 0, alpha: 0.22)   // фон проверки светлый — без затемнения белый текст не читается
+        if applyLiquidGlass(glass, tint: nil) { glass.layer.borderWidth = 0 }
 
         let title = UILabel()
         title.text = "Комната \(n)"
@@ -1385,6 +1386,22 @@ let keyFrames = input.keyFrames
     return ["mesh": ply.base64EncodedString(), "meshVertices": positions.count, "meshFaces": faces.count / 3, "keyFrames": keyFrames.count]
 }
 
+/// «Жидкое стекло» iOS 26+ (UIGlassEffect) вместо обычного размытия. true — применено.
+/// Собирается только новым Xcode (SDK iOS 26+, Swift 6.2+); на старом Xcode и на iOS < 26 остаётся размытие.
+/// Тёмный вариант стекла — у нас поверх него белые значки и текст.
+@MainActor func applyLiquidGlass(_ view: UIVisualEffectView, tint: UIColor?) -> Bool {
+    #if compiler(>=6.2)
+    if #available(iOS 26.0, *) {
+        let effect = UIGlassEffect()
+        effect.tintColor = tint
+        view.overrideUserInterfaceStyle = .dark
+        view.effect = effect
+        return true
+    }
+    #endif
+    return false
+}
+
 /// Стеклянная кнопка поверх камеры: размытие фона (системный материал), светлый ободок, белый значок.
 /// Круглая со значком SF Symbols или капсула с текстом; `tint` — цветное стекло для главного действия.
 /// Нажатие — пружинное сжатие; выключенная — полупрозрачная.
@@ -1407,6 +1424,11 @@ final class GlassButton: UIButton {
         }
         sendSubviewToBack(glass)
         tintLayer.backgroundColor = tint?.withAlphaComponent(0.78) ?? UIColor(white: 0, alpha: 0.18)   // лёгкое затемнение: белый значок читается и на светлом фоне
+        // iOS 26+: настоящее «жидкое стекло» (цвет главного действия — оттенком стекла), наш слой затемнения и ободок не нужны
+        if applyLiquidGlass(glass, tint: tint?.withAlphaComponent(0.85)) {
+            tintLayer.isHidden = true
+            layer.borderWidth = 0
+        }
         layer.cornerRadius = Self.side / 2
         layer.cornerCurve = .continuous
         layer.masksToBounds = true

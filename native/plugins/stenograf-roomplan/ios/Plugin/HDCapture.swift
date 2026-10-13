@@ -23,7 +23,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     private var lastPos: simd_float3?
     private var lastFwd: simd_float3?
     private var prevPollT: simd_float4x4?
-    let maxFrames = 300   // ≈ 250–350 МБ: хватает на квартиру, Brush на 12 ГБ видеопамяти справляется
+    let maxFrames = 1000  // ≈ 1 ГБ на квартиру (было 300 — пользователь: «300 точно мало»); влезет ли обучение Brush в 12 ГБ видеопамяти — не проверено
     var count: Int { entries.count }
     var last: Entry? { entries.last }
 

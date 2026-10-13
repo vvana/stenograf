@@ -916,3 +916,23 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
 /* переключатель режимов — внизу, на одной линии с низом мини-плана (просьба пользователя 2026-10-13) */
 .tour-bottom .tour-modes { margin: 0 auto 12px; align-self: flex-end; }
 .tour-bottom .tour-plan { order: -1; }   /* мини-план слева, переключатель справа (поменяли местами 2026-10-13) */   /* по центру между краем экрана и мини-планом */
+
+/* лист запуска обхода этапа: галочка HD, круглые кнопки ✕ / ✓ как в сканере */
+.walk-sheet .walk-hd { display: flex; gap: 12px; align-items: flex-start; margin: 12px 0 8px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; }
+.walk-sheet .walk-hd input { position: absolute; opacity: 0; pointer-events: none; }
+.walk-sheet .wh-box { flex: none; width: 26px; height: 26px; border-radius: 8px; border: 2px solid var(--mut); display: flex; align-items: center; justify-content: center; color: transparent; transition: background .15s ease, border-color .15s ease; }
+.walk-sheet .wh-box svg { width: 18px; height: 18px; stroke-width: 3; }
+.walk-sheet .walk-hd input:checked + .wh-box { background: var(--acc); border-color: var(--acc); color: #fff; }
+.walk-sheet .walk-hd:has(input:checked) { border-color: var(--acc); }
+.walk-sheet .wh-text { display: flex; flex-direction: column; gap: 4px; font-size: 15px; }
+.walk-sheet .walk-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding: 0 6px; }
+.round-btn { width: 58px; height: 58px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff;
+  /* стекло: прозрачное, с бликом сверху, светлым ободком и затемнением по нижнему краю */
+  background: radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.42) 0%, rgba(255,255,255,0) 52%), radial-gradient(70% 50% at 50% 115%, rgba(255,255,255,.26) 0%, rgba(255,255,255,0) 70%), rgba(74, 64, 54, .26);
+  -webkit-backdrop-filter: blur(4px) saturate(1.6); backdrop-filter: blur(4px) saturate(1.6);
+  border: 1px solid rgba(255,255,255,.6);
+  box-shadow: 0 8px 20px rgba(30,25,15,.20), inset 0 1px 1px rgba(255,255,255,.65), inset 0 -5px 9px rgba(30,25,15,.14), inset 0 0 0 1px rgba(30,25,15,.05);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.round-btn svg { filter: drop-shadow(0 1px 2px rgba(30,25,15,.35)); }
+.round-btn.go { background: radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.45) 0%, rgba(255,255,255,0) 52%), radial-gradient(70% 50% at 50% 115%, rgba(255,255,255,.28) 0%, rgba(255,255,255,0) 70%), rgba(217, 95, 24, .72); }
+.round-btn:active { transform: scale(.9); }
