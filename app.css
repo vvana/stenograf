@@ -873,7 +873,7 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
 
 /* стеклянная круглая кнопка «+» внизу экрана (Этапы): дымчатое прозрачное стекло, как кнопки поверх камеры —
    содержимое под ней видно (слегка размыто и затемнено), белый значок, блик сверху и светлый ободок */
-.glass-fab { position: fixed; right: 18px; bottom: calc(78px + env(safe-area-inset-bottom)); z-index: 21; width: 54px; height: 54px; border-radius: 50%;
+.glass-fab { position: fixed; right: 23px; bottom: calc(78px + env(safe-area-inset-bottom)); z-index: 21; width: 54px; height: 54px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer;
   background:
     radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.38) 0%, rgba(255,255,255,0) 50%),

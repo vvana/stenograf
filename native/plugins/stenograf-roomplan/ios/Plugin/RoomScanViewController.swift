@@ -454,7 +454,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     // MARK: проверка комнаты после скана
 
     /// Сводка по комнате: площадь, габариты, сколько стен/проёмов/предметов.
-    private func roomSummary(_ room: CapturedRoom) -> String {
+    /// Площадь пола («11.7 м²», nil — пол не распознан) и габариты комнаты («4.6 × 3.0 × 3.0 м», nil — нет стен).
+    private func roomSummary(_ room: CapturedRoom) -> (area: String?, dims: String?) {
         var minX = Float.greatestFiniteMagnitude, maxX = -Float.greatestFiniteMagnitude
         var minZ = Float.greatestFiniteMagnitude, maxZ = -Float.greatestFiniteMagnitude
         var height: Float = 0
@@ -468,16 +469,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
             height = max(height, w.dimensions.y)
         }
-        var lines: [String] = []
-        if !room.walls.isEmpty {
-            let a: Float = maxX - minX, b: Float = maxZ - minZ
-            var area: Float = 0
-            for f in room.floors { area += f.dimensions.x * f.dimensions.y }
-            let dims = String(format: "%.1f × %.1f × %.1f м", max(a, b), min(a, b), height)
-            lines.append(area > 0.5 ? String(format: "Пол ≈ %.1f м² · габариты %@", area, dims) : "Габариты \(dims)")
-        }
-        lines.append("Стен: \(room.walls.count) · дверей: \(room.doors.count) · окон: \(room.windows.count) · проходов: \(room.openings.count) · предметов: \(room.objects.count)")
-        return lines.joined(separator: "\n")
+        guard !room.walls.isEmpty else { return (nil, nil) }
+        let a: Float = maxX - minX, b: Float = maxZ - minZ
+        var area: Float = 0
+        for f in room.floors { area += f.dimensions.x * f.dimensions.y }
+        return (area > 0.5 ? String(format: "%.1f м²", area) : nil,
+                String(format: "%.1f × %.1f × %.1f м", max(a, b), min(a, b), height))
     }
 
     private func showReview(_ room: CapturedRoom) {
@@ -487,46 +484,110 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let n = capturedRooms.count + 1
         statusLabel.text = "Комната \(n): проверьте результат — модель можно покрутить пальцем"
 
-        let panel = UIView()
-        panel.backgroundColor = UIColor(white: 0.1, alpha: 0.88)
-        panel.layer.cornerRadius = 16
-        panel.translatesAutoresizingMaskIntoConstraints = false
+        // прозрачное (стеклянное) окно со сводкой: название, площадь и габариты, значки «стены · двери · окна» с числом;
+        // под ним — круглые стеклянные кнопки, как при скане: слева «повтор» (переснять), справа галочка (принять)
+        let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+        glass.layer.cornerRadius = 22
+        glass.layer.cornerCurve = .continuous
+        glass.layer.masksToBounds = true
+        glass.layer.borderWidth = 1
+        glass.layer.borderColor = UIColor(white: 1, alpha: 0.3).cgColor
+        glass.contentView.backgroundColor = UIColor(white: 0, alpha: 0.22)   // фон проверки светлый — без затемнения белый текст не читается
 
         let title = UILabel()
         title.text = "Комната \(n)"
         title.textColor = .white
         title.font = .systemFont(ofSize: 17, weight: .semibold)
 
-        let info = UILabel()
-        info.text = roomSummary(room)
-        info.textColor = UIColor(white: 0.85, alpha: 1)
-        info.font = .systemFont(ofSize: 14)
-        info.numberOfLines = 0
+        // площадь пола и габариты — значок + значение (вместо слов «Пол ≈» и «габариты»)
+        func measure(_ symbol: String, _ text: String, _ name: String) -> UIView {
+            let iv = UIImageView(image: UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)))
+            iv.tintColor = UIColor(white: 1, alpha: 0.85)
+            iv.contentMode = .scaleAspectFit
+            iv.setContentHuggingPriority(.required, for: .horizontal)
+            let l = UILabel()
+            l.text = text
+            l.textColor = UIColor(white: 1, alpha: 0.9)
+            l.font = .monospacedDigitSystemFont(ofSize: 15, weight: .regular)
+            let st = UIStackView(arrangedSubviews: [iv, l])
+            st.axis = .horizontal
+            st.spacing = 6
+            st.alignment = .center
+            st.isAccessibilityElement = true
+            st.accessibilityLabel = "\(name): \(text)"
+            return st
+        }
+        let sum = roomSummary(room)
+        let info = UIStackView()
+        info.axis = .horizontal
+        info.distribution = .equalSpacing
+        if let area = sum.area { info.addArrangedSubview(measure("square.fill", area, "Площадь пола")) }
+        if let dims = sum.dims { info.addArrangedSubview(measure("ruler", dims, "Габариты")) }
+        if info.arrangedSubviews.count == 1 { info.addArrangedSubview(UIView()) }   // одно значение — прижато влево
+        info.isHidden = info.arrangedSubviews.isEmpty
 
-        let redo = makeButton("Переснять", color: UIColor(white: 0.28, alpha: 1))
+        func stat(_ symbol: String, _ count: Int, _ name: String) -> UIView {
+            let iv = UIImageView(image: UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)))
+            iv.tintColor = .white
+            iv.contentMode = .scaleAspectFit
+            let l = UILabel()
+            l.text = "\(count)"
+            l.textColor = .white
+            l.font = .monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
+            let row = UIStackView(arrangedSubviews: [iv, l])
+            row.axis = .horizontal
+            row.spacing = 8
+            row.alignment = .center
+            let cap = UILabel()   // подпись под значком: «Стены», «Двери», «Окна»
+            cap.text = name
+            cap.textColor = UIColor(white: 1, alpha: 0.7)
+            cap.font = .systemFont(ofSize: 12)
+            let st = UIStackView(arrangedSubviews: [row, cap])
+            st.axis = .vertical
+            st.spacing = 3
+            st.alignment = .center
+            st.isAccessibilityElement = true
+            st.accessibilityLabel = "\(name): \(count)"
+            return st
+        }
+        let stats = UIStackView(arrangedSubviews: [
+            stat("rectangle.split.3x1", room.walls.count, "Стены"),
+            stat("door.left.hand.open", room.doors.count, "Двери"),
+            stat("window.vertical.closed", room.windows.count, "Окна"),
+        ])
+        stats.axis = .horizontal
+        stats.distribution = .equalSpacing
+
+        let stack = UIStackView(arrangedSubviews: [title, info, stats])
+        stack.axis = .vertical
+        stack.spacing = 10
+        stack.setCustomSpacing(14, after: info)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        glass.contentView.addSubview(stack)
+
+        let redo = GlassButton(symbol: "arrow.clockwise", label: "Переснять")
         redo.addTarget(self, action: #selector(rejectReviewTapped), for: .touchUpInside)
-        let ok = makeButton(pendingAction == "next" ? "Принять" : "Принять и сохранить", color: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
+        let ok = GlassButton(symbol: "checkmark", label: pendingAction == "next" ? "Принять" : "Принять и сохранить",
+                             tint: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
         ok.addTarget(self, action: #selector(acceptReviewTapped), for: .touchUpInside)
         let buttons = UIStackView(arrangedSubviews: [redo, ok])
         buttons.axis = .horizontal
-        buttons.distribution = .fillEqually
-        buttons.spacing = 10
-        buttons.heightAnchor.constraint(equalToConstant: 50).isActive = true
+        buttons.distribution = .equalSpacing
+        buttons.alignment = .center
 
-        let stack = UIStackView(arrangedSubviews: [title, info, buttons])
-        stack.axis = .vertical
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(stack)
+        let panel = UIStackView(arrangedSubviews: [glass, buttons])
+        panel.axis = .vertical
+        panel.spacing = 16
+        panel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(panel)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: panel.topAnchor, constant: 14),
-            stack.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -14),
-            panel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            panel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            panel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            stack.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -18),
+            stack.topAnchor.constraint(equalTo: glass.contentView.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -16),
+            panel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 28),
+            panel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -28),
+            panel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -14),
         ])
         reviewPanel = panel
     }
@@ -1311,7 +1372,7 @@ final class GlassButton: UIButton {
             ])
         }
         sendSubviewToBack(glass)
-        tintLayer.backgroundColor = tint?.withAlphaComponent(0.78) ?? UIColor(white: 1, alpha: 0.08)
+        tintLayer.backgroundColor = tint?.withAlphaComponent(0.78) ?? UIColor(white: 0, alpha: 0.18)   // лёгкое затемнение: белый значок читается и на светлом фоне
         layer.cornerRadius = Self.side / 2
         layer.cornerCurve = .continuous
         layer.masksToBounds = true
