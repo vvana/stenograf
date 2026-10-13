@@ -119,19 +119,21 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         sharedSession = captureView.captureSession.arSession
 
         let bar = UIStackView()
+        // круглые стеклянные кнопки по углам (просьба пользователя 2026-10-13, по образцу сканера с прозрачными кнопками):
+        // слева крестик — отмена, справа галочка — готово/сохранить; середина свободна для мини-модели RoomPlan
         bar.axis = .horizontal
-        bar.distribution = .fillEqually
-        bar.spacing = 10
+        bar.distribution = .equalSpacing
+        bar.alignment = .center
         bar.translatesAutoresizingMaskIntoConstraints = false
-        let cancel = makeButton("Отмена", color: UIColor(white: 0.2, alpha: 0.85))
+        let cancel = GlassButton(symbol: "xmark", label: "Отмена")
         cancel.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
         bar.addArrangedSubview(cancel)
         if isMulti {
-            nextButton = makeButton("Следующая", color: UIColor(white: 0.25, alpha: 0.9))
+            nextButton = GlassButton(title: "Следующая")
             nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
             bar.addArrangedSubview(nextButton)
         }
-        doneButton = makeButton(isMulti ? "Сохранить" : "Готово", color: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
+        doneButton = GlassButton(symbol: "checkmark", label: isMulti ? "Сохранить" : "Готово", tint: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
         bar.addArrangedSubview(doneButton)
         view.addSubview(bar)
@@ -149,10 +151,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         view.addSubview(statusLabel)
 
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            bar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            bar.heightAnchor.constraint(equalToConstant: 50),
+            bar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 28),
+            bar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -28),
+            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -14),
+            bar.heightAnchor.constraint(equalToConstant: GlassButton.side),
             statusLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             statusLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             statusLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
@@ -1286,4 +1288,66 @@ let keyFrames = input.keyFrames
     }
     let ply = plyData(positions: positions, colors: colors, faces: faces)
     return ["mesh": ply.base64EncodedString(), "meshVertices": positions.count, "meshFaces": faces.count / 3, "keyFrames": keyFrames.count]
+}
+
+/// Стеклянная кнопка поверх камеры: размытие фона (системный материал), светлый ободок, белый значок.
+/// Круглая со значком SF Symbols или капсула с текстом; `tint` — цветное стекло для главного действия.
+/// Нажатие — пружинное сжатие; выключенная — полупрозрачная.
+final class GlassButton: UIButton {
+    static let side: CGFloat = 62
+    private let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+    private let tintLayer = UIView()
+
+    init(symbol: String? = nil, title: String? = nil, label: String? = nil, tint: UIColor? = nil) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        for v in [glass, tintLayer] as [UIView] {
+            v.isUserInteractionEnabled = false
+            v.translatesAutoresizingMaskIntoConstraints = false
+            insertSubview(v, at: 0)
+            NSLayoutConstraint.activate([
+                v.leadingAnchor.constraint(equalTo: leadingAnchor), v.trailingAnchor.constraint(equalTo: trailingAnchor),
+                v.topAnchor.constraint(equalTo: topAnchor), v.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+        }
+        sendSubviewToBack(glass)
+        tintLayer.backgroundColor = tint?.withAlphaComponent(0.78) ?? UIColor(white: 1, alpha: 0.08)
+        layer.cornerRadius = Self.side / 2
+        layer.cornerCurve = .continuous
+        layer.masksToBounds = true
+        layer.borderWidth = 1
+        layer.borderColor = UIColor(white: 1, alpha: 0.38).cgColor
+        tintColor = .white
+        if let symbol = symbol {
+            let cfg = UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
+            setImage(UIImage(systemName: symbol, withConfiguration: cfg), for: .normal)
+            widthAnchor.constraint(equalToConstant: Self.side).isActive = true
+        }
+        if let title = title {
+            setTitle(title, for: .normal)
+            setTitleColor(.white, for: .normal)
+            titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
+        }
+        heightAnchor.constraint(equalToConstant: Self.side).isActive = true
+        accessibilityLabel = label ?? title
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if let iv = imageView { bringSubviewToFront(iv) }
+        if let tl = titleLabel { bringSubviewToFront(tl) }
+    }
+
+    override var isHighlighted: Bool {
+        didSet {
+            guard oldValue != isHighlighted else { return }
+            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.55, initialSpringVelocity: 0.6,
+                           options: [.allowUserInteraction, .beginFromCurrentState]) {
+                self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.88, y: 0.88) : .identity
+            }
+        }
+    }
+    override var isEnabled: Bool { didSet { alpha = isEnabled ? 1 : 0.45 } }
 }

@@ -2147,9 +2147,6 @@ async function viewStages(pid) {
   app.innerHTML = `
     ${header('Этапы ремонта', false)}
     <div class="pad">
-      <div class="stage-toolbar">
-        <button class="btn small-btn primary" id="add-stage">＋ Добавить</button>
-      </div>
       <div class="cards" id="stage-list">
         ${stages.map(s => `
           <div class="swipe" data-id="${s.id}">
@@ -2168,6 +2165,7 @@ async function viewStages(pid) {
       </div>
       ${stages.length ? '' : '<p class="mut center">Этапов пока нет. Нажмите «Добавить».</p>'}
     </div>
+    <button class="glass-fab" id="add-stage" title="Добавить этап" aria-label="Добавить этап"><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
     ${bottomNav(pid, 'stages')}`;
 
   lidarAvailable().then(ok => {
