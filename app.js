@@ -1984,16 +1984,38 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
 }
 
 /* ---------- обход этапа (лидар): экран «Этапы» и альбом этапа ---------- */
+// лист поверх экрана закрывается и смахиванием вниз: тянется за пальцем, дальше 80 px или резкий рывок — close()
+function swipeDownToClose(el, close) {
+  let sw = null;
+  el.addEventListener('touchstart', e => { sw = e.touches.length === 1 && el.scrollTop <= 0 ? { y: e.touches[0].clientY, t: Date.now(), dy: 0, on: false } : null; }, { passive: true });
+  el.addEventListener('touchmove', e => {
+    if (!sw) return;
+    const dy = e.touches[0].clientY - sw.y;
+    if (!sw.on && (dy < 6 || el.scrollTop > 0)) { if (dy < -6) sw = null; return; }
+    sw.on = true; sw.dy = Math.max(0, dy);
+    e.preventDefault();
+    el.style.transition = 'none'; el.style.transform = `translateY(${sw.dy}px)`;
+  }, { passive: false });
+  el.addEventListener('touchend', () => {
+    if (!sw || !sw.on) { sw = null; return; }
+    const fast = sw.dy / Math.max(1, Date.now() - sw.t) > 0.6;
+    el.style.transition = 'transform .18s ease';
+    if (sw.dy > 80 || (fast && sw.dy > 30)) { el.style.transform = 'translateY(100%)'; setTimeout(close, 180); }
+    else { el.style.transform = ''; setTimeout(() => { el.style.transition = ''; }, 180); }
+    sw = null;
+  });
+}
 // простой лист выбора поверх экрана; resolve(значение) или null при отмене
 function pickSheet(title, note, items) {
   return new Promise(resolve => {
     const host = document.createElement('div');
     host.className = 'plan-sheet tpl-sheet';
-    host.innerHTML = `<div class="sh-title">${esc(title)}</div>${note ? `<p class="mut small">${esc(note)}</p>` : ''}
+    host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">${esc(title)}</div>${note ? `<p class="mut small">${esc(note)}</p>` : ''}
       ${items.map((it, k) => `<button class="btn wide ${it.primary ? 'primary' : ''}" data-k="${k}">${it.html}</button>`).join('')}
       <button class="btn ghost wide" data-k="x">Отмена</button>`;
     document.body.appendChild(host);
     host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { host.remove(); resolve(b.dataset.k === 'x' ? null : items[+b.dataset.k].value); });
+    swipeDownToClose(host, () => { host.remove(); resolve(null); });
   });
 }
 async function stageWalk(pid, stageId = null) {
@@ -2010,7 +2032,7 @@ async function stageWalk(pid, stageId = null) {
   const askKind = () => new Promise(resolve => {
     const host = document.createElement('div');
     host.className = 'plan-sheet tpl-sheet walk-sheet';
-    host.innerHTML = `<div class="sh-title">Обход: ${esc(st.name)}</div>
+    host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">Обход: ${esc(st.name)}</div>
       <p class="mut small">Снятая область подсвечивается зелёным.</p>
       <label class="walk-hd"><input type="checkbox" id="walk-hd"><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>HD — с обработкой на компьютере</b>
         <span class="mut small">Кроме фото стен телефон снимет до 1000 кадров в полном разрешении (до ≈ 1 ГБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере.</span></span></label>
@@ -2024,6 +2046,7 @@ async function stageWalk(pid, stageId = null) {
       host.remove();
       resolve(b.dataset.k === 'x' ? null : hd ? 'hd' : 'std');
     });
+    swipeDownToClose(host, () => { host.remove(); resolve(null); });
   });
   const done = res => { if (res && res.hd) nav(`#/p/${pid}/hd/${st.id}`); else render(); };
   // схемы ещё нет — обход всей квартиры строит её сам: комнаты обмеряются и встают на схему, кадры стен ложатся на этап
@@ -2354,7 +2377,6 @@ async function viewStageAlbum(pid, stageId) {
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
       <button class="btn wide big-btn hidden" id="album-walk">${I('walk')}Начать обход</button>
-      ${stage.hint ? `<p class="mut small">${esc(stage.hint)}</p>` : ''}
       ${rooms.length ? `<div class="card where-card">
         <b>Где нужен этап</b>
         <div class="where-quick">
@@ -2369,9 +2391,7 @@ async function viewStageAlbum(pid, stageId) {
           ${k.src && k.kind !== 'room' ? `<span class="mut small where-src">${k.kind === 'bath' ? 'санузел' : 'кухня'} ${k.src}</span>` : ''}
         </label>`; }).join('')}
       </div>` : ''}
-      ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p>
-        <p class="mut">Снимайте на схеме: тап по стене → «Снять» у этапа «${esc(stage.name)}». Или «Начать обход» выше — лидар снимет стены сам.</p>
-        <button class="btn primary big-btn" data-nav="#/p/${pid}">Открыть схему</button></div>`}
+      ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p></div>`}
       ${groups.map(g => `<div class="album-group">
         <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side))} <span class="mut small">· ${g.list.length}</span> ›</div>
         ${thumbs(g.list)}
@@ -2379,6 +2399,7 @@ async function viewStageAlbum(pid, stageId) {
       ${orphans.length ? `<div class="album-group"><div class="album-title">Без привязки к стене <span class="mut small">· ${orphans.length}</span></div>${thumbs(orphans)}</div>` : ''}
     </div>
     <div id="viewer" class="viewer hidden"></div>
+    <button class="glass-fab left" id="album-close" title="К списку этапов" aria-label="Закрыть этап"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     ${bottomNav(pid, 'stages')}`;
 
   $('#rename-stage').onclick = async () => {
@@ -2412,6 +2433,7 @@ async function viewStageAlbum(pid, stageId) {
     saveRooms([...app.querySelectorAll('.where-row input')].filter(x => x.checked).map(x => x.dataset.room));
   });
   markQuick();
+  $('#album-close').onclick = () => nav(`#/p/${pid}/stages`);
   lidarAvailable().then(ok => { const b = $('#album-walk'); if (ok && b) { b.classList.remove('hidden'); b.onclick = () => stageWalk(pid, stage.id); } });
   $('#album-status').onclick = async () => {
     stage.status = ((stage.status || 0) + 1) % 3;

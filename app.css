@@ -901,13 +901,14 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
     radial-gradient(30% 70% at -4% 50%, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 70%),
     radial-gradient(30% 70% at 104% 50%, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 70%),
     radial-gradient(80% 45% at 50% -10%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 70%),
-    rgba(30, 26, 24, .48);
+    rgba(255, 255, 255, .16);
   -webkit-backdrop-filter: blur(3px) saturate(1.6); backdrop-filter: blur(3px) saturate(1.6);
   border: 1px solid rgba(255,255,255,.32);
   box-shadow: inset 0 1px 1px rgba(255,255,255,.42), inset 0 0 12px rgba(255,255,255,.12), 0 3px 12px rgba(30,25,15,.28);
   transition: transform .34s cubic-bezier(.3,1.35,.5,1), width .34s cubic-bezier(.3,1.35,.5,1); }
 .tour-modes button { position: relative; flex-direction: column; justify-content: center; gap: 2px; height: 54px; min-width: 78px; padding: 0 16px;
-  border: 0; border-radius: 999px; background: none; box-shadow: none; color: rgba(255,255,255,.82); font-size: 11px; transition: color .2s ease; }
+  border: 0; border-radius: 999px; background: none; box-shadow: none; color: rgba(255,255,255,.9); font-size: 11px; transition: color .2s ease; text-shadow: 0 1px 2px rgba(30,25,15,.35); }
+.tour-modes button .ic svg { filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.35)); }
 .tour-modes button .ic { width: 24px; height: 24px; display: flex; }
 .tour-modes button .ic svg { width: 24px; height: 24px; }
 .tour-modes button.active { background: none; color: #fff; border: 0; }
@@ -922,10 +923,12 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
 .walk-sheet .walk-hd input { position: absolute; opacity: 0; pointer-events: none; }
 .walk-sheet .wh-box { flex: none; width: 26px; height: 26px; border-radius: 8px; border: 2px solid var(--mut); display: flex; align-items: center; justify-content: center; color: transparent; transition: background .15s ease, border-color .15s ease; }
 .walk-sheet .wh-box svg { width: 18px; height: 18px; stroke-width: 3; }
-.walk-sheet .walk-hd input:checked + .wh-box { background: var(--acc); border-color: var(--acc); color: #fff; }
-.walk-sheet .walk-hd:has(input:checked) { border-color: var(--acc); }
+/* цвет включённой галочки — тот же светлый оранжевый, каким выглядит стеклянная кнопка ✓ (акцент #d95f18 здесь читался как красный) */
+.walk-sheet .walk-hd input:checked + .wh-box { background: #e48c59; border-color: #e48c59; color: #fff; }
+.walk-sheet .walk-hd:has(input:checked) { border-color: #e48c59; }
 .walk-sheet .wh-text { display: flex; flex-direction: column; gap: 4px; font-size: 15px; }
-.walk-sheet .walk-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding: 0 6px; }
+.walk-sheet { padding-bottom: calc(34px + env(safe-area-inset-bottom)); }   /* кнопки не у самого края экрана */
+.walk-sheet .walk-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding: 0 14px; }
 .round-btn { width: 58px; height: 58px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff;
   /* стекло: прозрачное, с бликом сверху, светлым ободком и затемнением по нижнему краю */
   background: radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.42) 0%, rgba(255,255,255,0) 52%), radial-gradient(70% 50% at 50% 115%, rgba(255,255,255,.26) 0%, rgba(255,255,255,0) 70%), rgba(74, 64, 54, .26);
@@ -936,3 +939,7 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
 .round-btn svg { filter: drop-shadow(0 1px 2px rgba(30,25,15,.35)); }
 .round-btn.go { background: radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.45) 0%, rgba(255,255,255,0) 52%), radial-gradient(70% 50% at 50% 115%, rgba(255,255,255,.28) 0%, rgba(255,255,255,0) 70%), rgba(217, 95, 24, .72); }
 .round-btn:active { transform: scale(.9); }
+/* стеклянный крестик слева внизу — закрыть альбом этапа и вернуться к списку этапов */
+.glass-fab.left { right: auto; left: 23px; }
+.glass-fab.left:active svg { transform: none; }
+#app:has(#album-close) .pad { padding-bottom: 80px; }
