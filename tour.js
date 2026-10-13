@@ -92,7 +92,7 @@ async function viewTour(pid, roomId = null) {
             <option value="all" ${tourState.stage === 'all' ? 'selected' : ''}>Сейчас — последние фото</option>
             ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
           </select>
-          <button id="tour-photos" class="tour-switch ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах"><span class="sw-track"><span class="sw-knob"></span></span></button>` : ''}
+          <button id="tour-photos" class="tour-pic ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах">${I('image')}</button>` : ''}
         </div>
       </div>
       <div class="tour-bottom">
@@ -655,7 +655,40 @@ async function viewTour(pid, roomId = null) {
     if (m === 'hd') loadHD().then(updateHint);
     updateHint(); drawPlan();
   }
-  app.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { look.yaw = 0; look.pitch = 0; if (b.dataset.mode === 'inside') tourState.eye = null; setMode(b.dataset.mode); }; });
+  const pickMode = m => { look.yaw = 0; look.pitch = 0; if (m === 'inside') tourState.eye = null; setMode(m); };
+  let segDragged = false;   // после перетаскивания плашки «клик» по кнопке под пальцем не нужен
+  app.querySelectorAll('[data-mode]').forEach(b => { b.onclick = () => { if (segDragged) { segDragged = false; return; } pickMode(b.dataset.mode); }; });
+  // переключатель режимов можно и перетаскивать: плашка едет за пальцем, по отпусканию встаёт под ближайший режим
+  const seg = app.querySelector('.tour-modes'), segThumb = $('#seg-thumb');
+  if (seg && segThumb) {
+    let d = null;
+    const btns = () => [...seg.querySelectorAll('[data-mode]')];
+    seg.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });   // не листать вкладки свайпом с переключателя
+    seg.addEventListener('pointerdown', e => {
+      const act = seg.querySelector('[data-mode].active');
+      d = { x: e.clientX, from: act ? act.offsetLeft - 4 : 0, on: false, id: e.pointerId };
+    });
+    seg.addEventListener('pointermove', e => {
+      if (!d || e.pointerId !== d.id) return;
+      const dx = e.clientX - d.x;
+      if (!d.on) { if (Math.abs(dx) < 6) return; d.on = true; try { seg.setPointerCapture(e.pointerId); } catch {} segThumb.style.transition = 'none'; }
+      const max = seg.clientWidth - 8 - segThumb.offsetWidth;
+      d.pos = Math.max(0, Math.min(max, d.from + dx));
+      segThumb.style.transform = `translateX(${d.pos}px)`;
+    });
+    const end = e => {
+      if (!d || e.pointerId !== d.id) return;
+      const was = d; d = null;
+      if (!was.on) return;
+      segThumb.style.transition = '';
+      const mid = was.pos + segThumb.offsetWidth / 2 + 4;
+      const best = btns().reduce((a, b) => Math.abs(b.offsetLeft + b.offsetWidth / 2 - mid) < Math.abs(a.offsetLeft + a.offsetWidth / 2 - mid) ? b : a);
+      segDragged = true; setTimeout(() => { segDragged = false; }, 350);
+      if (best.dataset.mode === tourState.mode) updateHint(); else pickMode(best.dataset.mode);   // вернуть плашку на место или переключить
+    };
+    seg.addEventListener('pointerup', end);
+    seg.addEventListener('pointercancel', end);
+  }
   const rpBtn = app.querySelector('#tour-rp');
   if (rpBtn) rpBtn.onclick = () => {
     const list = roomPlanModels(project, rooms);

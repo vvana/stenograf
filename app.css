@@ -941,3 +941,26 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
 .glass-fab.left { right: auto; left: 23px; }
 .glass-fab.left:active svg { transform: none; }
 #app:has(#album-close) .pad { padding-bottom: 80px; }
+.tour-modes { touch-action: none; }   /* плашку переключателя можно перетаскивать пальцем */
+/* 3D: поле этапа (и надпись «Фото пока нет») — по центру экрана, текст надписи по центру поля */
+.tour-row { align-self: center; width: 100%; }
+.tour-top .tour-nophoto { justify-content: center; }
+.tour-row select.inp { text-align: center; text-align-last: center; }   /* название этапа — по центру поля, как и «Фото пока нет» */
+/* 3D: ползунок фото этапа — без белой плашки вокруг, только овал и кружок (просьба пользователя 2026-10-13) */
+.tour-switch { border: 0; background: none; box-shadow: none; padding: 0 4px; }
+.tour-switch .sw-track { background: rgba(74, 64, 54, .26); box-shadow: inset 0 1px 2px rgba(30,25,15,.12); }
+.tour-switch.active .sw-track { background: var(--acc); }
+/* 3D: круглая кнопка «фото этапа на стенах», как кнопки пункта управления iOS (образец пользователя 2026-10-13):
+   выключена — тёмное прозрачное стекло с белым значком, включена — белый круг с цветным значком */
+.tour-pic { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto;
+  /* выключена — то же светлое стекло, что у капсулы переключателя режимов (невыбранная половина) */
+  color: rgba(255,255,255,.9); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .17);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 18px rgba(30,25,15,.12), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.06);
+  transition: background-color .22s ease, color .22s ease, transform .28s cubic-bezier(.3,1.6,.5,1), box-shadow .22s ease; }
+.tour-pic .ic { margin: 0; width: 24px; height: 24px; display: flex; }
+.tour-pic .ic svg { width: 24px; height: 24px; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.tour-pic.active .ic svg { filter: none; }
+.tour-pic.active { background: #fff; color: var(--acc); border-color: #fff; box-shadow: 0 4px 14px rgba(30,25,15,.20), 0 0 0 4px rgba(255,255,255,.35); }
+.tour-pic:active { transform: scale(.9); }
