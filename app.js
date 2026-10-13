@@ -1028,6 +1028,7 @@ const ICONS = {
   trash: svgIco('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
   scan: svgIco('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8M12 8v8" opacity=".9"/>'),
   eye: svgIco('<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  person: svgIco('<circle cx="12" cy="4.8" r="2.3"/><path d="M12 8v7M7.5 11.5L12 9l4.5 2.5M9 21.5l3-6.5 3 6.5"/>'),
   eyeOff: svgIco('<path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.2 3.9M6.6 6.6C3.7 8.4 2 12 2 12s3.5 6 10 6a9.8 9.8 0 0 0 4.4-1"/>'),
   flag: svgIco('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
   ar: svgIco('<path d="M12 7l5 2.8v5.4L12 18l-5-2.8V9.8L12 7z"/><path d="M7 9.8l5 2.8 5-2.8M12 12.6V18"/><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3"/>'),

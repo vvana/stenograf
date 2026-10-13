@@ -367,6 +367,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func confirmCancelAll() {
         let n = capturedRooms.count + (reviewRoom != nil ? 1 : 0)
+        // второй вопрос — только когда есть что терять (уже отсканированные комнаты); иначе закрываем сразу
+        if n == 0 { cancelAll(); return }
         let ac = UIAlertController(title: "Отменить весь обмер?",
                                    message: n > 0 ? "Будут потеряны все отсканированные комнаты (\(n)) и текущая." : "Скан будет закрыт без сохранения.",
                                    preferredStyle: .alert)
@@ -396,7 +398,28 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         dismiss(animated: true) { self.completion(.failure(ScanError.cancelled)) }
     }
 
+    /// Стен меньше трёх — комнату из такого скана не собрать. Говорим сразу, в сканере, пока можно доснять
+    /// (раньше об этом узнавали только после закрытия сканера и ввода названия). true — можно продолжать.
+    private var skipWallCheck = false
+    private func confirmWalls(proceed: @escaping () -> Void) -> Bool {
+        if skipWallCheck { return true }   // «Всё равно завершить» — до следующей комнаты больше не спрашиваем
+        guard mode != "ghost" else { return true }
+        let n = latestRoom?.walls.filter { $0.dimensions.x > 0.15 }.count ?? 0
+        if n >= 3 { return true }
+        let ac = UIAlertController(title: "Мало стен",
+                                   message: "Найдено стен: \(n). Чтобы построить комнату, нужно минимум три — обойдите комнату вдоль стен, заглядывая в углы.",
+                                   preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "Продолжить скан", style: .cancel))
+        ac.addAction(UIAlertAction(title: "Всё равно завершить", style: .destructive) { [weak self] _ in
+            self?.skipWallCheck = true
+            proceed()
+        })
+        present(ac, animated: true)
+        return false
+    }
+
     @objc private func nextTapped() {
+        guard confirmWalls(proceed: { [weak self] in self?.nextTapped() }) else { return }
         guard confirmCoverage(currentOnly: true, proceed: { [weak self] in self?.nextTapped() }) else { return }
         pendingAction = "next"
         nextButton.isEnabled = false; doneButton.isEnabled = false
@@ -405,6 +428,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     }
 
     @objc private func doneTapped() {
+        guard confirmWalls(proceed: { [weak self] in self?.doneTapped() }) else { return }
         guard confirmCoverage(currentOnly: false, proceed: { [weak self] in self?.doneTapped() }) else { return }
         pendingAction = "done"
         if !isMulti { pollTimer?.invalidate(); pollTimer = nil; stopCoverage() }
@@ -559,6 +583,15 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         stats.distribution = .equalSpacing
 
         let stack = UIStackView(arrangedSubviews: [title, info, stats])
+        // из комнаты, где стен меньше трёх, схему не собрать — говорим об этом здесь же, а не молча пропускаем потом
+        if room.walls.filter({ $0.dimensions.x > 0.15 }).count < 3 {
+            let warn = UILabel()
+            warn.text = "Стен меньше трёх — такая комната на схему не попадёт. Лучше переснять."
+            warn.textColor = UIColor(red: 1, green: 0.78, blue: 0.45, alpha: 1)
+            warn.font = .systemFont(ofSize: 14, weight: .semibold)
+            warn.numberOfLines = 0
+            stack.addArrangedSubview(warn)
+        }
         stack.axis = .vertical
         stack.spacing = 10
         stack.setCustomSpacing(14, after: info)
@@ -633,6 +666,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func startNextRoom() {
         guard let session = sharedSession else { return }
+        skipWallCheck = false
         captureView.removeFromSuperview()
         let cv = RoomCaptureView(frame: view.bounds, arSession: session)
         cv.autoresizingMask = [.flexibleWidth, .flexibleHeight]

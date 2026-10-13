@@ -94,15 +94,16 @@ async function viewTour(pid, roomId = null) {
           </select>
           <button id="tour-photos" class="tour-switch ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах"><span class="sw-track"><span class="sw-knob"></span></span></button>` : ''}
         </div>
-        <div class="tour-modes">
-          <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}Объект</button>
-          <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('eye')}Внутри</button>
-          ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}HD</button>` : ''}
-          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}Финал</button>` : ''}
-          ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
-        </div>
       </div>
       <div class="tour-bottom">
+        <div class="tour-modes">
+          <span class="seg-thumb" id="seg-thumb"></span>
+          <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}<span>Объект</span></button>
+          <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('person')}<span>Внутри</span></button>
+          ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}<span>HD</span></button>` : ''}
+          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}<span>Финал</span></button>` : ''}
+          ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
+        </div>
         <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
         <div class="tour-plan" id="tour-plan"></div>
       </div>
@@ -499,16 +500,26 @@ async function viewTour(pid, roomId = null) {
     const r = canvas.parentElement.getBoundingClientRect();
     const w = Math.max(1, Math.floor(r.width)), h = Math.max(1, Math.floor(r.height));
     renderer.setSize(w, h, false);
-    camera.aspect = w / h; camera.updateProjectionMatrix();
+    camera.aspect = w / h;
+    // «Объект»: картинка сдвинута вверх так, чтобы модель стояла по центру свободной части экрана —
+    // между кнопками сверху и мини-планом снизу (иначе низ модели закрывался мини-планом)
+    if (orbitMode()) { const f = freeArea(); camera.setViewOffset(w, h, 0, Math.round((f.bot - f.top) / 2), w, h); }
+    else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
     // стартовый масштаб: квартира целиком помещается в свободную часть экрана (ниже кнопок сверху, с полями по краям)
     if (!orbit.userZoom) orbit.radius = orbitMode() ? fitRadius(w, h) : span * 1.55 * Math.max(1, 0.85 / (w / h));
   }
   // подбор расстояния камеры: углы габарита квартиры (с высотой стен) должны попасть в кадр
-  function fitRadius(w, h) {
+  // занятое сверху (кнопки) и снизу (мини-план над нижним меню), px от краёв сцены
+  function freeArea() {
     const box = canvas.parentElement.getBoundingClientRect(), top = canvas.parentElement.querySelector('.tour-top');
-    const topPx = top ? top.getBoundingClientRect().bottom - box.top + 10 : 60;
-    const nav = document.querySelector('.bottomnav'), navPx = nav ? box.bottom - nav.getBoundingClientRect().top : 0; // сцена уходит под нижнее меню
-    const yTop = 1 - 2 * topPx / h, yBot = -1 + 2 * (navPx + 24) / h, xLim = 1 - 2 * 14 / w;
+    const plan = canvas.parentElement.querySelector('.tour-plan'), nav = document.querySelector('.bottomnav');
+    const low = plan && plan.getBoundingClientRect().height ? plan : nav;   // сцена уходит под нижнее меню
+    return { top: top ? top.getBoundingClientRect().bottom - box.top + 10 : 60, bot: low ? box.bottom - low.getBoundingClientRect().top + 10 : 24 };
+  }
+  function fitRadius(w, h) {
+    const f = freeArea();
+    const yTop = 1 - 2 * f.top / h, yBot = -1 + 2 * f.bot / h, xLim = 1 - 2 * 14 / w;
     const hMax = Math.max(2.5, ...rooms.map(roomCeil)), pad = 0.2, pts = [];
     for (const x of [minX - pad, maxX + pad]) for (const z of [minZ - pad, maxZ + pad]) for (const y of [0, hMax]) pts.push(new THREE.Vector3(x, y, z));
     const v = new THREE.Vector3(), saved = orbit.radius;
@@ -623,6 +634,9 @@ async function viewTour(pid, roomId = null) {
     if (tourState.mode === 'hd') hint.textContent = `HD-скан${hdStage() ? ': ' + hdStage().name : ''}. Крутите пальцем, щипок — масштаб.`;
     if (tourState.mode === 'final') hint.textContent = `Финальный скан: ${project.finalScan ? (project.finalScan.vertices || 0) + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
+    // стеклянный переключатель режимов: светлая «плашка» переезжает под выбранный режим
+    const th = $('#seg-thumb'), act = app.querySelector('[data-mode].active');
+    if (th && act) { th.style.width = `${act.offsetWidth}px`; th.style.transform = `translateX(${act.offsetLeft - 4}px)`; th.style.opacity = 1; }
     const pb = $('#tour-photos'); if (pb) pb.classList.toggle('active', tourState.photos);
     const isHD = tourState.mode === 'hd';
     const isFinal = tourState.mode === 'final' || isHD, isInside = tourState.mode === 'inside';
@@ -636,6 +650,7 @@ async function viewTour(pid, roomId = null) {
   }
   function setMode(m) {
     tourState.mode = m;
+    resize();   // сдвиг картинки вверх нужен только в «Объекте»
     if (m === 'final') loadFinal().then(updateHint);
     if (m === 'hd') loadHD().then(updateHint);
     updateHint(); drawPlan();

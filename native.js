@@ -105,8 +105,32 @@ function scanToPolygon(scan) {
     if (!best || best.d > 1.0) break;
     chain.push({ ...best.w, rev: best.rev }); used.add(best.w.id);
   }
-  if (chain.length < 3) return null;
   const endsOf = c => c.rev ? [c.b, c.a] : [c.a, c.b];
+  // цепочка могла начаться с середины (самая длинная стена — средняя из трёх буквой «П»): наращиваем и от её начала
+  while (chain.length < walls.length) {
+    const start = endsOf(chain[0])[0];
+    let best = null;
+    for (const w of walls) {
+      if (used.has(w.id)) continue;
+      const da = dist2(start, w.a), db = dist2(start, w.b);
+      const d = Math.min(da, db);
+      if (!best || d < best.d) best = { w, d, rev: da < db };   // к началу цепочки примыкает конец новой стены
+    }
+    if (!best || best.d > 1.0) break;
+    chain.unshift({ ...best.w, rev: best.rev }); used.add(best.w.id);
+  }
+  if (chain.length < 3) return null;
+  // контур не замкнут (одну сторону не отсканировали) — замыкаем условной стеной между свободными концами,
+  // иначе углы у разрыва считались бы серединой между концами и комната выходила бы клином
+  let open = false;
+  {
+    const s0 = endsOf(chain[0])[0], eN = endsOf(chain[chain.length - 1])[1];
+    const gap = dist2(s0, eN);
+    if (gap > 1.0) {
+      open = true;
+      chain.push({ id: 'gap-' + Date.now().toString(36), a: eN, b: s0, len: gap, h: median(walls.map(w => w.h)), curve: null, top: null, rev: false, virtual: true });
+    }
+  }
   const dirOf = c => { const [p, q] = endsOf(c); const l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1; return [(q[0] - p[0]) / l, (q[1] - p[1]) / l]; };
   // скруглённая стена (curve) между двумя непараллельными прямыми → радиусный угол на их пересечении
   for (let k = 0; k < chain.length && chain.length > 3; k++) {
@@ -127,7 +151,7 @@ function scanToPolygon(scan) {
     const p = lineIntersect(pA, pB, cA, cB) || [(pB[0] + cA[0]) / 2, (pB[1] + cA[1]) / 2];
     pts.push(chain[i].radIn ? [p[0], p[1], +chain[i].radIn.toFixed(3)] : p);
   }
-  let res = { pts, chain, ceil: cm(median(walls.map(w => w.h))) || 2.7 };
+  let res = { pts, chain, open, ceil: cm(median(walls.map(w => w.h))) || 2.7 };
   if (polyArea(pts) < 0) res = reversePolygon(res); // по часовой на экране — как рисует редактор
   return res;
 }
@@ -612,11 +636,14 @@ async function lidarMeasure(pid, rooms, room) {
   let scan;
   try { scan = await Native.RP.scan({ mode: 'measure' }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
+  // сначала проверяем сам скан — нет смысла спрашивать название, если комнату из него не собрать
+  if (!scanToPolygon(scan)) throw new Error('В скане меньше трёх стен — обойдите комнату полностью');
   const name = room ? null : (prompt('Название комнаты:', 'Комната ' + (rooms.length + 1)) || null);
   const { room: r, idMap, turn } = await applyScan(pid, rooms, room, scan, name);
   await saveNorth(pid, scan, turn);
   if (scan.usdz) { r.usdz = await b64Blob(scan.usdz, 'model/vnd.usdz+zip'); r.usdzAt = Date.now(); await dbPut('rooms', r); }
-  toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м`);
+  const open = (scanToPolygon(scan) || {}).open;
+  toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м${open ? ' · одна сторона не отсканирована — замкнута прямой' : ''}`);
   const res = scanToPolygon(scan);
   if (res) await proposeMirrors(r, scan, res, idMap);
   return r;
