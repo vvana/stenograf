@@ -514,7 +514,7 @@ function openPhotoEditor(photo, ctx) {
   function hideEraseBar() { const bar = v.querySelector('#erase-bar'); if (bar) bar.classList.add('hidden'); }
   async function applyErase() {
     if (!eraseStrokes.length) return toast('Сначала закрасьте область');
-    if (!confirm('Стереть закрашенное? Исходное фото сохранится в истории (⋯ → «Вернуть оригинал»).')) return;
+    if (!await uiConfirm('Стереть закрашенное? Исходное фото сохранится в истории (⋯ → «Вернуть оригинал»).')) return;
     const mode = v.querySelector('#er-mode').value;
     toast('Стираю…');
     try {
@@ -591,8 +591,8 @@ function openPhotoEditor(photo, ctx) {
       s.querySelectorAll('[data-layer]').forEach(cb => cb.onchange = () => {
         cb.checked ? hidden.delete(cb.dataset.layer) : hidden.add(cb.dataset.layer); draw();
       });
-      s.querySelector('#sh-clear-draft').onclick = () => {
-        if (!confirm(`Удалить все пометки черновика (${draftCount})?`)) return;
+      s.querySelector('#sh-clear-draft').onclick = async () => {
+        if (!await uiConfirm(`Удалить все пометки черновика (${draftCount})?`)) return;
         photo.marks = photo.marks.filter(m => m.layer !== 'draft'); hideSheet(); save(); toast('Черновик очищен');
       };
     });
@@ -610,23 +610,23 @@ function openPhotoEditor(photo, ctx) {
       <button class="btn wide" id="sh-move">Перенести в ${m.layer === 'draft' ? 'основной слой' : 'черновик'}</button>
       <button class="btn danger wide" id="sh-del">Удалить</button>`, s => {
       const dn = s.querySelector('#sh-done');
-      if (dn) dn.onclick = () => {
+      if (dn) dn.onclick = async () => {
         if (m.done) { delete m.done; delete m.doneBy; delete m.doneAt; }
-        else { m.done = true; m.doneBy = userName(true); m.doneAt = Date.now(); }
+        else { m.done = true; m.doneBy = await userNameAsk(); m.doneAt = Date.now(); }
         hideSheet(); save();
       };
       const cp = s.querySelector('#sh-cprops');
       if (cp) cp.onclick = () => { hideSheet(); conduitProps(m); };
       const e = s.querySelector('#sh-edit');
-      if (e) e.onclick = () => {
-        const t = prompt('Текст:', m.type === 'text' ? m.text : (m.note || ''));
+      if (e) e.onclick = async () => {
+        const t = await uiPrompt('Текст:', m.type === 'text' ? m.text : (m.note || ''));
         if (t === null) return;
         if (m.type === 'text') m.text = t.trim(); else m.note = t.trim();
         hideSheet(); save();
       };
       const vb = s.querySelector('#sh-val');
-      if (vb) vb.onclick = () => {
-        const t = prompt('Длина, см (пусто — считать по калибровке):', m.val || '');
+      if (vb) vb.onclick = async () => {
+        const t = await uiPrompt('Длина, см (пусто — считать по калибровке):', m.val || '');
         if (t === null) return;
         const n = parseFloat(String(t).replace(',', '.'));
         if (n > 0) m.val = n; else delete m.val;
@@ -725,25 +725,25 @@ function openPhotoEditor(photo, ctx) {
       if (tmp.length === 2) {
         const m = { id: uid(), type: 'dim', layer, a: tmp[0], b: tmp[1], by: userName() };
         if (!measurer) {
-          const t = prompt('Нет калибровки. Длина отрезка, см:');
+          const t = await uiPrompt('Нет калибровки. Длина отрезка, см:');
           const n = parseFloat(String(t || '').replace(',', '.'));
           if (n > 0) m.val = n;
         }
         photo.marks.push(m); tmp = []; await save();
       }
     } else if (tool === 'text') {
-      const t = prompt('Заметка:');
+      const t = await uiPrompt('Заметка:');
       if (t && t.trim()) { photo.marks.push({ id: uid(), type: 'text', layer, at: p, text: t.trim(), by: userName() }); await save(); }
     } else if (tool === 'point') {
       if (!pendingKind) return sheetKinds();
-      const t = prompt(`${kindOf(pendingKind)[2]} — комментарий (можно пусто):`, '');
+      const t = await uiPrompt(`${kindOf(pendingKind)[2]} — комментарий (можно пусто):`, '');
       if (t === null) return;
       photo.marks.push({ id: uid(), type: 'point', layer, at: p, kind: pendingKind, note: t.trim(), by: userName() });
       await save();
     } else if (tool === 'calib-ruler') {
       tmp.push(p);
       if (tmp.length === 2) {
-        const t = prompt('Длина эталона между точками, см:', '100');
+        const t = await uiPrompt('Длина эталона между точками, см:', '100');
         const n = parseFloat(String(t || '').replace(',', '.'));
         if (n > 0) { photo.calib = { type: 'ruler', a: tmp[0], b: tmp[1], len: n / 100 }; toast('Калибровка по эталону сохранена'); }
         tmp = []; setTool(null); await save(); updateHint();
@@ -753,9 +753,9 @@ function openPhotoEditor(photo, ctx) {
       tmp.push(p);
       if (tmp.length === 4) {
         const ws = ctx.wallSize || {};
-        const tw = prompt('Ширина стены, м:', ws.w ? String(ws.w).replace('.', ',') : '');
+        const tw = await uiPrompt('Ширина стены, м:', ws.w ? String(ws.w).replace('.', ',') : '');
         const w = parseFloat(String(tw || '').replace(',', '.'));
-        const th = w > 0 ? prompt('Высота стены (потолка), м:', ws.h ? String(ws.h).replace('.', ',') : '2,7') : null;
+        const th = w > 0 ? await uiPrompt('Высота стены (потолка), м:', ws.h ? String(ws.h).replace('.', ',') : '2,7') : null;
         const h = parseFloat(String(th || '').replace(',', '.'));
         if (w > 0 && h > 0) { photo.calib = { type: 'quad', pts: tmp.slice(), w, h }; toast('Калибровка по 4 углам сохранена'); }
         tmp = []; setTool(null); await save(); updateHint();
@@ -777,19 +777,19 @@ function openPhotoEditor(photo, ctx) {
     <button class="btn danger wide" id="sh-delphoto">Удалить фото</button>`, s => {
     const rs = s.querySelector('#sh-restore');
     if (rs) rs.onclick = async () => {
-      if (!confirm('Вернуть исходное фото? Стёртые области появятся снова.')) return;
+      if (!await uiConfirm('Вернуть исходное фото? Стёртые области появятся снова.')) return;
       photo.blob = photo.original; delete photo.original;
       await dbPut('photos', photo); hideSheet();
       img.src = newURL(photo.blob); toast('Оригинал восстановлен');
     };
     s.querySelector('#sh-note').onclick = async () => {
-      const t = prompt('Заметка к фото:', photo.note || '');
+      const t = await uiPrompt('Заметка к фото:', photo.note || '');
       if (t === null) return;
       photo.note = t.trim(); hideSheet(); await save();
     };
     s.querySelector('#sh-ghost').onclick = () => { hideSheet(); if (ctx.onGhost) ctx.onGhost(photo); };
     s.querySelector('#sh-delphoto').onclick = async () => {
-      if (!confirm('Удалить это фото безвозвратно?')) return;
+      if (!await uiConfirm('Удалить это фото безвозвратно?')) return;
       await dbDel('photos', photo.id); close();
     };
   });

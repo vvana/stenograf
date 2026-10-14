@@ -546,7 +546,7 @@ async function calcPdf(project, areas, c) {
   const name = `${project.name || 'Объект'} — работы и материалы`;
   if (Native.RP && Native.RP.htmlPdf) {
     try { await Native.RP.htmlPdf({ html, name }); return; }
-    catch (err) { if (!/not implemented|не реализ|UNIMPLEMENTED/i.test(String(err && (err.code || err.message)))) { alert('PDF не получился: ' + (err.message || err)); return; } }
+    catch (err) { if (!/not implemented|не реализ|UNIMPLEMENTED/i.test(String(err && (err.code || err.message)))) { uiAlert('PDF не получился: ' + (err.message || err)); return; } }
   }
   // браузер (или старая сборка без метода): печать скрытой страницы → «Сохранить как PDF»
   const fr = document.createElement('iframe');

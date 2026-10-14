@@ -55,11 +55,16 @@ function wallBaseName(room, side) {
 }
 
 // имя/роль для подписи фото и пометок (хранится на устройстве)
-function userName(ask = false) {
+function userName() {
   let n = '';
   try { n = localStorage.getItem('stenograf.user') || ''; } catch {}
-  if (!n && ask) {
-    const t = prompt('Как вас подписывать на фото и пометках? Например «Сергей, электрик»', '');
+  return n;
+}
+// то же, но если имя не задано — спросить (окно асинхронное)
+async function userNameAsk() {
+  let n = userName();
+  if (!n) {
+    const t = await uiPrompt('Как вас подписывать на фото и пометках? Например «Сергей, электрик»', '');
     if (t && t.trim()) { n = t.trim(); try { localStorage.setItem('stenograf.user', n); } catch {} }
   }
   return n;
@@ -410,14 +415,14 @@ async function viewProjects() {
     e.stopPropagation();
     const p = projects.find(x => x.id === b.dataset.rename);
     if (!p) return;
-    const name = prompt('Название объекта:', p.name);
+    const name = await uiPrompt('Название объекта:', p.name);
     if (!name || !name.trim()) return;
     p.name = name.trim();
     await dbPut('projects', p); render();
   });
 
   $('#add-project').onclick = async () => {
-    const name = prompt('Название объекта (например, «Квартира на Ленина»):');
+    const name = await uiPrompt('Название объекта (например, «Квартира на Ленина»):');
     if (!name || !name.trim()) return;
     // без выбора шаблона: один этап «Исходное состояние», дальше пользователь добавляет свои
     const p = { id: uid(), name: name.trim(), created: Date.now(), template: 'custom' };
@@ -756,7 +761,7 @@ async function viewPlan(pid) {
         <button class="pa-btn pa-scan2 ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
         <button class="pa-btn pa-scan ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
         ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Создать</span></button><span class="pa-btn pa-spacer ${lidarNow ? '' : 'hidden'}" aria-hidden="true"></span>` : ''}
-        <button class="pa-btn ${planState.edit ? 'active' : ''}" id="toggle-edit" title="Редактор схемы">
+        <button class="pa-btn ${planState.edit ? 'active' : ''} ${lidarNow && !planState.edit ? 'hidden' : ''}" id="toggle-edit" title="Редактор схемы">
           <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
         ${planState.edit ? `<!-- выбрана комната: «Размеры» и «Мебель» на месте «Создать» -->
         <span id="room-tools" class="tools hidden">
@@ -786,6 +791,8 @@ async function viewPlan(pid) {
         <label class="len-float hidden" id="w-len-wrap"><input id="w-len" class="inp num" type="text" inputmode="decimal" autocomplete="off" aria-label="Длина стены, м"><i>м</i></label>` : ''}
         ${planState.edit ? '<div class="plan-edit-badge"><span id="plan-badge-text">Редактирование</span></div>' : ''}
         ${project.north && rooms.length ? `<div class="plan-north" id="plan-north" title="Север${project.north.true ? '' : ' (магнитный)'} — по компасу при обмере"><svg viewBox="-20 -24 40 44"><path d="M0 -13L5 0H-5z" class="pn-n"/><path d="M0 13L-5 0H5z" class="pn-s"/><text x="0" y="-16" class="pn-t">С</text></svg></div>` : ''}
+        ${lidarNow && !planState.edit ? `<!-- с лидаром «Редактор» — стеклянной кнопкой в углу схемы, на одном уровне с «Отправить» (просьба пользователя 2026-10-14) -->
+        <button class="plan-glass-edit" id="toggle-edit-in" title="Редактор схемы"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>Редактор</span></button>` : ''}
         <div class="plan-tools">
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool ${planUndo.stack.length ? '' : 'hidden'}" id="plan-undo" title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
@@ -813,6 +820,7 @@ async function viewPlan(pid) {
     ${bottomNav(pid, 'plan')}`;
 
   $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; planUndo.stack = []; resetPlanView(); render(); };
+  if ($('#toggle-edit-in')) $('#toggle-edit-in').onclick = () => $('#toggle-edit').onclick();
   const shotsBtn = $('#toggle-shots');
   if (shotsBtn) shotsBtn.onclick = () => { planState.shots = !planState.shots; render(); };
   app.querySelectorAll('[data-shot-stage]').forEach(b => b.onclick = () => { planState.shotStage = b.dataset.shotStage; render(); });
@@ -828,7 +836,7 @@ async function viewPlan(pid) {
       onClose: render,
       onGhost: async p => {
         if (room && await lidarAvailable()) {
-          try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { alert('AR-призрак не удался: ' + err.message); }
+          try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { uiAlert('AR-призрак не удался: ' + err.message); }
           return;
         }
         nav(`#/p/${pid}/ghost/${encodeURIComponent(photo.wallKey)}/${p.id}`);
@@ -1378,7 +1386,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   async function renameRoom(id) {
     const room = rooms.find(r => r.id === id);
     if (!room) return;
-    const name = prompt('Название комнаты:', room.name);
+    const name = await uiPrompt('Название комнаты:', room.name);
     if (!name || !name.trim() || name.trim() === room.name) return;
     pushUndo();
     room.name = name.trim();
@@ -1621,7 +1629,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       tmp.push([w.x, w.y]); draw(); updateTools();
       if (tmp.length < 2) return;
       const d = Math.hypot(tmp[1][0] - tmp[0][0], tmp[1][1] - tmp[0][1]);
-      const t = prompt('Реальная длина этого отрезка, м:', '');
+      const t = await uiPrompt('Реальная длина этого отрезка, м:', '');
       const L = parseFloat(String(t || '').replace(',', '.'));
       if (L > 0 && d > 0.01) {
         pushUndo();
@@ -1652,7 +1660,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   async function finishTrace() {
     const tmp = planState.tmp;
     if (tmp.length < 3) return toast('Нужно хотя бы 3 угла');
-    const name = prompt('Название комнаты:', 'Комната ' + (rooms.length + 1));
+    const name = await uiPrompt('Название комнаты:', 'Комната ' + (rooms.length + 1));
     if (name === null) return;
     planState.lengthsNext = true; // после перерисовки — окно длин стен новой комнаты
     pushUndo();
@@ -1692,7 +1700,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         const msg = photos.length
           ? `Удалить комнату «${room.name}»? Вместе с ней удалятся ${photos.length} фото её стен!`
           : `Удалить комнату «${room.name}»?`;
-        if (!confirm(msg)) return;
+        if (!await uiConfirm(msg)) return;
         pushUndo({ photos });
         for (const p of photos) await dbDel('photos', p.id);
         await dbDel('rooms', room.id);
@@ -1805,9 +1813,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         if (!ok || !rb) return;
         rb.classList.remove('hidden');
         rb.onclick = async () => {
-          if (!confirm(`Переобмерить «${r.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
+          if (!await uiConfirm(`Переобмерить «${r.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
           hideSheet();
-          try { await lidarMeasure(pid, rooms, r); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
+          try { await lidarMeasure(pid, rooms, r); render(); } catch (err) { uiAlert('Обмер не удался: ' + err.message); }
         };
       });
     });
@@ -1837,7 +1845,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       });
       sh.querySelectorAll('[data-fdel]').forEach(b => b.onclick = async () => {
         const k = +b.dataset.fdel;
-        if (!confirm(`Удалить «${furnName(list[k])}» со схемы и из 3D?`)) return;
+        if (!await uiConfirm(`Удалить «${furnName(list[k])}» со схемы и из 3D?`)) return;
         pushUndo();
         list.splice(k, 1); room.objects = list;
         await dbPut('rooms', room); hideSheet(); render();
@@ -1861,7 +1869,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       if (q('#ps-move')) q('#ps-move').onclick = () => { hideSheet(); setMode('underlay'); };
       if (q('#ps-toggle')) q('#ps-toggle').onclick = () => { planState.underlayHidden = !planState.underlayHidden; hideSheet(); render(); };
       if (q('#ps-del')) q('#ps-del').onclick = async () => {
-        if (!confirm('Удалить фото плана? Комнаты останутся.')) return;
+        if (!await uiConfirm('Удалить фото плана? Комнаты останутся.')) return;
         delete project.plan; await dbPut('projects', project); hideSheet(); render();
       };
     });
@@ -1959,9 +1967,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       if (empty) empty.textContent = 'Нажмите «Обмер квартиры» и обойдите комнаты подряд — они сразу встанут на схеме на свои места. Или «Обмер комнаты» для одной комнаты, или «Редактор», чтобы нарисовать вручную.';
       measBtn.onclick = async () => {
         const room = selRoom();
-        if (room && !confirm(`Переобмерить «${room.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
+        if (room && !await uiConfirm(`Переобмерить «${room.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
         try { await lidarMeasure(pid, rooms, room || null); render(); }
-        catch (err) { alert('Обмер не удался: ' + err.message); }
+        catch (err) { uiAlert('Обмер не удался: ' + err.message); }
       };
     }
   });
@@ -2051,10 +2059,10 @@ async function stageWalk(pid, stageId = null) {
   const done = res => { if (res && res.hd) nav(`#/p/${pid}/hd/${st.id}`); else render(); };
   // схемы ещё нет — обход всей квартиры строит её сам: комнаты обмеряются и встают на схему, кадры стен ложатся на этап
   if (!rooms.length) {
-    if (!confirm(`Схемы пока нет — обход «${st.name}» построит её сам: сканируйте комнаты по очереди («Следующая» между комнатами), стены обмерятся и сразу сфотографируются. Начать?`)) return;
+    if (!await uiConfirm(`Схемы пока нет — обход «${st.name}» построит её сам: сканируйте комнаты по очереди («Следующая» между комнатами), стены обмерятся и сразу сфотографируются. Начать?`)) return;
     const kind = await askKind();
     if (!kind) return;
-    try { done(await lidarApartment(pid, rooms, st.id, { hd: kind === 'hd' })); } catch (err) { alert('Обход не удался: ' + err.message); }
+    try { done(await lidarApartment(pid, rooms, st.id, { hd: kind === 'hd' })); } catch (err) { uiAlert('Обход не удался: ' + err.message); }
     return;
   }
   const ids = stageRoomIds(st, rooms);
@@ -2072,14 +2080,14 @@ async function stageWalk(pid, stageId = null) {
   if (!kind) return;
   const hd = kind === 'hd';
   try { done(room ? await lidarWalk(pid, room, st.id, { hd }) : await lidarApartment(pid, rooms, st.id, { hd })); }
-  catch (err) { alert('Обход не удался: ' + err.message); }
+  catch (err) { uiAlert('Обход не удался: ' + err.message); }
 }
 
 // обмер всей квартиры: комнаты подряд в одной сессии, Apple сводит их в одну схему
 async function measureApartment(pid) {
-  if (!confirm('Обмер квартиры: сканируйте комнаты по очереди — закончили комнату, нажмите «Следующая» и перейдите в другую. Все комнаты встанут на схеме на свои места; уже обмеренные обновятся. Начать?')) return;
+  if (!await uiConfirm('Обмер квартиры: сканируйте комнаты по очереди — закончили комнату, нажмите «Следующая» и перейдите в другую. Все комнаты встанут на схеме на свои места; уже обмеренные обновятся. Начать?')) return;
   const { rooms } = await loadProjectData(pid);
-  try { await lidarApartment(pid, rooms, null); render(); } catch (err) { alert('Обмер не удался: ' + err.message); }
+  try { await lidarApartment(pid, rooms, null); render(); } catch (err) { uiAlert('Обмер не удался: ' + err.message); }
 }
 /* ---------- HD-скан: пакет для компьютера и загрузка обученной модели ---------- */
 const fmtMB = b => (b / 1048576).toFixed(b > 104857600 ? 0 : 1).replace('.', ',') + ' МБ';
@@ -2127,9 +2135,9 @@ async function viewHD(pid, stageId = null) {
     </div></div>
     ${bottomNav(pid, 'more')}`;
   const on = (id, f) => { const el = $(id); if (el) el.onclick = f; };
-  on('#hd-share', async () => { try { await Native.RP.shareFile({ path: cap.path }); } catch (err) { alert('Не удалось отправить: ' + err.message); } });
+  on('#hd-share', async () => { try { await Native.RP.shareFile({ path: cap.path }); } catch (err) { uiAlert('Не удалось отправить: ' + err.message); } });
   on('#hd-del-cap', async () => {
-    if (!confirm('Удалить пакет с телефона? Если модель ещё не обучена, HD-скан придётся снимать заново.')) return;
+    if (!await uiConfirm('Удалить пакет с телефона? Если модель ещё не обучена, HD-скан придётся снимать заново.')) return;
     try { await Native.RP.deleteFile({ path: cap.path }); } catch {}
     delete st.hdCapture; await dbPut('stages', st); render();
   });
@@ -2138,16 +2146,16 @@ async function viewHD(pid, stageId = null) {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     const format = (f.name.split('.').pop() || 'ply').toLowerCase();
-    if (!['ply', 'spz', 'splat', 'ksplat'].includes(format)) { alert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
+    if (!['ply', 'spz', 'splat', 'ksplat'].includes(format)) { uiAlert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
     st.hdScan = { blob: f, name: f.name, size: f.size, format, created: Date.now(), flip: false };
-    try { await dbPut('stages', st); } catch (err) { alert('Не удалось сохранить модель (мало места?): ' + err.message); return; }
+    try { await dbPut('stages', st); } catch (err) { uiAlert('Не удалось сохранить модель (мало места?): ' + err.message); return; }
     toast('HD-модель загружена'); render();
   };
   $('#hd-stage').onchange = e => nav(`#/p/${pid}/hd/${e.target.value}`);
   on('#hd-view', () => { tourState.mode = 'hd'; tourState.stage = st.id; nav(`#/p/${pid}/tour`); });
   const flip = $('#hd-flip');
   if (flip) flip.onchange = async () => { st.hdScan.flip = flip.checked; await dbPut('stages', st); };
-  on('#hd-del', async () => { if (!confirm('Удалить HD-модель с телефона?')) return; delete st.hdScan; await dbPut('stages', st); if (tourState.mode === 'hd') tourState.mode = 'house'; render(); });
+  on('#hd-del', async () => { if (!await uiConfirm('Удалить HD-модель с телефона?')) return; delete st.hdScan; await dbPut('stages', st); if (tourState.mode === 'hd') tourState.mode = 'house'; render(); });
 }
 
 /* ---------- этапы по помещениям ---------- */
@@ -2212,7 +2220,7 @@ async function viewStages(pid) {
     app.querySelectorAll('.walk-tile').forEach(b => b.classList.remove('hidden'));
   });
   $('#add-stage').onclick = async () => {
-    const name = prompt('Название этапа (например, «Электрика», «Штукатурка»):');
+    const name = await uiPrompt('Название этапа (например, «Электрика», «Штукатурка»):');
     if (!name || !name.trim()) return;
     const maxOrd = stages.length ? Math.max(...stages.map(s => s.ord)) : -1;
     await dbPut('stages', { id: uid(), projectId: pid, name: name.trim(), ord: maxOrd + 1, status: 0 });
@@ -2403,7 +2411,7 @@ async function viewStageAlbum(pid, stageId) {
     ${bottomNav(pid, 'stages')}`;
 
   $('#rename-stage').onclick = async () => {
-    const name = prompt('Название этапа:', stage.name);
+    const name = await uiPrompt('Название этапа:', stage.name);
     if (!name || !name.trim()) return;
     stage.name = name.trim();
     await dbPut('stages', stage); render();
@@ -2452,7 +2460,7 @@ async function viewStageAlbum(pid, stageId) {
         onClose: render,
         onGhost: async p => {
           if (room && await lidarAvailable()) {
-            try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { alert('AR-призрак не удался: ' + err.message); }
+            try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { uiAlert('AR-призрак не удался: ' + err.message); }
             return;
           }
           nav(`#/p/${pid}/ghost/${encodeURIComponent(photo.wallKey)}/${p.id}`);
@@ -2665,11 +2673,11 @@ async function viewWall(pid, wallKey) {
   const addOp = $('#add-opening');
   if (addOp) {
     addOp.onclick = async () => {
-      const kt = prompt('Что добавить? д — дверь, о — окно, з — зеркало', 'д');
+      const kt = await uiPrompt('Что добавить? д — дверь, о — окно, з — зеркало', 'д');
       if (kt === null) return;
       const kind = { 'д': 'door', 'd': 'door', 'о': 'window', 'o': 'window', 'з': 'mirror', 'z': 'mirror', 'm': 'mirror' }[String(kt).trim().toLowerCase()[0]] || 'door';
       const def = OPENING_KINDS[kind];
-      const t = prompt(`${def.label}: ширина и высота в метрах, затем (необязательно) отступ от левого угла и высота от пола.\nНапример: ${def.example}`, def.example);
+      const t = await uiPrompt(`${def.label}: ширина и высота в метрах, затем (необязательно) отступ от левого угла и высота от пола.\nНапример: ${def.example}`, def.example);
       if (t === null) return;
       const nums = (String(t).replace(/,/g, '.').match(/\d+(\.\d+)?/g) || []).map(Number);
       if (nums.length < 2) return toast('Нужно хотя бы два числа: ширина и высота');
@@ -2704,7 +2712,7 @@ async function viewWall(pid, wallKey) {
         if (!how) return;
         if (how === 'scan') {
           try { const n = await lidarSurface(pid, room, pendingStage, side); if (n) render(); }
-          catch (err) { alert('Скан не удался: ' + err.message); }
+          catch (err) { uiAlert('Скан не удался: ' + err.message); }
           return;
         }
       }
@@ -2716,7 +2724,7 @@ async function viewWall(pid, wallKey) {
   });
   const importFiles = async (files, fromCamera) => {
     if (!files.length || !pendingStage) return;
-    const by = userName(true);
+    const by = await userNameAsk();
     toast(files.length > 1 ? `Сохраняю ${files.length} фото…` : 'Сохраняю фото…');
     let ok = 0;
     for (const file of files) {
@@ -2753,7 +2761,7 @@ async function viewWall(pid, wallKey) {
         onClose: render,
         onGhost: async p => {
           if (await lidarAvailable()) {
-            try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { alert('AR-призрак не удался: ' + err.message); }
+            try { await lidarGhost(p, wallSizeOf(room, side)); } catch (err) { uiAlert('AR-призрак не удался: ' + err.message); }
             return;
           }
           nav(`#/p/${pid}/ghost/${encodeURIComponent(wallKey)}/${p.id}`);
@@ -2902,8 +2910,8 @@ async function viewMore(pid) {
     if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
   }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
   $('#export-glb').onclick = () => { tourState.exportGlb = true; nav(`#/p/${pid}/tour`); };
-  $('#set-name').onclick = () => {
-    const t = prompt('Ваше имя и роль (подпись на фото и пометках):', userName());
+  $('#set-name').onclick = async () => {
+    const t = await uiPrompt('Ваше имя и роль (подпись на фото и пометках):', userName());
     if (t === null) return;
     try { localStorage.setItem('stenograf.user', t.trim()); } catch {}
     render();
@@ -2994,7 +3002,7 @@ async function exportStage(pid, stageId) {
 async function shareStageImages(project, st, ph) {
   const files = ph.map((p, k) => new File([p.blob], `${slug(st.name)}-${String(k + 1).padStart(2, '0')}.jpg`, { type: p.blob.type || 'image/jpeg' }));
   if (navigator.canShare && navigator.canShare({ files })) {
-    try { await navigator.share({ files, title: `${project.name} — ${st.name}` }); } catch (err) { if (!err || err.name !== 'AbortError') alert('Не удалось отправить: ' + (err && err.message)); }
+    try { await navigator.share({ files, title: `${project.name} — ${st.name}` }); } catch (err) { if (!err || err.name !== 'AbortError') uiAlert('Не удалось отправить: ' + (err && err.message)); }
     return;
   }
   for (const f of files) {
@@ -3013,7 +3021,7 @@ function importBackup() {
     try {
       await importData(JSON.parse(await file.text()));
     } catch (err) {
-      alert('Не удалось импортировать: ' + err.message);
+      uiAlert('Не удалось импортировать: ' + err.message);
     }
   };
   inp.click();
@@ -3025,7 +3033,7 @@ async function importData(data) {
       const kind = data.kind || 'backup';
       const KIND_TEXT = { backup: 'резервную копию', plan: 'схему объекта', photos: 'фото от участника' };
       const who = data.by ? ` от «${data.by}»` : '';
-      if (!confirm(`Импортировать ${KIND_TEXT[kind] || 'файл'}${who} (${fmtDate(data.exported || Date.now())})?\nОбъекты: ${data.projects.length}, фото: ${(data.photos || []).length}.\n${kind === 'photos' ? 'Новые фото и пометки добавятся, ваши данные не тронутся.' : 'Схема и этапы обновятся, фото не удаляются.'}`)) return;
+      if (!await uiConfirm(`Импортировать ${KIND_TEXT[kind] || 'файл'}${who} (${fmtDate(data.exported || Date.now())})?\nОбъекты: ${data.projects.length}, фото: ${(data.photos || []).length}.\n${kind === 'photos' ? 'Новые фото и пометки добавятся, ваши данные не тронутся.' : 'Схема и этапы обновятся, фото не удаляются.'}`)) return;
       toast('Импортирую…');
       // 'plan' и 'backup' — авторитетная схема: перезаписываем объект/комнаты/этапы.
       // 'photos' — от участника: объект/схему добавляем только если у нас их ещё нет.

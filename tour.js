@@ -692,7 +692,7 @@ async function viewTour(pid, roomId = null) {
   const rpBtn = app.querySelector('#tour-rp');
   if (rpBtn) rpBtn.onclick = () => {
     const list = roomPlanModels(project, rooms);
-    const open = m => openRoomPlanModel(m.blob, m.title).catch(err => alert(err.message));
+    const open = m => openRoomPlanModel(m.blob, m.title).catch(err => uiAlert(err.message));
     if (list.length === 1) { open(list[0]); return; }
     const host = document.createElement('div');
     host.className = 'plan-sheet tpl-sheet';
@@ -738,7 +738,7 @@ async function viewTour(pid, roomId = null) {
       const buf = await new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: true, maxTextureSize: 2048 });
       blob = new Blob([buf], { type: 'model/gltf-binary' });
     } catch (err) {
-      console.error(err); alert('Не удалось собрать модель: ' + err.message);
+      console.error(err); uiAlert('Не удалось собрать модель: ' + err.message);
     } finally {
       temp.forEach(p => { p.parent.remove(p); p.material.dispose(); });
       for (let i = saved.length - 1; i >= 0; i--) { saved[i][0].visible = saved[i][1]; saved[i][0].name = saved[i][2]; }

@@ -414,7 +414,7 @@ function shotOf(f, place, room) {
 /* ---------- кадры обхода → фото с автокалибровкой ---------- */
 
 async function framesToPhotos(pid, roomId, stageId, frames, idMap, place = null) {
-  const by = userName(true);
+  const by = await userNameAsk();
   const room = place ? await dbGet('rooms', roomId) : null;
   const byWall = {};
   for (const f of frames || []) {
@@ -470,7 +470,7 @@ async function savePlanes(pid, stageId, planes, place) {
     const wallKey = `${at.room.id}:${o.surface}`;
     for (const old of await dbAll('photos', 'wallKey', wallKey)) if (old.projectId === pid && old.stageId === stageId && old.source === 'lidar-ortho') await dbDel('photos', old.id);
     const blob = await orthoToPlan(o, at.toPlan, at.room, o.surface === 'f' ? '#b9b2a6' : '#e9e5dd');
-    const rec = { id: uid(), projectId: pid, wallKey, stageId, blob, note: '', created: Date.now(), by: userName(true), marks: [], source: 'lidar-ortho' };
+    const rec = { id: uid(), projectId: pid, wallKey, stageId, blob, note: '', created: Date.now(), by: await userNameAsk(), marks: [], source: 'lidar-ortho' };
     await sealPhoto(rec, { source: 'lidar' });
     await dbPut('photos', rec);
     n++;
@@ -493,7 +493,7 @@ async function proposeMirrors(room, scan, res, idMap) {
     const along = chain.rev ? chain.len - t : t;
     const x = cm(Math.max(0, along - m.w / 2)), y = cm(Math.max(0, m.fromFloor || 0));
     const label = wallLabel(room, wid);
-    if (!confirm(`Похоже на зеркало (${m.confidence === 'high' ? 'уверенно' : 'возможно'}): ${label}, ${String(cm(m.w)).replace('.', ',')} × ${String(cm(m.h)).replace('.', ',')} м, ${String(x).replace('.', ',')} м от левого угла.\nДобавить как зеркало?`)) continue;
+    if (!await uiConfirm(`Похоже на зеркало (${m.confidence === 'high' ? 'уверенно' : 'возможно'}): ${label}, ${String(cm(m.w)).replace('.', ',')} × ${String(cm(m.h)).replace('.', ',')} м, ${String(x).replace('.', ',')} м от левого угла.\nДобавить как зеркало?`)) continue;
     room.openings = room.openings || {};
     const arr = room.openings[wid] = room.openings[wid] || [];
     if (arr.some(o => o.kind === 'mirror' && Math.abs(o.x - x) < 0.3)) continue;
@@ -638,7 +638,7 @@ async function lidarMeasure(pid, rooms, room) {
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   // сначала проверяем сам скан — нет смысла спрашивать название, если комнату из него не собрать
   if (!scanToPolygon(scan)) throw new Error('В скане меньше трёх стен — обойдите комнату полностью');
-  const name = room ? null : (prompt('Название комнаты:', 'Комната ' + (rooms.length + 1)) || null);
+  const name = room ? null : (await uiPrompt('Название комнаты:', 'Комната ' + (rooms.length + 1)) || null);
   const { room: r, idMap, turn } = await applyScan(pid, rooms, room, scan, name);
   await saveNorth(pid, scan, turn);
   if (scan.usdz) { r.usdz = await b64Blob(scan.usdz, 'model/vnd.usdz+zip'); r.usdzAt = Date.now(); await dbPut('rooms', r); }
@@ -706,7 +706,7 @@ async function lidarGhost(photo, wallSize) {
 // HD-обход: пакет кадров лежит файлом в Documents (сотни МБ — через мост не гоняем), у этапа только путь; старый пакет этапа удаляем.
 // transform — мир AR-сессии → схема ({ang, ox, oy}), чтобы обученная модель встала на план.
 async function saveStageHD(stageId, scan, transform) {
-  if (scan.hdError) alert('HD-пакет не собрался: ' + scan.hdError);
+  if (scan.hdError) uiAlert('HD-пакет не собрался: ' + scan.hdError);
   if (!scan.hdZip) return false;
   const st = await dbGet('stages', stageId);
   if (!st) return false;
