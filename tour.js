@@ -941,7 +941,6 @@ async function viewTour(pid, roomId = null) {
 /* ---------- редактор снимка 3D (просьба пользователя 2026-10-14, по образцу «Разметки» iOS):
    сверху — назад, отменить, сохранить в «Фото», отправить; снизу — ручка, маркер, выделитель, ластик, цвет ---------- */
 function openShotEditor(dataUrl, title) {
-  const COLORS = ['#e5332a', '#d95f18', '#f4c20d', '#34a853', '#1a73e8', '#111111', '#ffffff'];
   // инструменты «как в Разметке» iOS: чёрный корпус с бликом, кончик и поясок; цветной кончик — текущий цвет
   const body = (x, w, y) => `<rect x="${x}" y="${y}" width="${w}" height="${64 - y}" fill="url(#seBody)"/>`;
   const TOOLS = [
@@ -951,12 +950,16 @@ function openShotEditor(dataUrl, title) {
     ['eraser', 'Ластик', `<rect x="5" y="4" width="10" height="60" rx="3" fill="url(#seBody)"/><rect x="5" y="4" width="10" height="12" rx="3" fill="#f39a9a"/><rect x="5" y="13" width="10" height="3" fill="#f39a9a"/>`],
     ['pencil', 'Карандаш', `<path d="M5 22 L10 3 L15 22 Z" fill="#4a4a4e"/><path d="M8.8 8 L10 3 L11.2 8 Z" fill="currentColor"/><path d="M6.5 16 L8 22 M10 12 L10 22 M13.5 16 L12 22" stroke="#2a2a2c" stroke-width=".6"/>${body(5, 10, 22)}`],
   ];
-  const st = { tool: 'pen', color: COLORS[0], strokes: [], cur: null };
+  const GRAD = '<defs><linearGradient id="seBody" x1="0" x2="1"><stop offset="0" stop-color="#3a3a3d"/><stop offset=".35" stop-color="#1c1c1e"/><stop offset=".7" stop-color="#111"/><stop offset="1" stop-color="#2a2a2c"/></linearGradient></defs>';
+  const toolSvg = k => `<svg viewBox="0 0 20 64">${GRAD}${TOOLS.find(t => t[0] === k)[2]}</svg>`;
+  // сохранённые цвета — на этом устройстве
+  let saved = []; try { saved = JSON.parse(localStorage.getItem('fixpoint.colors') || '[]'); } catch {}
+  const st = { tool: 'pen', color: '#e5332a', alpha: 1, strokes: [], cur: null, open: false, corner: 'left', picking: false };
   const el = document.createElement('div');
   el.className = 'shot-ed';
   el.innerHTML = `
     <div class="se-top">
-      <button class="se-btn" data-a="back" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <button class="se-btn" data-a="back" aria-label="Назад"><svg viewBox="0 0 24 24" class="se-back"><path d="M15.5 4.5L8 12l7.5 7.5"/></svg></button>
       <span class="se-gap"></span>
       <button class="se-btn" data-a="undo" aria-label="Отменить" disabled><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg></button>
       <div class="se-pill">
@@ -965,34 +968,52 @@ function openShotEditor(dataUrl, title) {
       </div>
     </div>
     <div class="se-stage"><div class="se-frame"><canvas class="se-base"></canvas><canvas class="se-ink"></canvas></div></div>
-    <div class="se-colors hidden">${COLORS.map(c => `<button class="se-sw" data-c="${c}" style="background:${c}" aria-label="Цвет"></button>`).join('')}</div>
+    <button class="se-mini" aria-label="Инструменты"></button>
     <div class="se-tools">
-      ${TOOLS.map(([k, n, svg]) => `<button class="se-tool ${k === st.tool ? 'on' : ''}" data-t="${k}" aria-label="${n}" style="color:${k === 'eraser' ? '#f08a8a' : st.color}"><svg viewBox="0 0 20 64"><defs><linearGradient id="seBody" x1="0" x2="1"><stop offset="0" stop-color="#3a3a3d"/><stop offset=".35" stop-color="#1c1c1e"/><stop offset=".7" stop-color="#111"/><stop offset="1" stop-color="#2a2a2c"/></linearGradient></defs>${svg}</svg></button>`).join('')}
-      <button class="se-color" aria-label="Цвет"><span style="background:${st.color}"></span></button>
-      <i class="se-grip"></i>
+      <i class="se-grip" aria-label="Свернуть"></i>
+      ${TOOLS.map(([k, n]) => `<button class="se-tool ${k === st.tool ? 'on' : ''}" data-t="${k}" aria-label="${n}">${toolSvg(k)}</button>`).join('')}
+      <button class="se-color" aria-label="Цвет"><span></span></button>
+    </div>
+    <div class="se-dim"></div>
+    <div class="se-cp">
+      <div class="cp-head">
+        <button class="cp-ico" data-cp="pick" aria-label="Пипетка"><svg viewBox="0 0 24 24"><path d="M14.5 4.5l5 5M17 2.5a2.1 2.1 0 013 3l-2 2-3-3z"/><path d="M15 7.5L6 16.5l-1.5 3.5 3.5-1.5 9-9"/></svg></button>
+        <b>Цвета</b>
+        <button class="cp-ico" data-cp="close" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="cp-tabs"><button data-tab="grid" class="on">Сетка</button><button data-tab="spec">Спектр</button><button data-tab="sliders">Слайдеры</button></div>
+      <div class="cp-body">
+        <div class="cp-grid" data-pane="grid"></div>
+        <canvas class="cp-spec hidden" data-pane="spec" width="300" height="200"></canvas>
+        <div class="cp-sliders hidden" data-pane="sliders">
+          ${['Красный', 'Зелёный', 'Синий'].map((n, i) => `<label>${n}<input type="range" min="0" max="255" data-ch="${i}"><output></output></label>`).join('')}
+        </div>
+      </div>
+      <div class="cp-op"><span>НЕПРОЗРАЧНОСТЬ</span><div class="cp-op-row"><input type="range" min="5" max="100" value="100" class="cp-alpha"><output class="cp-alpha-v">100 %</output></div></div>
+      <div class="cp-saved"><span class="cp-cur"></span><button class="cp-add" aria-label="Запомнить цвет">+</button><div class="cp-list"></div></div>
     </div>`;
   document.body.appendChild(el);
-  const base = el.querySelector('.se-base'), ink = el.querySelector('.se-ink'), frame = el.querySelector('.se-frame'), stage = el.querySelector('.se-stage');
+  const $e = s => el.querySelector(s);
+  const base = $e('.se-base'), ink = $e('.se-ink'), frame = $e('.se-frame'), stage = $e('.se-stage');
   const bctx = base.getContext('2d'), ictx = ink.getContext('2d');
   const img = new Image();
   const fit = () => {
     const W = img.naturalWidth, H = img.naturalHeight; if (!W) return;
-    const r = stage.getBoundingClientRect(), k = Math.min((r.width - 32) / W, (r.height - 6) / H);   // без полей сцены (16 по бокам, 6 сверху)
+    const r = stage.getBoundingClientRect(), k = Math.min((r.width - 32) / W, (r.height - 6) / H);   // без полей сцены
     frame.style.width = `${W * k}px`; frame.style.height = `${H * k}px`;
   };
-  img.onload = () => {
-    base.width = ink.width = img.naturalWidth; base.height = ink.height = img.naturalHeight;
-    bctx.drawImage(img, 0, 0); fit(); redraw();
-  };
+  img.onload = () => { base.width = ink.width = img.naturalWidth; base.height = ink.height = img.naturalHeight; bctx.drawImage(img, 0, 0); fit(); redraw(); };
   img.src = dataUrl;
   window.addEventListener('resize', fit);
+
+  /* ---------- рисование ---------- */
   const W = () => base.width || 1000;
   const sizeOf = t => ({ pen: 0.007, marker: 0.004, hl: 0.032, eraser: 0.045, pencil: 0.005 }[t] * W());
   const drawStroke = s => {
     if (!s.pts.length) return;
     ictx.save();
     ictx.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over';
-    ictx.globalAlpha = s.tool === 'hl' ? 0.4 : s.tool === 'pencil' ? 0.75 : 1;
+    ictx.globalAlpha = s.tool === 'eraser' ? 1 : s.alpha * (s.tool === 'hl' ? 0.4 : s.tool === 'pencil' ? 0.75 : 1);
     ictx.strokeStyle = s.tool === 'eraser' ? '#000' : s.color;
     ictx.lineWidth = s.size; ictx.lineCap = s.tool === 'hl' ? 'butt' : 'round'; ictx.lineJoin = 'round';
     ictx.beginPath(); ictx.moveTo(s.pts[0][0], s.pts[0][1]);
@@ -1003,26 +1024,100 @@ function openShotEditor(dataUrl, title) {
   const redraw = () => {
     ictx.clearRect(0, 0, ink.width, ink.height);
     st.strokes.forEach(drawStroke); if (st.cur) drawStroke(st.cur);
-    el.querySelector('[data-a="undo"]').disabled = !st.strokes.length;
+    $e('[data-a="undo"]').disabled = !st.strokes.length;
   };
   const pos = e => { const r = ink.getBoundingClientRect(); return [(e.clientX - r.left) * ink.width / r.width, (e.clientY - r.top) * ink.height / r.height]; };
   ink.addEventListener('pointerdown', e => {
-    e.preventDefault(); try { ink.setPointerCapture(e.pointerId); } catch {}
-    el.querySelector('.se-colors').classList.add('hidden');
-    st.cur = { tool: st.tool, color: st.color, size: sizeOf(st.tool), pts: [pos(e)] }; redraw();
+    e.preventDefault();
+    if (st.picking) {   // пипетка: цвет со снимка
+      const [x, y] = pos(e).map(Math.round); const d = bctx.getImageData(Math.max(0, x), Math.max(0, y), 1, 1).data;
+      st.picking = false; el.classList.remove('picking'); setColor(rgbHex(d[0], d[1], d[2])); openPicker(true); return;
+    }
+    try { ink.setPointerCapture(e.pointerId); } catch {}
+    st.cur = { tool: st.tool, color: st.color, alpha: st.alpha, size: sizeOf(st.tool), pts: [pos(e)] }; redraw();
   });
   ink.addEventListener('pointermove', e => { if (!st.cur) return; st.cur.pts.push(pos(e)); redraw(); });
   const end = () => { if (!st.cur) return; st.strokes.push(st.cur); st.cur = null; redraw(); };
   ink.addEventListener('pointerup', end); ink.addEventListener('pointercancel', end);
-  // инструменты и цвет
-  const paintTools = () => el.querySelectorAll('.se-tool').forEach(b => { b.classList.toggle('on', b.dataset.t === st.tool); if (b.dataset.t !== 'eraser') b.style.color = st.color; });
-  el.querySelectorAll('.se-tool').forEach(b => b.onclick = () => { st.tool = b.dataset.t; paintTools(); });
-  el.querySelector('.se-color').onclick = () => el.querySelector('.se-colors').classList.toggle('hidden');
-  el.querySelectorAll('.se-sw').forEach(b => b.onclick = () => {
-    st.color = b.dataset.c; if (st.tool === 'eraser') st.tool = 'pen';
-    el.querySelector('.se-color span').style.background = st.color; el.querySelector('.se-colors').classList.add('hidden'); paintTools();
+
+  /* ---------- панель инструментов: свёрнута в кружок в углу, тап — развернуть, ручка — свернуть, кружок можно перетащить в другой угол ---------- */
+  const mini = $e('.se-mini'), tray = $e('.se-tools');
+  const paint = () => {
+    el.querySelectorAll('.se-tool').forEach(b => { b.classList.toggle('on', b.dataset.t === st.tool); b.style.color = st.color; });
+    $e('.se-color span').style.background = st.color;
+    mini.innerHTML = toolSvg(st.tool); mini.style.color = st.color;
+    mini.classList.toggle('right', st.corner === 'right');
+    el.classList.toggle('tray-open', st.open);
+  };
+  const setOpen = v => { st.open = v; paint(); };
+  el.querySelectorAll('.se-tool').forEach(b => b.onclick = () => { st.tool = b.dataset.t; paint(); });
+  $e('.se-grip').onclick = () => setOpen(false);
+  // смахнуть панель вниз — свернуть
+  let tg = null;
+  tray.addEventListener('pointerdown', e => { if (!e.target.closest('.se-tool, .se-color')) tg = { y: e.clientY }; });
+  tray.addEventListener('pointerup', e => { if (tg && e.clientY - tg.y > 25) setOpen(false); tg = null; });
+  let md = null;
+  mini.addEventListener('pointerdown', e => { md = { x: e.clientX, y: e.clientY, moved: false }; try { mini.setPointerCapture(e.pointerId); } catch {} });
+  mini.addEventListener('pointermove', e => {
+    if (!md) return;
+    const dx = e.clientX - md.x, dy = e.clientY - md.y;
+    if (Math.hypot(dx, dy) > 8) md.moved = true;
+    if (md.moved) mini.style.transform = `translate(${dx}px, ${Math.min(0, dy)}px)`;
   });
-  // итоговая картинка: снимок + рисунок
+  mini.addEventListener('pointerup', e => {
+    if (!md) return;
+    const moved = md.moved; md = null; mini.style.transform = '';
+    if (moved) { st.corner = e.clientX > innerWidth / 2 ? 'right' : 'left'; paint(); }
+    else setOpen(true);
+  });
+
+  /* ---------- окно «Цвета»: сетка, спектр, слайдеры, непрозрачность, пипетка, сохранённые цвета ---------- */
+  const hex2 = v => Math.round(v).toString(16).padStart(2, '0');
+  const rgbHex = (r, g, b) => '#' + hex2(r) + hex2(g) + hex2(b);
+  const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const hsl = (h, s, l) => { s /= 100; l /= 100; const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l); const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)); return rgbHex(f(0) * 255, f(8) * 255, f(4) * 255); };
+  // сетка как у Apple: верхний ряд — серые, дальше 12 оттенков от тёмного к светлому
+  const HUES = [195, 215, 240, 265, 290, 330, 5, 18, 32, 45, 58, 85];
+  const gridColors = [];
+  for (let i = 0; i < 12; i++) { const v = 255 - i * 255 / 11; gridColors.push(rgbHex(v, v, v)); }
+  for (let row = 0; row < 9; row++) for (const h of HUES) gridColors.push(hsl(h, row < 2 ? 100 : 92 - row * 3, 10 + row * 9.5));
+  $e('.cp-grid').innerHTML = gridColors.map(c => `<i data-c="${c}" style="background:${c}"></i>`).join('');
+  const spec = $e('.cp-spec'), sctx = spec.getContext('2d');
+  for (let x = 0; x < 300; x++) for (let y = 0; y < 200; y += 4) { sctx.fillStyle = hsl(x * 1.2, 100, 95 - y * 0.45); sctx.fillRect(x, y, 1, 4); }
+  const setColor = c => {
+    st.color = c; if (st.tool === 'eraser') st.tool = 'pen';
+    $e('.cp-cur').style.background = c;
+    el.querySelectorAll('.cp-grid i').forEach(i => i.classList.toggle('on', i.dataset.c === c));
+    const rgb = hexRgb(c);
+    el.querySelectorAll('[data-ch]').forEach(s => { s.value = rgb[+s.dataset.ch]; s.nextElementSibling.textContent = rgb[+s.dataset.ch]; });
+    $e('.cp-alpha').style.setProperty('--c', c);
+    paint();
+  };
+  const renderSaved = () => { $e('.cp-list').innerHTML = saved.map(c => `<i data-c="${c}" style="background:${c}"></i>`).join(''); };
+  const openPicker = v => { el.classList.toggle('cp-open', v); };
+  $e('.se-color').onclick = () => openPicker(true);
+  $e('[data-cp="close"]').onclick = () => openPicker(false);
+  $e('.se-dim').onclick = () => openPicker(false);
+  $e('[data-cp="pick"]').onclick = () => { openPicker(false); st.picking = true; el.classList.add('picking'); toast('Тапните по снимку — возьму цвет'); };
+  el.querySelectorAll('.cp-tabs button').forEach(b => b.onclick = () => {
+    el.querySelectorAll('.cp-tabs button').forEach(x => x.classList.toggle('on', x === b));
+    el.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== b.dataset.tab));
+  });
+  $e('.cp-grid').onclick = e => { const i = e.target.closest('[data-c]'); if (i) setColor(i.dataset.c); };
+  $e('.cp-list').onclick = e => { const i = e.target.closest('[data-c]'); if (i) setColor(i.dataset.c); };
+  const specPick = e => { const r = spec.getBoundingClientRect(); const x = Math.max(0, Math.min(299, (e.clientX - r.left) * 300 / r.width)), y = Math.max(0, Math.min(199, (e.clientY - r.top) * 200 / r.height)); const d = sctx.getImageData(x | 0, y | 0, 1, 1).data; setColor(rgbHex(d[0], d[1], d[2])); };
+  spec.addEventListener('pointerdown', e => { specPick(e); try { spec.setPointerCapture(e.pointerId); } catch {} spec.onpointermove = specPick; });
+  spec.addEventListener('pointerup', () => { spec.onpointermove = null; });
+  el.querySelectorAll('[data-ch]').forEach(s => s.oninput = () => { const rgb = [...el.querySelectorAll('[data-ch]')].map(x => +x.value); setColor(rgbHex(...rgb)); });
+  $e('.cp-alpha').oninput = e => { st.alpha = +e.target.value / 100; $e('.cp-alpha-v').textContent = `${e.target.value} %`; };
+  $e('.cp-add').onclick = () => {
+    saved = [st.color, ...saved.filter(c => c !== st.color)].slice(0, 12);
+    try { localStorage.setItem('fixpoint.colors', JSON.stringify(saved)); } catch {}
+    renderSaved();
+  };
+  renderSaved(); setColor(st.color);
+
+  /* ---------- итог: снимок + рисунок; сохранить в «Фото», отправить ---------- */
   const result = () => new Promise(res => {
     const c = document.createElement('canvas'); c.width = base.width; c.height = base.height;
     const g = c.getContext('2d'); g.drawImage(base, 0, 0); g.drawImage(ink, 0, 0);
@@ -1030,9 +1125,9 @@ function openShotEditor(dataUrl, title) {
   });
   const fileName = () => `Fixpoint-3D-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.jpg`;
   const close = () => { window.removeEventListener('resize', fit); el.remove(); };
-  el.querySelector('[data-a="back"]').onclick = close;
-  el.querySelector('[data-a="undo"]').onclick = () => { st.strokes.pop(); redraw(); };
-  el.querySelector('[data-a="save"]').onclick = async () => {
+  $e('[data-a="back"]').onclick = close;
+  $e('[data-a="undo"]').onclick = () => { st.strokes.pop(); redraw(); };
+  $e('[data-a="save"]').onclick = async () => {
     const blob = await result();
     if (Native.RP && Native.RP.saveImage) {
       try {
@@ -1044,5 +1139,5 @@ function openShotEditor(dataUrl, title) {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fileName(); a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000); toast('Снимок сохранён');
   };
-  el.querySelector('[data-a="share"]').onclick = async () => deliverFile(await result(), fileName(), title);
+  $e('[data-a="share"]').onclick = async () => deliverFile(await result(), fileName(), title);
 }
