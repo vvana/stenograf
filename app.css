@@ -1088,7 +1088,13 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .plan-wrap.full.editing .plan-north { left: auto; right: 14px; bottom: 62px; }   /* стрелка «С» — справа над нижними кнопками */
 .plan-wrap.full.editing .editor-bar { top: 84px; }   /* угол / радиус — под верхними кнопками */
 /* просмотр схемы: «Редактор» — по центру сверху, «i» — слева на одном уровне с ним (просьба пользователя 2026-10-14) */
-.plan-wrap.full:not(.editing) .plan-glass-edit { left: 50%; transform: translateX(-50%); }
-.plan-wrap.full:not(.editing) .plan-glass-edit:active { transform: translateX(-50%) scale(.92); }
+/* (2026-10-14, позже) «Редактор» — справа; «Отправить» — слева рядом с «i» */
+.plan-wrap.full:not(.editing) .plan-glass-edit { left: auto; right: 18px; }
+.plan-wrap.full:not(.editing) .plan-tools { right: auto; left: 64px; }
 .plan-wrap.full:not(.editing) #view-hint { top: 16px; }
 .plan-wrap.full:not(.editing):has(#view-hint[open]) .plan-glass-edit { display: none; }   /* раскрытая подсказка не перекрывается кнопкой */
+/* подсказки «i» на полноэкранной схеме: сам блок прозрачен для касаний (он растянут по ширине и закрывал «Редактор»),
+   нажимается только кнопка «i» */
+.plan-wrap.full #view-hint, .plan-wrap.full #editor-hint, .plan-wrap.full #mode-hint { pointer-events: none; }
+.plan-wrap.full #view-hint summary, .plan-wrap.full #editor-hint summary, .plan-wrap.full #mode-hint summary { pointer-events: auto; }
+.plan-wrap.full:not(.editing):has(#view-hint[open]) .plan-tools { display: none; }   /* раскрытая подсказка «i» ложится на «Отправить» — прячем, пока открыта */

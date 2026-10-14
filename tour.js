@@ -6,6 +6,145 @@ const FLOOR_COLORS = [0xe3cfae, 0xd8d6d0, 0xead9bd, 0xcfc6b6, 0xe6dfd2, 0xdcc7a4
 const WALL_T = 0.12; // толщина стен на «домике», м
 const TEX_W = 768;
 
+/* ---------- стиль «визуализация планировки» (образцы пользователя 2026-10-14):
+   белые стены с белым срезом, светлый дуб на полу, плитка в санузлах, мягкие тени, мебель из простых форм ---------- */
+// паркетная доска / плитка на canvas: текстура на квадрат 2 × 2 м, повторяется по полу
+function floorTexture(THREE, kind) {
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const g = c.getContext('2d');
+  let seed = kind === 'tile' ? 7 : 3; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  if (kind === 'tile') {   // плитка 30 см, светло-серая, тонкие швы
+    const n = Math.round(2 / 0.3), sz = 512 / n;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      const v = 214 + Math.round(rnd() * 10);
+      g.fillStyle = `rgb(${v},${v + 1},${v + 3})`; g.fillRect(i * sz, j * sz, sz, sz);
+    }
+    g.strokeStyle = 'rgba(150,150,155,.55)'; g.lineWidth = 2;
+    for (let i = 0; i <= n; i++) { g.beginPath(); g.moveTo(i * sz, 0); g.lineTo(i * sz, 512); g.stroke(); g.beginPath(); g.moveTo(0, i * sz); g.lineTo(512, i * sz); g.stroke(); }
+  } else {                 // светлый дуб: доски 18 см, длина 1,2 м вразбежку
+    const rows = Math.round(2 / 0.18), rh = 512 / rows, len = 512 * 1.2 / 2;
+    for (let j = 0; j < rows; j++) {
+      const off = rnd() * len;
+      for (let x = -off; x < 512; x += len) {
+        const t = rnd(), r = 214 + t * 18, gg = 186 + t * 16, b = 146 + t * 14;
+        g.fillStyle = `rgb(${r | 0},${gg | 0},${b | 0})`; g.fillRect(x, j * rh, len, rh);
+        for (let k = 0; k < 6; k++) {   // волокна
+          g.strokeStyle = `rgba(150,110,70,${0.05 + rnd() * 0.06})`; g.lineWidth = 1;
+          const y = j * rh + rnd() * rh; g.beginPath(); g.moveTo(x, y); g.lineTo(x + len, y + (rnd() - 0.5) * 3); g.stroke();
+        }
+        g.fillStyle = 'rgba(120,90,60,.35)'; g.fillRect(x, j * rh, 1.5, rh);
+      }
+      g.fillStyle = 'rgba(120,90,60,.30)'; g.fillRect(0, j * rh, 512, 1.5);
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
+  if (THREE.SRGBColorSpace) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+// мебель из простых форм по категории RoomPlan: w — по x, h — по y, d — по z, низ на y = 0, спинка при z = −d/2
+function furnitureModel(THREE, o, M) {
+  const grp = new THREE.Group();
+  const w = Math.max(0.1, o.w), h = Math.max(0.05, o.h), d = Math.max(0.1, o.d);
+  const B = (bw, bh, bd, x, y, z, m) => { const mm = new THREE.Mesh(new THREE.BoxGeometry(Math.max(0.005, bw), Math.max(0.005, bh), Math.max(0.005, bd)), m); mm.position.set(x, y + bh / 2, z); mm.castShadow = mm.receiveShadow = true; grp.add(mm); return mm; };
+  const C = (rad, ch, x, y, z, m, seg = 20) => { const mm = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, ch, seg), m); mm.position.set(x, y + ch / 2, z); mm.castShadow = mm.receiveShadow = true; grp.add(mm); return mm; };
+  const legs = (top, inset, th, m) => { for (const sx of [-1, 1]) for (const sz of [-1, 1]) B(th, top, th, sx * (w / 2 - inset), 0, sz * (d / 2 - inset), m); };
+  const attr = re => (o.attrs || []).some(a => re.test(a));
+  const back = -d / 2;
+  switch (o.cat) {
+    case 'bed': {
+      const fh = Math.min(0.3, h * 0.4);
+      B(w, fh, d, 0, 0, 0, M.woodDark);                                   // основание
+      B(w - 0.06, 0.2, d - 0.08, 0, fh, 0.02, M.linen);                   // матрас
+      B(w, Math.max(h, 0.95), 0.08, 0, 0, back + 0.04, M.fabricGray);     // изголовье
+      const n = w > 1.25 ? 2 : 1, pw = (w - 0.2) / n - 0.06;
+      for (let k = 0; k < n; k++) B(pw, 0.12, 0.34, -w / 2 + 0.13 + pw / 2 + k * (pw + 0.06), fh + 0.2, back + 0.3, M.white);
+      B(w - 0.02, 0.05, d * 0.55, 0, fh + 0.2, d / 2 - d * 0.55 / 2, M.blanket);   // покрывало
+      break;
+    }
+    case 'sofa': {
+      const seat = Math.min(0.45, h * 0.55), arm = Math.min(0.18, w * 0.12);
+      B(w, seat * 0.55, d, 0, 0, 0, M.fabricLight);                       // основание
+      B(w - 2 * arm, seat * 0.45, d - 0.22, 0, seat * 0.55, 0.11, M.fabric); // подушки сиденья
+      B(w, Math.max(h, seat + 0.3), 0.22, 0, 0, back + 0.11, M.fabricLight); // спинка
+      if (!attr(/single/i) || w > 0.6) { B(arm, seat + 0.18, d, -w / 2 + arm / 2, 0, 0, M.fabricLight); B(arm, seat + 0.18, d, w / 2 - arm / 2, 0, 0, M.fabricLight); }
+      break;
+    }
+    case 'chair': {
+      const seat = Math.min(0.47, h * 0.55);
+      legs(seat - 0.04, 0.04, 0.035, M.woodDark);
+      B(w, 0.05, d, 0, seat - 0.05, 0, attr(/stool/i) ? M.wood : M.white);
+      if (!attr(/stool/i)) B(w, Math.max(0.3, h - seat), 0.04, 0, seat, back + 0.02, M.white);
+      break;
+    }
+    case 'table': {
+      const top = Math.max(0.35, h) - 0.04;
+      if (attr(/circular|elliptic/i)) {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.04, 40), M.woodLight);
+        m.scale.set(w, 1, d); m.position.set(0, top + 0.02, 0); m.castShadow = m.receiveShadow = true; grp.add(m);
+        C(0.05, top, 0, 0, 0, M.dark); C(Math.min(w, d) * 0.25, 0.02, 0, 0, 0, M.dark);
+      } else {
+        B(w, 0.04, d, 0, top, 0, M.woodLight);
+        legs(top, 0.06, 0.04, M.white);
+      }
+      break;
+    }
+    case 'storage': {
+      if (attr(/shelf/i)) {                                                 // стеллаж: боковины и полки
+        B(0.03, h, d, -w / 2 + 0.015, 0, 0, M.white); B(0.03, h, d, w / 2 - 0.015, 0, 0, M.white);
+        for (let y = 0; y <= h - 0.02; y += Math.max(0.3, h / 5)) B(w, 0.025, d, 0, y, 0, M.white);
+        B(w, h, 0.01, 0, 0, back + 0.005, M.white);
+      } else {                                                              // шкаф: корпус и двери
+        B(w, h, d, 0, 0, 0, M.white);
+        const n = Math.max(1, Math.round(w / 0.5));
+        for (let k = 1; k < n; k++) B(0.008, h - 0.04, 0.005, -w / 2 + k * w / n, 0.02, d / 2 + 0.002, M.groove);
+        for (let k = 0; k < n; k++) B(0.012, Math.min(0.25, h * 0.2), 0.02, -w / 2 + (k + (k % 2 ? 0.12 : 0.88)) * w / n, h * 0.45, d / 2 + 0.01, M.dark);
+      }
+      break;
+    }
+    case 'refrigerator':
+      B(w, h, d, 0, 0, 0, M.steel); B(w - 0.02, 0.006, 0.005, 0, h * 0.62, d / 2 + 0.003, M.groove);
+      B(0.02, h * 0.25, 0.03, w / 2 - 0.08, h * 0.65, d / 2 + 0.015, M.dark); break;
+    case 'stove': case 'oven': case 'dishwasher': case 'washerDryer': {
+      B(w, h, d, 0, 0, 0, M.white);
+      if (o.cat === 'stove') { B(w - 0.02, 0.01, d - 0.02, 0, h, 0, M.dark); for (const sx of [-1, 1]) for (const sz of [-1, 1]) C(Math.min(w, d) * 0.11, 0.012, sx * w * 0.22, h + 0.004, sz * d * 0.2, M.steel); }
+      if (o.cat === 'oven') B(w * 0.8, h * 0.45, 0.01, 0, h * 0.2, d / 2 + 0.005, M.dark);
+      if (o.cat === 'washerDryer') { const m = C(Math.min(w, h) * 0.3, 0.02, 0, h * 0.45 - 0.01, d / 2 + 0.01, M.dark, 32); m.rotation.x = Math.PI / 2; m.position.y = h * 0.45; }
+      if (o.cat === 'dishwasher') B(w - 0.03, 0.006, 0.005, 0, h * 0.85, d / 2 + 0.003, M.groove);
+      break;
+    }
+    case 'sink': {
+      B(w, Math.max(0.1, h - 0.06), d, 0, 0, 0, M.white);                   // тумба
+      B(w + 0.02, 0.06, d + 0.02, 0, Math.max(0.1, h - 0.06), 0, M.ceramic);
+      B(Math.min(w - 0.12, 0.5), 0.02, d * 0.55, 0, h - 0.01, 0.02, M.basin);
+      break;
+    }
+    case 'toilet': {
+      B(Math.min(w, 0.38), Math.min(h, 0.4), Math.min(d * 0.6, 0.45), 0, 0, 0.06, M.ceramic);           // чаша
+      B(Math.min(w, 0.42), 0.04, Math.min(d * 0.6, 0.48), 0, Math.min(h, 0.4), 0.06, M.white);          // крышка
+      B(Math.min(w, 0.4), Math.max(h, 0.75) - 0.35, 0.16, 0, 0.35, back + 0.08, M.ceramic);              // бачок
+      break;
+    }
+    case 'bathtub': {
+      B(w, h, d, 0, 0, 0, M.ceramic);
+      B(w - 0.12, 0.012, d - 0.12, 0, h - 0.002, 0, M.basin);
+      break;
+    }
+    case 'television':
+      B(w, Math.max(0.3, h), 0.05, 0, Math.max(0, h * 0.0), back + 0.03, M.screen); break;
+    case 'fireplace':
+      B(w, h, d, 0, 0, 0, M.white); B(w * 0.5, h * 0.45, 0.01, 0, 0.1, d / 2 + 0.005, M.dark); break;
+    case 'stairs': {
+      const n = Math.max(3, Math.round(h / 0.18));
+      for (let k = 0; k < n; k++) B(w, (k + 1) * h / n, d / n, 0, 0, -d / 2 + (k + 0.5) * d / n, M.woodLight);
+      break;
+    }
+    default:
+      B(w, h, d, 0, 0, 0, M.white);
+  }
+  return grp;
+}
+
 function threeReady() {
   if (window.THREE) return Promise.resolve(window.THREE);
   return new Promise((res, rej) => {
@@ -135,14 +274,15 @@ async function viewTour(pid, roomId = null) {
   const centerAll = new THREE.Vector3((minX + maxX) / 2, 0.6, (minZ + maxZ) / 2);
   const span = Math.max(maxX - minX, maxZ - minZ, 4);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d2c8, 1.3));
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+  // свет как на визуализациях планировок: мягкий рассеянный + солнце сбоку, стены отбрасывают тени в комнаты
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd9d4cc, 1.15));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.05);
   sun.position.set(centerAll.x - span * 0.5, span * 1.6, centerAll.z + span * 0.7);
   sun.target.position.copy(centerAll); scene.add(sun.target);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.radius = 4;
+  sun.shadow.radius = 6;
   sun.shadow.bias = -0.0005;
   Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 0.5, far: span * 5 });
   scene.add(sun);
@@ -151,8 +291,9 @@ async function viewTour(pid, roomId = null) {
   ground.rotation.x = -Math.PI / 2; ground.position.set(centerAll.x, -0.02, centerAll.z); ground.receiveShadow = true;
   scene.add(ground);
   const wallSolid = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x6e6e6e, side: THREE.DoubleSide }); // белые, наружные грани чуть затенены
-  const wallCap = new THREE.MeshBasicMaterial({ color: 0x6b7178 }); // верх стены — тёмный «разрез», как на чертеже
-  const wallCapTop = new THREE.MeshBasicMaterial({ color: 0x6b7178, side: THREE.DoubleSide });
+  // верх стены — белый срез, как на визуализациях планировок (раньше был тёмный «разрез» как на чертеже)
+  const wallCap = new THREE.MeshBasicMaterial({ color: 0xf6f5f2 });
+  const wallCapTop = new THREE.MeshBasicMaterial({ color: 0xf6f5f2, side: THREE.DoubleSide });
   const doorMat = new THREE.MeshLambertMaterial({ color: 0xdcc3a0 });
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xe4f1f8, transparent: true, opacity: 0.6 });
   const plainFloors = [], solidWalls = [];
@@ -160,8 +301,11 @@ async function viewTour(pid, roomId = null) {
   const floorMat = new THREE.MeshBasicMaterial({ color: dark ? 0x2b2e33 : 0xb9b2a6, side: THREE.FrontSide });
   const ceilMat = new THREE.MeshBasicMaterial({ color: dark ? 0x44474d : 0xe9e5dd, side: THREE.FrontSide });
   const lineMat = new THREE.LineBasicMaterial({ color: 0xd6cfc3 });
-  const furnMat = new THREE.MeshLambertMaterial({ color: 0xd9d8e6 });
-  const furnLine = new THREE.LineBasicMaterial({ color: 0xb4b2c6 });
+  const L = c => new THREE.MeshLambertMaterial({ color: c });
+  const FM = { white: L(0xf4f3ef), linen: L(0xf7f6f2), fabric: L(0xd9d7d2), fabricLight: L(0xc9c7c2), fabricGray: L(0x8d9198),
+    blanket: L(0x4d5d82), wood: L(0xb08a60), woodLight: L(0xd2b48c), woodDark: L(0x8a6646), dark: L(0x3d4046), groove: L(0xb9b6ae),
+    steel: L(0xd3d6d9), ceramic: L(0xfdfdfb), basin: L(0xdfe6ea), screen: L(0x1e2125) };
+  const floorTex = { wood: floorTexture(THREE, 'wood'), tile: floorTexture(THREE, 'tile') };
 
   const surfaces = []; // { key, mesh, w, h }
   const ceilings = [], mirrors = [];
@@ -194,7 +338,10 @@ async function viewTour(pid, roomId = null) {
     scene.add(floor); scene.add(ceiling);
     ceilings.push(ceiling);
     // цветной пол «как на плане» (чуть ниже фото-пола, чтобы не мерцать)
-    const plain = new THREE.Mesh(mkPoly(() => -0.004, true), new THREE.MeshLambertMaterial({ color: FLOOR_COLORS[rooms.indexOf(r) % FLOOR_COLORS.length] }));
+    // пол как на визуализациях: светлый дуб, в санузле — плитка (текстура на 2 × 2 м, uv пола — доли габарита комнаты)
+    const fTex = (typeof roomKind === 'function' && roomKind(r).kind === 'bath' ? floorTex.tile : floorTex.wood).clone();
+    fTex.needsUpdate = true; fTex.repeat.set(Math.max(0.25, bb.w / 2), Math.max(0.25, bb.h / 2));
+    const plain = new THREE.Mesh(mkPoly(() => -0.004, true), new THREE.MeshLambertMaterial({ map: fTex }));
     plain.receiveShadow = true;
     scene.add(plain); plainFloors.push(plain);
 
@@ -389,14 +536,13 @@ async function viewTour(pid, roomId = null) {
     const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.Float32BufferAttribute(lp, 3));
     scene.add(new THREE.LineSegments(lg, lineMat));
     // мебель из скана лидаром — светлые блоки с контуром, как в предпросмотре RoomPlan
+    // мебель из скана лидаром — простые модели по категории (кровать с подушками, диван со спинкой, стол на ножках…)
     for (const o of r.objects || []) {
-      const geo = new THREE.BoxGeometry(o.w, o.h, o.d);
-      const box = new THREE.Mesh(geo, furnMat);
-      box.position.set(o.x, o.z + o.h / 2, o.y);
-      box.rotation.y = -o.ang;
-      box.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), furnLine));
-      box.castShadow = true; box.receiveShadow = true;
-      scene.add(box);
+      const m = furnitureModel(THREE, o, FM);
+      m.position.set(o.x, o.z || 0, o.y);
+      m.rotation.y = -o.ang;
+      if (typeof furnBackFlip === 'function' && furnBackFlip(o, r)) m.scale.z = -1;   // спинка — к ближайшей стене, как на схеме
+      scene.add(m);
     }
     const c = roomCenter(r);
     roomInfo[r.id] = { center: new THREE.Vector3(c[0], 1.55, c[1]), ceil, name: r.name };
