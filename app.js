@@ -754,7 +754,7 @@ async function viewPlan(pid) {
 
   const lidarNow = typeof lidarSupportedCache !== 'undefined' && lidarSupportedCache === true;
   app.innerHTML = `
-    ${header(lidarNow && planState.edit ? 'Редактирование' : 'Схема', '#/')}
+    ${header(lidarNow && planState.edit ? 'Редактирование' : 'Схема', lidarNow && planState.edit ? false : '#/')}   <!-- в редакторе стрелки «назад» нет: выход — ✕ или ✓ -->
     <div class="plan-wrap ${lidarNow ? 'full' : ''} ${lidarNow && planState.edit ? 'editing' : ''}">
       <div class="plan-actions">
         ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}

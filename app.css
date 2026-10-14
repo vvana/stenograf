@@ -1098,3 +1098,23 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .plan-wrap.full #view-hint, .plan-wrap.full #editor-hint, .plan-wrap.full #mode-hint { pointer-events: none; }
 .plan-wrap.full #view-hint summary, .plan-wrap.full #editor-hint summary, .plan-wrap.full #mode-hint summary { pointer-events: auto; }
 .plan-wrap.full:not(.editing):has(#view-hint[open]) .plan-tools { display: none; }   /* раскрытая подсказка «i» ложится на «Отправить» — прячем, пока открыта */
+/* редактор и создание комнаты: кнопка «i» того же размера, что ✕ / ✓ (56 px, просьба пользователя 2026-10-14) */
+.plan-wrap.full.editing #editor-hint summary, .plan-wrap.full.editing #mode-hint summary { min-height: 56px; min-width: 56px; border-radius: 28px; padding: 0 16px; justify-content: center; }
+.plan-wrap.full.editing #editor-hint summary svg, .plan-wrap.full.editing #mode-hint summary svg { width: 26px; height: 26px; }
+.plan-wrap.full.editing #editor-hint:not([open]) summary, .plan-wrap.full.editing #mode-hint:not([open]) summary { padding: 0; }
+.plan-wrap.full.editing #editor-hint[open] summary, .plan-wrap.full.editing #mode-hint[open] summary { padding: 15px 16px 15px 15px; align-items: flex-start; }
+.plan-wrap.full.editing #editor-hint, .plan-wrap.full.editing #mode-hint { left: 22px; }   /* по краю, как ✕ */
+/* просмотр схемы: верхние кнопки («i», «Отправить», «Редактор») той же высоты, что нижние «Обмер…» — 56 px (просьба пользователя 2026-10-14) */
+.plan-wrap.full:not(.editing) #view-hint { left: 22px; }
+.plan-wrap.full:not(.editing) #view-hint summary { min-height: 56px; min-width: 56px; border-radius: 28px; justify-content: center; }
+.plan-wrap.full:not(.editing) #view-hint:not([open]) summary { padding: 0; }
+.plan-wrap.full:not(.editing) #view-hint[open] summary { padding: 15px 16px 15px 15px; }
+.plan-wrap.full:not(.editing) #view-hint summary svg { width: 26px; height: 26px; }
+.plan-wrap.full:not(.editing) .plan-tools { left: 86px; }
+.plan-wrap.full:not(.editing) .plan-tools .plan-tool { width: 56px; height: 56px; }
+.plan-wrap.full:not(.editing) .plan-tools .plan-tool svg { width: 24px; height: 24px; }
+.plan-wrap.full:not(.editing) .plan-glass-edit { right: 22px; height: 56px; border-radius: 28px; padding: 0 20px 0 16px; gap: 8px; }
+.plan-wrap.full:not(.editing) .plan-glass-edit svg { width: 22px; height: 22px; }
+/* раскрытая подсказка «i» — того же стекла, что и сама кнопка (просьба пользователя 2026-10-14) */
+.plan-wrap.full #view-hint[open] summary, .plan-wrap.full #editor-hint[open] summary, .plan-wrap.full #mode-hint[open] summary {
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30); }
