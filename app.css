@@ -1079,3 +1079,16 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .plan-wrap.full #mode-tools #mode-plan { flex: 1 1 auto; }
 .plan-wrap.full #mode-tools .pa-round.go { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .80); border-color: rgba(255,255,255,.5); }
 .plan-wrap.full #mode-tools .pa-round.go svg { width: 28px; height: 28px; stroke-width: 2.6; }
+.plan-wrap.full .plan-edit-badge { display: none; }   /* состояние редактора — в шапке (просьба пользователя 2026-10-14) */
+/* ---------- редактор и создание комнаты (схема на весь экран): верхние и нижние кнопки поменяны местами (просьба пользователя 2026-10-14);
+   в просмотре «Схемы» — как было: обмер снизу, «Редактор» / «i» / «Отправить» сверху ---------- */
+.plan-wrap.full.editing .plan-actions { bottom: auto; top: calc(var(--top-h, 60px) + env(safe-area-inset-top) + 12px); }
+.plan-wrap.full.editing .plan-tools { top: auto; bottom: 16px; }
+.plan-wrap.full.editing #editor-hint, .plan-wrap.full.editing #mode-hint { top: auto; bottom: 16px; }
+.plan-wrap.full.editing .plan-north { left: auto; right: 14px; bottom: 62px; }   /* стрелка «С» — справа над нижними кнопками */
+.plan-wrap.full.editing .editor-bar { top: 84px; }   /* угол / радиус — под верхними кнопками */
+/* просмотр схемы: «Редактор» — по центру сверху, «i» — слева на одном уровне с ним (просьба пользователя 2026-10-14) */
+.plan-wrap.full:not(.editing) .plan-glass-edit { left: 50%; transform: translateX(-50%); }
+.plan-wrap.full:not(.editing) .plan-glass-edit:active { transform: translateX(-50%) scale(.92); }
+.plan-wrap.full:not(.editing) #view-hint { top: 16px; }
+.plan-wrap.full:not(.editing):has(#view-hint[open]) .plan-glass-edit { display: none; }   /* раскрытая подсказка не перекрывается кнопкой */

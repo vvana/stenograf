@@ -754,7 +754,7 @@ async function viewPlan(pid) {
 
   const lidarNow = typeof lidarSupportedCache !== 'undefined' && lidarSupportedCache === true;
   app.innerHTML = `
-    ${header('Схема', '#/')}
+    ${header(lidarNow && planState.edit ? 'Редактирование' : 'Схема', '#/')}
     <div class="plan-wrap ${lidarNow ? 'full' : ''} ${lidarNow && planState.edit ? 'editing' : ''}">
       <div class="plan-actions">
         ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}
@@ -1705,7 +1705,11 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     $('#toggle-edit').classList.toggle('hidden', !!mode); // в режиме вместо «Готово» редактора — «Сохранить» режима
     $('.plan-actions').classList.toggle('in-mode', !!mode);
     // надпись на схеме: что сейчас делаем
-    $('#plan-badge-text').textContent = { trace: 'Создание комнаты', scale: 'Масштаб фото плана', underlay: 'Сдвиг фото плана' }[mode] || 'Редактирование';
+    const status = { trace: 'Создание комнаты', scale: 'Масштаб фото плана', underlay: 'Сдвиг фото плана' }[mode] || 'Редактирование';
+    $('#plan-badge-text').textContent = status;
+    // схема на весь экран (с лидаром): состояние редактора — в заголовке шапки вместо «Схема»
+    const tt = document.querySelector('.plan-wrap.full') && document.querySelector('.topbar .tb-title');
+    if (tt) tt.textContent = status;
     if (mode) {
       $('#mode-text').textContent = MODE_TEXT[mode]();
       const mh = $('.mode-hint'); if (mh && mh.dataset.mode !== mode) { mh.dataset.mode = mode; mh.open = mode !== 'trace'; } // масштаб/сдвиг — подсказка сразу открыта
