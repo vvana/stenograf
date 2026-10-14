@@ -1118,3 +1118,56 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 /* раскрытая подсказка «i» — того же стекла, что и сама кнопка (просьба пользователя 2026-10-14) */
 .plan-wrap.full #view-hint[open] summary, .plan-wrap.full #editor-hint[open] summary, .plan-wrap.full #mode-hint[open] summary {
   background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30); }
+/* капсулы со значком на полноэкранной схеме: по центру кнопки стоит надпись, значок — слева от неё
+   (раньше по центру была пара «значок + надпись», и слово казалось сдвинутым вправо — замечание пользователя 2026-10-14) */
+.plan-wrap.full .plan-actions .pa-btn:not(.pa-round) { white-space: nowrap; }
+.plan-wrap.full .plan-actions .pa-btn:not(.pa-round) > svg { margin-left: -29px; }   /* значок «висит» слева, ширину не занимает: 22 + зазор 7 */
+.plan-wrap.full .plan-actions .btn > .ic { margin-left: -28.6px; }                  /* у .btn: значок 15,6 + отступ 7 + зазор 6 */
+.plan-wrap.full:not(.editing) .plan-glass-edit { padding: 0 46px 0 16px; }   /* «Редактор»: надпись по центру кнопки, карандаш слева (кнопка у края, ширина не жмёт) */
+@media (max-width: 389px) {   /* на узких телефонах длинной надписи не хватает места — значок обратно в поток, без «висящего» отступа */
+  .plan-wrap.full .plan-actions .pa-btn:not(.pa-round) > svg { margin-left: 0; }
+}
+
+/* 3D: кнопка «Фото» — стеклянная, справа над переключателем режимов */
+.tour-shot { pointer-events: auto; position: absolute; z-index: 5; right: 24px; bottom: calc(58px + 8px + 12px + 64px + 14px + env(safe-area-inset-bottom));
+  width: 56px; height: 56px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; cursor: pointer;
+  color: rgba(255,255,255,.95); font: 600 9px system-ui, -apple-system, sans-serif; text-shadow: 0 1px 2px rgba(30,25,15,.4); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .17);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 18px rgba(30,25,15,.12), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.06);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.tour-shot svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.tour-shot:active { transform: scale(.9); }
+
+/* редактор снимка 3D — на весь экран, чёрный фон, кнопки жидким стеклом */
+.shot-ed { position: fixed; inset: 0; z-index: 150; background: #000; display: flex; flex-direction: column; touch-action: none; user-select: none; -webkit-user-select: none; }
+.se-top { display: flex; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top) + 10px) 16px 10px; }
+.se-gap { flex: 1; }
+.se-btn, .se-pill { color: #fff; border: 1px solid rgba(255,255,255,.18); background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.22) 0%, rgba(255,255,255,0) 55%), rgba(60, 60, 64, .62);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: inset 0 1px 1px rgba(255,255,255,.18); }
+.se-btn { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform .25s cubic-bezier(.3,1.6,.5,1), opacity .2s; }
+.se-btn svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.se-btn:active { transform: scale(.9); }
+.se-btn:disabled { opacity: .4; }
+.se-pill { display: flex; border-radius: 25px; }
+.se-pill .se-btn { border: 0; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; width: 58px; }
+.se-stage { flex: 1; min-height: 0; display: flex; align-items: flex-start; justify-content: center; padding: 6px 16px 0; }   /* снимок до низа экрана, панель инструментов — поверх */
+.se-frame { position: relative; }
+.se-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.se-ink { touch-action: none; }
+/* панель инструментов — светлое стекло поверх низа снимка, как в «Разметке» iOS */
+.se-tools { position: absolute; z-index: 2; left: 14px; right: 14px; bottom: calc(env(safe-area-inset-bottom) + 10px); height: 104px;
+  display: flex; align-items: flex-end; justify-content: space-around; gap: 4px; padding: 0 22px; border-radius: 52px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,.35); background: linear-gradient(180deg, rgba(150,150,154,.82), rgba(110,110,114,.82));
+  -webkit-backdrop-filter: blur(14px) saturate(1.4); backdrop-filter: blur(14px) saturate(1.4); box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 1px rgba(255,255,255,.45); }
+.se-grip { position: absolute; top: 7px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: rgba(255,255,255,.45); }
+.se-tool { width: 32px; height: 92px; border: 0; background: none; padding: 0; cursor: pointer; transform: translateY(22px); transition: transform .25s cubic-bezier(.3,1.5,.5,1); }
+.se-tool.on { transform: translateY(4px); }
+.se-tool svg { width: 32px; height: 103px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
+.se-color { width: 40px; height: 40px; align-self: center; margin-top: -6px; border-radius: 50%; padding: 4px; border: 0; cursor: pointer; flex: none;
+  background: conic-gradient(#ff3b30, #ffcc00, #34c759, #00c7be, #007aff, #af52de, #ff2d55, #ff3b30); }
+.se-color span { display: block; width: 100%; height: 100%; border-radius: 50%; border: 2px solid #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
+.se-colors { position: absolute; z-index: 3; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 10px + 104px + 10px); display: flex; justify-content: center; gap: 12px; padding: 10px; border-radius: 24px;
+  background: linear-gradient(180deg, rgba(150,150,154,.85), rgba(110,110,114,.85)); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.se-colors.hidden { display: none; }
+.se-sw { width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(255,255,255,.7); cursor: pointer; }

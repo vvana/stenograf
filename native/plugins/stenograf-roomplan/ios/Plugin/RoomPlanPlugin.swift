@@ -5,6 +5,7 @@ import RoomPlan
 import ARKit
 import AVFoundation
 import QuickLook
+import Photos
 
 /// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
@@ -24,6 +25,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "fileInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "htmlPdf", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveImage", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -115,6 +117,21 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             ac.completionWithItemsHandler = { _, completed, _, _ in call.resolve(["path": url.path, "pages": renderer.numberOfPages, "completed": completed]) }
             host.present(ac, animated: true)
+        }
+    }
+
+    /// Картинка (base64 JPEG/PNG) → приложение «Фото». Нужен только доступ «добавлять» (NSPhotoLibraryAddUsageDescription).
+    @objc func saveImage(_ call: CAPPluginCall) {
+        guard let b64 = call.getString("data"), let data = Data(base64Encoded: b64), let img = UIImage(data: data) else {
+            call.reject("Нет картинки"); return
+        }
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                call.reject("Нет доступа к «Фото» — разрешите в Настройках → Fixpoint → Фото"); return
+            }
+            PHPhotoLibrary.shared().performChanges({ PHAssetChangeRequest.creationRequestForAsset(from: img) }) { ok, err in
+                if ok { call.resolve() } else { call.reject(err?.localizedDescription ?? "Не удалось сохранить") }
+            }
         }
     }
 

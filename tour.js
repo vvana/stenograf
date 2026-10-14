@@ -243,6 +243,7 @@ async function viewTour(pid, roomId = null) {
           ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}<span>Финал</span></button>` : ''}
           ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
         </div>
+        <button id="tour-shot" class="tour-shot" title="Снимок 3D — посмотреть, нарисовать поверх, сохранить или отправить" aria-label="Снимок">${ICONS.camera}<span>Фото</span></button>
         <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
         <div class="tour-plan" id="tour-plan"></div>
       </div>
@@ -849,6 +850,12 @@ async function viewTour(pid, roomId = null) {
     document.body.appendChild(host);
     host.querySelectorAll('[data-rp]').forEach(b => b.onclick = () => { host.remove(); if (b.dataset.rp !== 'x') open(list[+b.dataset.rp]); });
   };
+  // «Фото»: снимок текущего вида 3D → редактор (нарисовать поверх, сохранить в «Фото», отправить)
+  $('#tour-shot').onclick = () => {
+    renderer.render(scene, camera);                       // кадр рисуем прямо сейчас — буфер холста ещё не очищен
+    const url = canvas.toDataURL('image/jpeg', 0.94);
+    openShotEditor(url, `${project.name} — 3D`);
+  };
   const photosBtn = $('#tour-photos');
   if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
   if ($('#tour-stage')) $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); if (tourState.mode === 'hd') loadHD().then(updateHint); };
@@ -929,4 +936,113 @@ async function viewTour(pid, roomId = null) {
     if (hdViewer) { scene.remove(hdViewer); hdViewer.dispose().catch(() => {}); }
     renderer.dispose();
   };
+}
+
+/* ---------- редактор снимка 3D (просьба пользователя 2026-10-14, по образцу «Разметки» iOS):
+   сверху — назад, отменить, сохранить в «Фото», отправить; снизу — ручка, маркер, выделитель, ластик, цвет ---------- */
+function openShotEditor(dataUrl, title) {
+  const COLORS = ['#e5332a', '#d95f18', '#f4c20d', '#34a853', '#1a73e8', '#111111', '#ffffff'];
+  // инструменты «как в Разметке» iOS: чёрный корпус с бликом, кончик и поясок; цветной кончик — текущий цвет
+  const body = (x, w, y) => `<rect x="${x}" y="${y}" width="${w}" height="${64 - y}" fill="url(#seBody)"/>`;
+  const TOOLS = [
+    ['pen', 'Ручка', `<path d="M5 18 L10 3 L15 18 Z" fill="url(#seBody)"/><path d="M8.3 8 L10 3 L11.7 8 Z" fill="currentColor"/>${body(5, 10, 18)}<rect x="5" y="30" width="10" height="2.4" fill="#fff"/>`],
+    ['marker', 'Линер', `<rect x="9.2" y="2" width="1.6" height="6" fill="currentColor"/><path d="M8 8 h4 v4 h-4z" fill="#ddd"/><path d="M6 18 L8 12 h4 L14 18z" fill="url(#seBody)"/>${body(6, 8, 18)}<rect x="6" y="31" width="8" height="2.2" fill="#fff"/>`],
+    ['hl', 'Выделитель', `<path d="M6 18 L7 9 L14 5 L14 18 Z" fill="currentColor"/>${body(5, 10, 18)}<rect x="5" y="28" width="10" height="7" fill="currentColor"/><text x="10" y="44" font-size="4.2" fill="#bbb" text-anchor="middle" font-family="system-ui">80</text>`],
+    ['eraser', 'Ластик', `<rect x="5" y="4" width="10" height="60" rx="3" fill="url(#seBody)"/><rect x="5" y="4" width="10" height="12" rx="3" fill="#f39a9a"/><rect x="5" y="13" width="10" height="3" fill="#f39a9a"/>`],
+    ['pencil', 'Карандаш', `<path d="M5 22 L10 3 L15 22 Z" fill="#4a4a4e"/><path d="M8.8 8 L10 3 L11.2 8 Z" fill="currentColor"/><path d="M6.5 16 L8 22 M10 12 L10 22 M13.5 16 L12 22" stroke="#2a2a2c" stroke-width=".6"/>${body(5, 10, 22)}`],
+  ];
+  const st = { tool: 'pen', color: COLORS[0], strokes: [], cur: null };
+  const el = document.createElement('div');
+  el.className = 'shot-ed';
+  el.innerHTML = `
+    <div class="se-top">
+      <button class="se-btn" data-a="back" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <span class="se-gap"></span>
+      <button class="se-btn" data-a="undo" aria-label="Отменить" disabled><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg></button>
+      <div class="se-pill">
+        <button class="se-btn" data-a="save" aria-label="Сохранить в Фото"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v9M8 12.5l4 4 4-4"/></svg></button>
+        <button class="se-btn" data-a="share" aria-label="Отправить"><svg viewBox="0 0 24 24"><path d="M12 15V3M7.5 7.5L12 3l4.5 4.5"/><path d="M6 11H5a1 1 0 00-1 1v8a1 1 0 001 1h14a1 1 0 001-1v-8a1 1 0 00-1-1h-1"/></svg></button>
+      </div>
+    </div>
+    <div class="se-stage"><div class="se-frame"><canvas class="se-base"></canvas><canvas class="se-ink"></canvas></div></div>
+    <div class="se-colors hidden">${COLORS.map(c => `<button class="se-sw" data-c="${c}" style="background:${c}" aria-label="Цвет"></button>`).join('')}</div>
+    <div class="se-tools">
+      ${TOOLS.map(([k, n, svg]) => `<button class="se-tool ${k === st.tool ? 'on' : ''}" data-t="${k}" aria-label="${n}" style="color:${k === 'eraser' ? '#f08a8a' : st.color}"><svg viewBox="0 0 20 64"><defs><linearGradient id="seBody" x1="0" x2="1"><stop offset="0" stop-color="#3a3a3d"/><stop offset=".35" stop-color="#1c1c1e"/><stop offset=".7" stop-color="#111"/><stop offset="1" stop-color="#2a2a2c"/></linearGradient></defs>${svg}</svg></button>`).join('')}
+      <button class="se-color" aria-label="Цвет"><span style="background:${st.color}"></span></button>
+      <i class="se-grip"></i>
+    </div>`;
+  document.body.appendChild(el);
+  const base = el.querySelector('.se-base'), ink = el.querySelector('.se-ink'), frame = el.querySelector('.se-frame'), stage = el.querySelector('.se-stage');
+  const bctx = base.getContext('2d'), ictx = ink.getContext('2d');
+  const img = new Image();
+  const fit = () => {
+    const W = img.naturalWidth, H = img.naturalHeight; if (!W) return;
+    const r = stage.getBoundingClientRect(), k = Math.min((r.width - 32) / W, (r.height - 6) / H);   // без полей сцены (16 по бокам, 6 сверху)
+    frame.style.width = `${W * k}px`; frame.style.height = `${H * k}px`;
+  };
+  img.onload = () => {
+    base.width = ink.width = img.naturalWidth; base.height = ink.height = img.naturalHeight;
+    bctx.drawImage(img, 0, 0); fit(); redraw();
+  };
+  img.src = dataUrl;
+  window.addEventListener('resize', fit);
+  const W = () => base.width || 1000;
+  const sizeOf = t => ({ pen: 0.007, marker: 0.004, hl: 0.032, eraser: 0.045, pencil: 0.005 }[t] * W());
+  const drawStroke = s => {
+    if (!s.pts.length) return;
+    ictx.save();
+    ictx.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over';
+    ictx.globalAlpha = s.tool === 'hl' ? 0.4 : s.tool === 'pencil' ? 0.75 : 1;
+    ictx.strokeStyle = s.tool === 'eraser' ? '#000' : s.color;
+    ictx.lineWidth = s.size; ictx.lineCap = s.tool === 'hl' ? 'butt' : 'round'; ictx.lineJoin = 'round';
+    ictx.beginPath(); ictx.moveTo(s.pts[0][0], s.pts[0][1]);
+    if (s.pts.length === 1) ictx.lineTo(s.pts[0][0] + 0.1, s.pts[0][1]);
+    for (let i = 1; i < s.pts.length; i++) ictx.lineTo(s.pts[i][0], s.pts[i][1]);
+    ictx.stroke(); ictx.restore();
+  };
+  const redraw = () => {
+    ictx.clearRect(0, 0, ink.width, ink.height);
+    st.strokes.forEach(drawStroke); if (st.cur) drawStroke(st.cur);
+    el.querySelector('[data-a="undo"]').disabled = !st.strokes.length;
+  };
+  const pos = e => { const r = ink.getBoundingClientRect(); return [(e.clientX - r.left) * ink.width / r.width, (e.clientY - r.top) * ink.height / r.height]; };
+  ink.addEventListener('pointerdown', e => {
+    e.preventDefault(); try { ink.setPointerCapture(e.pointerId); } catch {}
+    el.querySelector('.se-colors').classList.add('hidden');
+    st.cur = { tool: st.tool, color: st.color, size: sizeOf(st.tool), pts: [pos(e)] }; redraw();
+  });
+  ink.addEventListener('pointermove', e => { if (!st.cur) return; st.cur.pts.push(pos(e)); redraw(); });
+  const end = () => { if (!st.cur) return; st.strokes.push(st.cur); st.cur = null; redraw(); };
+  ink.addEventListener('pointerup', end); ink.addEventListener('pointercancel', end);
+  // инструменты и цвет
+  const paintTools = () => el.querySelectorAll('.se-tool').forEach(b => { b.classList.toggle('on', b.dataset.t === st.tool); if (b.dataset.t !== 'eraser') b.style.color = st.color; });
+  el.querySelectorAll('.se-tool').forEach(b => b.onclick = () => { st.tool = b.dataset.t; paintTools(); });
+  el.querySelector('.se-color').onclick = () => el.querySelector('.se-colors').classList.toggle('hidden');
+  el.querySelectorAll('.se-sw').forEach(b => b.onclick = () => {
+    st.color = b.dataset.c; if (st.tool === 'eraser') st.tool = 'pen';
+    el.querySelector('.se-color span').style.background = st.color; el.querySelector('.se-colors').classList.add('hidden'); paintTools();
+  });
+  // итоговая картинка: снимок + рисунок
+  const result = () => new Promise(res => {
+    const c = document.createElement('canvas'); c.width = base.width; c.height = base.height;
+    const g = c.getContext('2d'); g.drawImage(base, 0, 0); g.drawImage(ink, 0, 0);
+    c.toBlob(b => res(b), 'image/jpeg', 0.92);
+  });
+  const fileName = () => `Fixpoint-3D-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.jpg`;
+  const close = () => { window.removeEventListener('resize', fit); el.remove(); };
+  el.querySelector('[data-a="back"]').onclick = close;
+  el.querySelector('[data-a="undo"]').onclick = () => { st.strokes.pop(); redraw(); };
+  el.querySelector('[data-a="save"]').onclick = async () => {
+    const blob = await result();
+    if (Native.RP && Native.RP.saveImage) {
+      try {
+        const b64 = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = no; fr.readAsDataURL(blob); });
+        await Native.RP.saveImage({ data: b64 }); toast('Сохранено в «Фото»');
+      } catch (err) { uiAlert('Не удалось сохранить: ' + (err && err.message || err)); }
+      return;
+    }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fileName(); a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000); toast('Снимок сохранён');
+  };
+  el.querySelector('[data-a="share"]').onclick = async () => deliverFile(await result(), fileName(), title);
 }

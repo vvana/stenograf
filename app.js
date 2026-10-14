@@ -218,7 +218,7 @@ const swipeNav = { dir: 0 };
   const start = (x, y, target) => {
     st = null;
     if (!document.querySelector('.bottomnav')) return;
-    if (document.querySelector('.plan-sheet:not(.hidden), .tpl-sheet, .viewer:not(.hidden)')) return;
+    if (document.querySelector('.plan-sheet:not(.hidden), .tpl-sheet, .viewer:not(.hidden), .shot-ed')) return;
     const edge = x < EDGE || x > innerWidth - EDGE;
     if (!edge && target.closest && target.closest(BUSY)) return;
     st = { x, y, t: Date.now() };
