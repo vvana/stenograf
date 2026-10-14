@@ -1005,3 +1005,77 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
   transition: transform .2s cubic-bezier(.3,1.6,.5,1); }
 .ui-dlg-btn.ok { color: #fff; border-color: rgba(255,255,255,.45); background: radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.4) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .82); }
 .ui-dlg-btn:active { transform: scale(.95); }
+/* схема с лидаром (просмотр): схема на весь экран, «Обмер квартиры» / «Обмер комнаты» — стеклянными кнопками внизу поверх схемы (2026-10-14) */
+.plan-wrap.full { position: relative; }
+.plan-wrap.full .plan-box { padding: 0; }
+.plan-wrap.full #plan { height: calc(100dvh - var(--top-h, 61px) - env(safe-area-inset-top) - 64px - env(safe-area-inset-bottom)); border: 0; border-radius: 0; }   /* белая схема от края до края, без рамки и бежевых полей */
+html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) { background: var(--card); }
+.plan-wrap.full .plan-actions { position: fixed; z-index: 21; left: 22px; right: 22px; bottom: calc(86px + env(safe-area-inset-bottom)); padding: 0; gap: 10px; }
+.plan-wrap.full .plan-actions .pa-btn { min-height: 56px; border-radius: 28px; flex-direction: row; justify-content: center; gap: 7px; padding: 0 10px;
+  color: #fff; text-shadow: 0 1px 2px rgba(30,25,15,.35); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.16), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.plan-wrap.full .plan-actions .pa-btn svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.plan-wrap.full .plan-actions .pa-btn.pa-scan { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .78); }
+.plan-wrap.full .plan-actions .pa-btn:active { transform: scale(.94); }
+.plan-wrap.full .plan-north { bottom: 92px; }   /* стрелка «С» — над кнопками обмера */
+.plan-wrap.full #view-hint { position: absolute; z-index: 3; top: 64px; left: 18px; right: 70px; padding: 0; }
+/* схема (полный экран): подсказка «i» — стеклянной кнопкой, как «Редактор» и «Отправить»; раскрытая — стеклянная плашка с текстом */
+.plan-wrap.full #view-hint summary { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; min-width: 38px; padding: 8px; border-radius: 19px; box-sizing: border-box;
+  color: rgba(255,255,255,.97); text-shadow: 0 1px 2px rgba(30,25,15,.35); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.14), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.plan-wrap.full #view-hint summary svg { width: 20px; height: 20px; stroke: #fff; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.plan-wrap.full #view-hint[open] summary { padding: 8px 14px 8px 8px; align-items: flex-start; background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .55); }
+.plan-wrap.full #view-hint[open] summary svg { stroke: #fff; }
+.plan-wrap.full #view-hint .ihint-text { font-size: 13px; line-height: 1.35; padding-top: 1px; }
+.plan-wrap.full #view-hint summary:active { transform: scale(.92); }
+
+/* ---------- редактор схемы с лидаром: тоже на весь экран, кнопки — жидким стеклом (просьба пользователя 2026-10-14) ---------- */
+/* общее стекло для круглых кнопок и капсул на схеме */
+.plan-wrap.full .plan-tool, .plan-wrap.full .pa-round, .plan-wrap.full .plan-actions .btn, .plan-wrap.full .plan-edit-badge > span,
+.plan-wrap.full #editor-hint summary, .plan-wrap.full #mode-hint summary, .plan-wrap.full .editor-bar {
+  color: rgba(255,255,255,.97); text-shadow: 0 1px 2px rgba(30,25,15,.35); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.14), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08); }
+.plan-wrap.full .plan-tool svg { stroke: #fff; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.plan-wrap.full .plan-tool.danger svg { stroke: #ffd2c8; }
+.plan-wrap.full .plan-tool:active, .plan-wrap.full .pa-round:active, .plan-wrap.full .plan-actions .btn:active { transform: scale(.92); }
+.plan-wrap.full .plan-tool, .plan-wrap.full .pa-round, .plan-wrap.full .plan-actions .btn { transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+/* «Редактирование» — стеклянный овал по центру сверху */
+.plan-wrap.full .plan-edit-badge > span { color: #fff; }
+/* нижний ряд редактора: слева ✕, по центру «Создать» / «Размеры» / «Добавить угол», справа ✓ */
+.plan-wrap.full.editing .plan-actions { align-items: center; }
+.plan-wrap.full.editing .pa-spacer { display: none !important; }
+.plan-wrap.full .pa-round { flex: 0 0 56px; width: 56px; height: 56px; min-height: 0; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.plan-wrap.full .pa-round svg { width: 26px; height: 26px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.plan-wrap.full #edit-cancel { order: -1; }
+.plan-wrap.full .pa-btn.pa-round.go { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .80); border-color: rgba(255,255,255,.5); }
+.plan-wrap.full .pa-btn.pa-round.go svg { width: 28px; height: 28px; stroke-width: 2.6; }
+.plan-actions:has(#mode-tools:not(.hidden)) #edit-cancel { display: none; }   /* в рисовании — свои «Сохранить / Отмена» */
+.plan-wrap.full.editing .plan-actions > .pa-btn:not(.pa-round), .plan-wrap.full.editing #room-tools .btn, .plan-wrap.full.editing #mode-tools .btn { min-height: 56px; border-radius: 28px; }
+.plan-wrap.full .plan-actions .btn { font: 600 13px system-ui, -apple-system, sans-serif; }
+.plan-wrap.full .plan-actions .btn .ic svg, .plan-wrap.full .plan-actions .btn svg { stroke: #fff; }
+.plan-wrap.full #mode-tools .btn.primary { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .80); color: #fff; border-color: rgba(255,255,255,.5); }
+/* подсказки «i» редактора — стеклянной кнопкой слева сверху */
+.plan-wrap.full #editor-hint, .plan-wrap.full #mode-hint { position: absolute; z-index: 3; top: 16px; left: 18px; right: 70px; padding: 0; }
+.plan-wrap.full #editor-hint summary, .plan-wrap.full #mode-hint summary { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; min-width: 38px; padding: 8px; border-radius: 19px; box-sizing: border-box; }
+.plan-wrap.full #editor-hint summary svg, .plan-wrap.full #mode-hint summary svg { width: 20px; height: 20px; stroke: #fff; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.plan-wrap.full #editor-hint[open] summary, .plan-wrap.full #mode-hint[open] summary { padding: 8px 14px 8px 8px; align-items: flex-start; background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .55); }
+.plan-wrap.full #editor-hint .ihint-text, .plan-wrap.full #mode-hint .ihint-text { font-size: 13px; line-height: 1.35; color: #fff; }
+.plan-wrap.full.editing:has(#editor-hint[open]) .plan-edit-badge, .plan-wrap.full.editing:has(#mode-hint[open]) .plan-edit-badge { display: none; }
+/* угол / радиус выбранной вершины — стеклянной плашкой поверх схемы, схема не сдвигается */
+.plan-wrap.full .editor-bar { position: absolute; z-index: 4; top: 62px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 32px); padding: 8px 12px; border-radius: 18px; }
+.plan-wrap.full .editor-bar label { color: #fff; }
+/* круглые ✕ / ✓ сильнее общих правил ряда (у «Готово» есть правила по id с шириной 84 px) */
+.plan-wrap.full .plan-actions .pa-round { flex: 0 0 56px !important; width: 56px !important; height: 56px; min-height: 0; padding: 0; border-radius: 50%; gap: 0; }
+/* создание комнаты (с лидаром): ✕ слева, «Фото плана» по центру, ✓ справа — жидким стеклом */
+.plan-wrap.full #mode-tools { align-items: center; justify-content: space-between; gap: 10px; }
+.plan-wrap.full #mode-tools #mode-plan { flex: 1 1 auto; }
+.plan-wrap.full #mode-tools .pa-round.go { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .80); border-color: rgba(255,255,255,.5); }
+.plan-wrap.full #mode-tools .pa-round.go svg { width: 28px; height: 28px; stroke-width: 2.6; }

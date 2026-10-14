@@ -755,14 +755,16 @@ async function viewPlan(pid) {
   const lidarNow = typeof lidarSupportedCache !== 'undefined' && lidarSupportedCache === true;
   app.innerHTML = `
     ${header('Схема', '#/')}
-    <div class="plan-wrap">
+    <div class="plan-wrap ${lidarNow ? 'full' : ''} ${lidarNow && planState.edit ? 'editing' : ''}">
       <div class="plan-actions">
         ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}
         <button class="pa-btn pa-scan2 ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
         <button class="pa-btn pa-scan ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
         ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Создать</span></button><span class="pa-btn pa-spacer ${lidarNow ? '' : 'hidden'}" aria-hidden="true"></span>` : ''}
-        <button class="pa-btn ${planState.edit ? 'active' : ''} ${lidarNow && !planState.edit ? 'hidden' : ''}" id="toggle-edit" title="Редактор схемы">
-          <svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span></button>
+        ${lidarNow && planState.edit ? `<!-- редактор с лидаром: слева стеклянный крестик (выйти без изменений), справа галочка (готово) -->
+        <button class="pa-round" id="edit-cancel" title="Выйти без изменений" aria-label="Отменить изменения и выйти"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ''}
+        <button class="pa-btn ${planState.edit ? 'active' : ''} ${lidarNow && !planState.edit ? 'hidden' : ''} ${lidarNow && planState.edit ? 'pa-round go' : ''}" id="toggle-edit" title="${planState.edit ? 'Готово' : 'Редактор схемы'}" aria-label="${planState.edit ? 'Готово' : 'Редактор'}">
+          ${lidarNow && planState.edit ? '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg>' : `<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>${planState.edit ? 'Готово' : 'Редактор'}</span>`}</button>
         ${planState.edit ? `<!-- выбрана комната: «Размеры» и «Мебель» на месте «Создать» -->
         <span id="room-tools" class="tools hidden">
           <button class="btn small-btn" id="room-lengths" title="Высота потолка и длины стен — схема подстроится">${I('ruler')}Размеры</button>
@@ -773,9 +775,13 @@ async function viewPlan(pid) {
         </span>` : ''}
         ${planState.edit ? `<!-- рисование / масштаб подложки: свои кнопки на месте ряда действий («Готово» редактора скрыт) -->
         <span id="mode-tools" class="tools hidden">
+          ${lidarNow ? `<!-- с лидаром: слева ✕ (отмена), по центру «Фото плана», справа ✓ (сохранить) — жидким стеклом -->
+          <button class="pa-round" id="mode-cancel" title="Отмена" aria-label="Отмена"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          <button class="btn small-btn hidden" id="mode-plan" title="Загрузить фото плана (БТИ, план застройщика, скан) и рисовать по нему">${I('layers')}Фото плана</button>
+          <button class="pa-round go" id="mode-done" title="Сохранить" aria-label="Сохранить"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>` : `
           <button class="btn small-btn primary" id="mode-done">Сохранить</button>
           <button class="btn small-btn" id="mode-cancel">Отмена</button>
-          <button class="btn small-btn hidden" id="mode-plan" title="Загрузить фото плана (БТИ, план застройщика, скан) и рисовать по нему">${I('layers')}Фото плана</button>
+          <button class="btn small-btn hidden" id="mode-plan" title="Загрузить фото плана (БТИ, план застройщика, скан) и рисовать по нему">${I('layers')}Фото плана</button>`}
         </span>` : ''}
       </div>
       <div id="editor-bar" class="editor-bar ${planState.edit ? '' : 'hidden'}">
@@ -819,7 +825,28 @@ async function viewPlan(pid) {
     </div>
     ${bottomNav(pid, 'plan')}`;
 
-  $('#toggle-edit').onclick = () => { planState.edit = !planState.edit; planState.selected = null; planState.sel = null; planUndo.stack = []; resetPlanView(); render(); };
+  $('#toggle-edit').onclick = () => {
+    // при входе в редактор запоминаем схему, фото плана и фото стен — крестик вернёт всё как было
+    if (!planState.edit) planUndo.base = { rooms: structuredClone(rooms), plan: project.plan ? { ...project.plan } : null, photos: photos.map(p => ({ ...p })) };
+    else planUndo.base = null;
+    planUndo.dirty = false;
+    planState.edit = !planState.edit; planState.selected = null; planState.sel = null; planUndo.stack = []; resetPlanView(); render();
+  };
+  if ($('#edit-cancel')) $('#edit-cancel').onclick = async () => {
+    const base = planUndo.base;
+    if (planUndo.dirty && base) {
+      if (!await uiConfirm('Выйти без сохранения? Все изменения схемы с момента входа в редактор будут отменены.')) return;
+      const ids = new Set(base.rooms.map(r => r.id));
+      for (const r of await dbAll('rooms', 'projectId', pid)) if (!ids.has(r.id)) await dbDel('rooms', r.id);
+      for (const r of base.rooms) await dbPut('rooms', r);
+      const pr = await dbGet('projects', pid);
+      if (pr) { if (base.plan) pr.plan = base.plan; else delete pr.plan; await dbPut('projects', pr); }
+      for (const ph of base.photos) await dbPut('photos', ph);
+      toast('Изменения отменены');
+    }
+    planUndo.base = null; planUndo.dirty = false;
+    planState.edit = false; planState.mode = null; planState.selected = null; planState.sel = null; planUndo.stack = []; resetPlanView(); render();
+  };
   if ($('#toggle-edit-in')) $('#toggle-edit-in').onclick = () => $('#toggle-edit').onclick();
   const shotsBtn = $('#toggle-shots');
   if (shotsBtn) shotsBtn.onclick = () => { planState.shots = !planState.shots; render(); };
@@ -1397,6 +1424,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   // --- отмена ---
   function pushUndo(extra = {}, snapRooms = null) {
     planUndo.stack.push({ rooms: snapRooms || structuredClone(rooms), plan: project.plan ? { k: project.plan.k, ox: project.plan.ox, oy: project.plan.oy } : null, ...extra });
+    planUndo.dirty = true;
     if (planUndo.stack.length > 40) planUndo.stack.shift();
     const b = $('#plan-undo'); if (b) b.classList.remove('hidden');
   }
@@ -1955,6 +1983,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → О приложении»');
       return;
     }
+    // при первом открытии схемы лидар ещё не проверен — разметка собрана без него («Редактор» в верхнем ряду).
+    // Проверка прошла — перерисовываем один раз: дальше кеш уже известен и всё строится сразу как надо
+    if (!planState.edit && !planState.mode && $('#toggle-edit') && !$('#toggle-edit-in')) { render(); return; }   // схема на экране, но собрана без лидара — перерисовать
     // в редакторе только правка схемы; обмер — из обычного режима. Пустое место на месте «Обмера комнаты»,
     // чтобы «Создать» и «Готово» стояли там же и тех же размеров, что «Обмер квартиры» и «Редактор»
     if (planState.edit) { const sp = $('.pa-spacer'); if (sp) sp.classList.remove('hidden'); return; }
