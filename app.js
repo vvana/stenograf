@@ -418,7 +418,6 @@ async function viewProjects() {
           <button class="btn ghost" id="export-all">${I('download')}Резервная копия</button>
           <button class="btn ghost" id="import-all">${I('upload')}Импорт файла</button>
         </div>
-        <details class="ihint home-hint"><summary title="Подсказка" aria-label="Подсказка">${ICONS.info}<span class="ihint-text">Данные хранятся только на этом устройстве. Периодически сохраняйте резервную копию.</span></summary></details>
       </div>
     </div>`;
 
@@ -1351,7 +1350,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const ne = $('#plan-north');
     if (ne && project.north) ne.querySelector('svg').style.transform = `rotate(${((project.north.ang + r) * 180 / Math.PI + 90).toFixed(1)}deg)`;
     // в просмотре без увеличения смахивание по схеме листает страницу; увеличенная схема и редактор ловят касания сами
-    svg.style.touchAction = !planState.edit && k <= 1.05 ? 'pan-y' : 'none';
+    // схема на весь экран (с лидаром) страницу не листает — там один палец всегда двигает схему
+    svg.style.touchAction = !planState.edit && k <= 1.05 && !svg.closest('.plan-wrap.full') ? 'pan-y' : 'none';
     svg.innerHTML = `<g class="plan-view" transform="matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})">${s}</g>`;
     fitNamePills();
     if (!planState.edit) {
@@ -1601,7 +1601,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const qx = v0.tx - m0[0], qy = v0.ty - m0[1], cs = Math.cos(dr), sn = Math.sin(dr);
       Object.assign(planView, { k: v0.k * ds, r: v0.r + dr, tx: ds * (cs * qx - sn * qy) + m1[0], ty: ds * (sn * qx + cs * qy) + m1[1] });
       draw();
-    } else if (!gest.two && (planView.k > 1.05 || gest.editPan)) {
+    } else if (!gest.two && (planView.k > 1.05 || gest.editPan || (!planState.edit && svg.closest('.plan-wrap.full')))) {
       if (!gest.panning && Math.hypot(f.x - f.sx, f.y - f.sy) < 8) return;
       gest.panning = true; if (drag) drag.moved = true;
       const P = units(f.x, f.y);

@@ -825,7 +825,7 @@ select.inp {
 #app:has(.home-pad) { padding-bottom: 0; } /* на главном нет нижнего меню — без запаса под него */
 .home-pad { display: flex; flex-direction: column; min-height: calc(100dvh - 49px - env(safe-area-inset-top)); box-sizing: border-box; }
 .home-title { text-align: center; font: 700 19px system-ui, -apple-system, sans-serif; color: var(--ink); margin: 0 0 12px; } /* «Объекты» — между шапкой и списком */
-.home-bottom { margin-top: auto; padding-top: 40px; padding-bottom: env(safe-area-inset-bottom); }
+.home-bottom { margin-top: auto; padding-top: 40px; padding-bottom: calc(env(safe-area-inset-bottom) + 20px); }
 .home-hint { margin-top: 16px; }
 /* экран стены: мини-схема комнаты сверху, ниже «шторка» со стеной */
 .wall-mini { height: 170px; padding: 10px 16px 6px; box-sizing: border-box; position: relative; }
@@ -1274,6 +1274,24 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .ui-seg button { position: relative; flex: 1; border: 0; background: none; font: 600 15px system-ui, -apple-system, sans-serif; cursor: pointer;
   color: rgba(255,255,255,.9); text-shadow: 0 1px 2px rgba(30,25,15,.45); transition: color .2s; }
 .ui-seg button.on { color: #fff; }
+
+/* главный экран: кнопки жидким стеклом, как на «Схеме» (просьба пользователя 2026-10-15) */
+.home-bottom #add-project, .home-bottom .backup-row .btn, .home-hint summary {
+  color: #fff; text-shadow: 0 1px 2px rgba(30,25,15,.35); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.16), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.home-bottom #add-project, .home-bottom .backup-row .btn { min-height: 56px; border-radius: 28px; font-weight: 600; }
+.home-bottom #add-project { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .78); }
+.home-bottom .backup-row .btn svg { stroke: #fff; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.home-bottom #add-project:active, .home-bottom .backup-row .btn:active, .home-hint summary:active { transform: scale(.94); }
+.home-hint summary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-width: 56px; min-height: 56px; padding: 0; border-radius: 28px; box-sizing: border-box; color: #fff; }
+.home-hint summary svg { flex: none; width: 26px; height: 26px; stroke: #fff; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.home-hint[open] summary svg { stroke: #fff; }   /* в раскрытой подсказке значок тоже белый, без оранжевого */
+.home-hint summary:focus-visible { outline: none; }
+.home-hint[open] summary { padding: 12px 18px 12px 15px; align-items: flex-start; text-align: left; }
+.home-hint .ihint-text { color: #fff; font-size: 14px; line-height: 1.4; }
 
 /* команда объекта */
 .team-card { display: flex; flex-direction: column; gap: 10px; }
