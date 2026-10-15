@@ -481,6 +481,7 @@ async function savePlanes(pid, stageId, planes, place) {
 /* ---------- зеркала, найденные лидаром: предложить пользователю ---------- */
 
 async function proposeMirrors(room, scan, res, idMap) {
+  return 0;   // зеркала больше не добавляются в схему — даже найденные лидаром (решение пользователя 2026-10-15); код ниже оставлен на случай возврата
   const list = (scan.mirrors || []).filter(m => m.parent && idMap[m.parent]);
   let added = 0;
   for (const m of list) {

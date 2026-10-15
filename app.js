@@ -2557,28 +2557,26 @@ async function viewWall(pid, wallKey) {
       ${isWallId(room, side) ? `
         <div class="card" style="margin-top:12px">
           <div class="stage-photos-head">
-            <b>Проёмы и зеркала</b>
+            <b>Двери и окна</b>
             <button class="btn small-btn" id="add-opening">+ Добавить</button>
           </div>
           <div id="openings" class="openings">
             ${((room.openings || {})[side] || []).map((o, i) => `
               <span class="chip st0">${OPENING_KINDS[o.kind] ? OPENING_KINDS[o.kind].label : o.kind} ${String(o.w).replace('.', ',')}×${String(o.h).replace('.', ',')} м${o.x != null ? ` · слева ${String(o.x).replace('.', ',')}` : ''}
-                <button class="chip-x" data-del-opening="${i}" title="Убрать">✕</button></span>`).join('') || '<span class="mut small">Нет проёмов — стена глухая</span>'}
+                <button class="chip-x" data-del-opening="${i}" title="Убрать">✕</button></span>`).join('') || '<span class="mut small">Нет дверей и окон — стена глухая</span>'}
           </div>
-          <p class="mut small">Зеркало в 3D-туре отражает комнату по-настоящему — снимать его с отражением не нужно.</p>
         </div>` : ''}
       <div class="cards">
         ${stages.map(s => {
           const list = byStage[s.id] || [];
           return `<div class="card stage-photos">
             <div class="stage-photos-head">
-              <b>${esc(s.name)}</b>${s.hint ? `<button type="button" class="hint-i" title="Что фиксировать" aria-label="Что фиксировать" data-hint-toggle="${s.id}">${ICONS.info}</button>` : ''}
+              <b>${esc(s.name)}</b>
               <span class="btn-pair">
                 <button class="btn small-btn" data-shoot="${s.id}">${I('camera')}Снять</button>
                 <button class="btn small-btn" data-pick="${s.id}">${I('image')}Галерея</button>
               </span>
             </div>
-            ${s.hint ? `<div class="stage-hint-text mut small hidden" data-hint-text="${s.id}">${esc(s.hint)}</div>` : ''}
             ${list.length ? `<div class="thumbs">
               ${list.map(p => {
                 const n = (p.marks || []).length;
@@ -2734,9 +2732,9 @@ async function viewWall(pid, wallKey) {
   const addOp = $('#add-opening');
   if (addOp) {
     addOp.onclick = async () => {
-      const kt = await uiPrompt('Что добавить? д — дверь, о — окно, з — зеркало', 'д');
-      if (kt === null) return;
-      const kind = { 'д': 'door', 'd': 'door', 'о': 'window', 'o': 'window', 'з': 'mirror', 'z': 'mirror', 'm': 'mirror' }[String(kt).trim().toLowerCase()[0]] || 'door';
+      // выбор — слайдером «Дверь / Окно» (зеркала не добавляются — это не часть схемы, решение пользователя 2026-10-15)
+      const kind = await uiChoose('Что добавить?', [['door', 'Дверь'], ['window', 'Окно']], 'door');
+      if (!kind) return;
       const def = OPENING_KINDS[kind];
       const t = await uiPrompt(`${def.label}: ширина и высота в метрах, затем (необязательно) отступ от левого угла и высота от пола.\nНапример: ${def.example}`, def.example);
       if (t === null) return;
