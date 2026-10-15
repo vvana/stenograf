@@ -209,65 +209,10 @@ async function surfaceTexture(THREE, photo, w, h) {
   return canvasTexture(THREE, canvas);
 }
 
-async function viewTour(pid, roomId = null) {
-  const { project, rooms, stages, photos } = await loadProjectData(pid);
-  if (!project) return nav('');
-  if (roomId && rooms.some(r => r.id === roomId)) { tourState.roomId = roomId; if (tourState.mode === 'house') tourState.mode = 'inside'; }
-  if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
-  if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
-  // HD-модель — у этапа: выбранный этап, если у него она есть, иначе последний этап с моделью
-  const hdStage = () => { const ok = stages.filter(s => s.hdScan && s.hdScan.blob); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
-  if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
-  const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
-
-  app.innerHTML = `
-    ${header('3D', false)}
-    <div class="tour">
-      <canvas id="tour-canvas"></canvas>
-      <div class="tour-top">
-        <div class="tour-row">
-          ${photos.length ? '' : '<div class="inp tour-nophoto">Фото пока нет</div>'}
-          ${photos.length ? `<select class="inp" id="tour-stage">
-            <option value="all" ${tourState.stage === 'all' ? 'selected' : ''}>Сейчас — последние фото</option>
-            ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-          </select>
-          <button id="tour-photos" class="tour-pic ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах">${I('image')}</button>` : ''}
-        </div>
-      </div>
-      <div class="tour-bottom">
-        <div class="tour-modes">
-          <span class="seg-thumb" id="seg-thumb"></span>
-          <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}<span>Объект</span></button>
-          <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('person')}<span>Внутри</span></button>
-          ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}<span>HD</span></button>` : ''}
-          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}<span>Финал</span></button>` : ''}
-          ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
-        </div>
-        <button id="tour-shot" class="tour-shot" title="Снимок 3D — посмотреть, нарисовать поверх, сохранить или отправить" aria-label="Снимок">${ICONS.camera}<span>Фото</span></button>
-        <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
-        <div class="tour-plan" id="tour-plan"></div>
-      </div>
-      <div class="tour-msg hidden" id="tour-msg"></div>
-    </div>
-    ${bottomNav(pid, 'tour')}`;
-
-  const msg = $('#tour-msg'), hint = document.createElement('div'); // поясняющий текст на экране не показываем (просьба пользователя)
-  const say = t => { msg.textContent = t; msg.classList.toggle('hidden', !t); };
-  if (!rooms.length) { say('Сначала нарисуйте схему — тур строится из комнат и их фото.'); return; }
-
-  let THREE;
-  try { THREE = await threeReady(); } catch (err) { say(err.message + '. Проверьте соединение и обновите страницу.'); return; }
-
-  /* ---------- сцена ---------- */
-  const canvas = $('#tour-canvas');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  const dark = false; // приложение всегда светлое
-  renderer.setClearColor(0xe3e7ec); // светло-серый холодный фон — белые стены на нём читаются (как у RoomSketcher/Floorplanner)
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+/* сборка 3D-сцены квартиры из схемы — без экрана и холста: её использует экран 3D и экспорт GLB с «Ещё» */
+function buildTourScene(THREE, rooms) {
+  const dark = false;
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 500);
 
   const bbAll = rooms.map(roomBBox);
   const minX = Math.min(...bbAll.map(b => b.x)), maxX = Math.max(...bbAll.map(b => b.x + b.w));
@@ -311,6 +256,7 @@ async function viewTour(pid, roomId = null) {
   const surfaces = []; // { key, mesh, w, h }
   const ceilings = [], mirrors = [];
   const roomInfo = {};
+  const furniture = [];
   for (const r of rooms) {
     const ring = roomRing(r);                       // контур со скруглениями, h — высота потолка в точке
     const ceil = Math.max(...ring.map(p => p.h));
@@ -543,11 +489,74 @@ async function viewTour(pid, roomId = null) {
       m.position.set(o.x, o.z || 0, o.y);
       m.rotation.y = -o.ang;
       if (typeof furnBackFlip === 'function' && furnBackFlip(o, r)) m.scale.z = -1;   // спинка — к ближайшей стене, как на схеме
-      scene.add(m);
+      scene.add(m); furniture.push(m); m.name = typeof furnName === 'function' ? furnName(o) : (o.cat || 'Предмет');
     }
     const c = roomCenter(r);
     roomInfo[r.id] = { center: new THREE.Vector3(c[0], 1.55, c[1]), ceil, name: r.name };
   }
+
+  return { scene, bbAll, minX, maxX, minZ, maxZ, centerAll, span, sun, ground, wallSolid, wallCap, wallCapTop, doorMat, glassMat, plainFloors, solidWalls, greyMat, floorMat, ceilMat, lineMat, FM, floorTex, surfaces, ceilings, mirrors, roomInfo, furniture };
+}
+
+async function viewTour(pid, roomId = null) {
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  if (!project) return nav('');
+  if (roomId && rooms.some(r => r.id === roomId)) { tourState.roomId = roomId; if (tourState.mode === 'house') tourState.mode = 'inside'; }
+  if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
+  if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
+  // HD-модель — у этапа: выбранный этап, если у него она есть, иначе последний этап с моделью
+  const hdStage = () => { const ok = stages.filter(s => s.hdScan && s.hdScan.blob); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
+  if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
+  const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
+
+  app.innerHTML = `
+    ${header('3D', false)}
+    <div class="tour">
+      <canvas id="tour-canvas"></canvas>
+      <div class="tour-top">
+        <div class="tour-row">
+          ${photos.length ? '' : '<div class="inp tour-nophoto">Фото пока нет</div>'}
+          ${photos.length ? `<select class="inp" id="tour-stage">
+            <option value="all" ${tourState.stage === 'all' ? 'selected' : ''}>Сейчас — последние фото</option>
+            ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          </select>
+          <button id="tour-photos" class="tour-pic ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах">${I('image')}</button>` : ''}
+        </div>
+      </div>
+      <button id="tour-shot" class="tour-shot" title="Снимок 3D — посмотреть, нарисовать поверх, сохранить или отправить" aria-label="Снимок">${ICONS.camera}<span>Фото</span></button>
+      <div class="tour-bottom">
+        <div class="tour-modes">
+          <span class="seg-thumb" id="seg-thumb"></span>
+          <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}<span>Объект</span></button>
+          <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('person')}<span>Внутри</span></button>
+          ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}<span>HD</span></button>` : ''}
+          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}<span>Финал</span></button>` : ''}
+          ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
+        </div>
+        <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
+        <div class="tour-plan" id="tour-plan"></div>
+      </div>
+      <div class="tour-msg hidden" id="tour-msg"></div>
+    </div>
+    ${bottomNav(pid, 'tour')}`;
+
+  const msg = $('#tour-msg'), hint = document.createElement('div'); // поясняющий текст на экране не показываем (просьба пользователя)
+  const say = t => { msg.textContent = t; msg.classList.toggle('hidden', !t); };
+  if (!rooms.length) { say('Сначала нарисуйте схему — тур строится из комнат и их фото.'); return; }
+
+  let THREE;
+  try { THREE = await threeReady(); } catch (err) { say(err.message + '. Проверьте соединение и обновите страницу.'); return; }
+
+  /* ---------- сцена ---------- */
+  const canvas = $('#tour-canvas');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const dark = false; // приложение всегда светлое
+  renderer.setClearColor(0xe3e7ec); // светло-серый холодный фон — белые стены на нём читаются (как у RoomSketcher/Floorplanner)
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 500);
+  const { scene, bbAll, minX, maxX, minZ, maxZ, centerAll, span, sun, ground, wallSolid, wallCap, wallCapTop, doorMat, glassMat, plainFloors, solidWalls, greyMat, floorMat, ceilMat, lineMat, FM, floorTex, surfaces, ceilings, mirrors, roomInfo, furniture } = buildTourScene(THREE, rooms);
 
   /* ---------- текстуры по этапу ---------- */
   const texCache = new Map();
@@ -901,15 +910,7 @@ async function viewTour(pid, roomId = null) {
     // отправка — отдельным тапом: после долгой сборки браузер уже не считает это действием пользователя и не откроет «Поделиться»
     const stageName = tourState.stage === 'all' ? 'последние фото' : (stages.find(s => s.id === tourState.stage) || {}).name || '';
     const file = `${(project.name || 'model').replace(/[\\/:*?"<>|]+/g, '_')}.glb`;
-    const host = document.createElement('div');
-    host.className = 'plan-sheet tpl-sheet';
-    host.innerHTML = `<div class="sh-title">3D-модель готова</div>
-      <p class="mut small">${esc(file)} · ${(blob.size / 1048576).toFixed(1).replace('.', ',')} МБ · фото: ${esc(stageName)}.<br>Формат GLB открывается в Blender, SketchUp, онлайн-просмотрщиках и на сайтах.</p>
-      <button class="btn primary wide" data-glb="send">${I('share')}Отправить или сохранить</button>
-      <button class="btn ghost wide" data-glb="x">Закрыть</button>`;
-    document.body.appendChild(host);
-    host.querySelector('[data-glb="send"]').onclick = async () => { host.remove(); await deliverFile(blob, file, `3D-модель: ${project.name}`); };
-    host.querySelector('[data-glb="x"]').onclick = () => host.remove();
+    showGlbDialog(blob, file, () => {});
   };
 
   /* ---------- цикл ---------- */
@@ -925,7 +926,7 @@ async function viewTour(pid, roomId = null) {
   resize(); setMode(tourState.mode); frame();
   applyStage();
   // экспорт GLB запускают из «Ещё»: открываем 3D и собираем модель текущей сцены (кнопка на экране 3D скрыта)
-  if (tourState.exportGlb) { tourState.exportGlb = false; setTimeout(() => { if (glbBtn) glbBtn.click(); }, 400); }
+
 
   window.__tourDebug = () => ({ total: surfaces.length, textured: surfaces.filter(s => s.mesh.material.map).length, mirrors: mirrors.length, mode: tourState.mode, stage: tourState.stage, room: tourState.roomId, solidWalls: solidWalls.length, plainFloors: plainFloors.length, photos: tourState.photos, finalLoaded: !!finalMesh, wallPlanesVisible: surfaces.filter(s => !s.key.endsWith(':f') && !s.key.endsWith(':c') && s.mesh.visible).length, floors: plainFloors.map(f => ({ color: f.material.color.getHexString(), visible: f.visible, y: f.position.y, n: f.geometry.attributes.normal.getY(0) })), floorPlanes: surfaces.filter(s => s.key.endsWith(':f')).map(s => ({ key: s.key, visible: s.mesh.visible, map: !!s.mesh.material.map })) });
   window.__tourScene = scene;
@@ -1046,30 +1047,73 @@ function openShotEditor(dataUrl, title) {
     el.querySelectorAll('.se-tool').forEach(b => { b.classList.toggle('on', b.dataset.t === st.tool); b.style.color = st.color; });
     $e('.se-color span').style.background = st.color;
     mini.innerHTML = toolSvg(st.tool); mini.style.color = st.color;
-    mini.classList.toggle('right', st.corner === 'right');
+    mini.classList.toggle('right', st.corner === 'right'); el.classList.toggle('mini-right', st.corner === 'right');
+    // куда сжимается панель — на место кружка (clip-path), см. .se-tools в app.css
+    const tr = tray.getBoundingClientRect(), mr = mini.getBoundingClientRect();
+    if (tr.width && !mini.classList.contains('dragging')) tray.style.setProperty('--to-mini',
+      `inset(${mr.top - tr.top}px ${tr.right - mr.right}px ${tr.bottom - mr.bottom}px ${mr.left - tr.left}px round ${mr.width / 2}px)`);
     el.classList.toggle('tray-open', st.open);
   };
   const setOpen = v => { st.open = v; paint(); };
   el.querySelectorAll('.se-tool').forEach(b => b.onclick = () => { st.tool = b.dataset.t; paint(); });
   $e('.se-grip').onclick = () => setOpen(false);
-  // смахнуть панель вниз — свернуть
-  let tg = null;
-  tray.addEventListener('pointerdown', e => { if (!e.target.closest('.se-tool, .se-color')) tg = { y: e.clientY }; });
-  tray.addEventListener('pointerup', e => { if (tg && e.clientY - tg.y > 25) setOpen(false); tg = null; });
+  // свернуть, как в «Разметке» iOS: взять панель у края и провести к другому краю — край едет за пальцем,
+  // панель сжимается в кружок в том углу, куда тянули (дальше трети ширины или рывком), иначе возвращается
+  let tg = null, swallowClick = false;
+  tray.addEventListener('pointerdown', e => { tg = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, dir: 0, w: tray.getBoundingClientRect().width }; });
+  tray.addEventListener('pointermove', e => {
+    if (!tg || e.pointerId !== tg.id) return;
+    const dx = e.clientX - tg.x;
+    if (!tg.dir) {
+      if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(e.clientY - tg.y)) return;
+      tg.dir = dx > 0 ? 1 : -1; tray.classList.add('dragging'); try { tray.setPointerCapture(e.pointerId); } catch {}
+    }
+    const d = Math.max(0, Math.min(tg.w - 94, dx * tg.dir));
+    tray.style.clipPath = tg.dir > 0 ? `inset(0 0 0 ${d}px round 52px)` : `inset(0 ${d}px 0 0 round 52px)`;
+  });
+  const trayEnd = e => {
+    const g = tg; tg = null;
+    if (!g || !g.dir) return;
+    swallowClick = true; setTimeout(() => { swallowClick = false; }, 300);
+    const dx = (e.clientX - g.x) * g.dir, v = dx / Math.max(1, performance.now() - g.t);
+    tray.classList.remove('dragging');
+    if (dx > g.w / 3 || v > 0.6) { st.corner = g.dir > 0 ? 'right' : 'left'; st.open = false; paint(); }
+    tray.style.clipPath = '';
+  };
+  tray.addEventListener('pointerup', trayEnd); tray.addEventListener('pointercancel', trayEnd);
+  tray.addEventListener('click', e => { if (swallowClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+  // кружок: тап — развернуть; перетаскивание — едет точно за пальцем (без анимации), по отпусканию плавно встаёт в ближайший нижний угол
   let md = null;
-  mini.addEventListener('pointerdown', e => { md = { x: e.clientX, y: e.clientY, moved: false }; try { mini.setPointerCapture(e.pointerId); } catch {} });
+  mini.addEventListener('pointerdown', e => {
+    const r = mini.getBoundingClientRect();
+    md = { x: e.clientX, y: e.clientY, moved: false, r };
+    try { mini.setPointerCapture(e.pointerId); } catch {}
+  });
   mini.addEventListener('pointermove', e => {
     if (!md) return;
     const dx = e.clientX - md.x, dy = e.clientY - md.y;
-    if (Math.hypot(dx, dy) > 8) md.moved = true;
-    if (md.moved) mini.style.transform = `translate(${dx}px, ${Math.min(0, dy)}px)`;
+    if (!md.moved && Math.hypot(dx, dy) > 6) { md.moved = true; mini.classList.add('dragging'); }
+    if (md.moved) {
+      const cx = Math.max(-md.r.left + 6, Math.min(innerWidth - md.r.right - 6, dx));
+      const cy = Math.max(-md.r.top + 60, Math.min(0, dy) + Math.max(0, dy) * 0.15);   // вниз — с сопротивлением
+      mini.style.transform = `translate(${cx}px, ${cy}px) scale(1.06)`;
+    }
   });
-  mini.addEventListener('pointerup', e => {
+  const miniEnd = e => {
     if (!md) return;
-    const moved = md.moved; md = null; mini.style.transform = '';
-    if (moved) { st.corner = e.clientX > innerWidth / 2 ? 'right' : 'left'; paint(); }
-    else setOpen(true);
-  });
+    const g = md; md = null;
+    if (!g.moved) { if (e.type === 'pointerup') setOpen(true); return; }
+    // FLIP: запоминаем, где кружок сейчас, переставляем в угол и плавно доводим
+    const now = mini.getBoundingClientRect();
+    st.corner = now.left + now.width / 2 > innerWidth / 2 ? 'right' : 'left'; paint();
+    mini.style.transform = '';
+    const to = mini.getBoundingClientRect();
+    mini.style.transform = `translate(${now.left - to.left}px, ${now.top - to.top}px)`;
+    mini.getBoundingClientRect();
+    mini.classList.remove('dragging');
+    requestAnimationFrame(() => { mini.style.transform = ''; });
+  };
+  mini.addEventListener('pointerup', miniEnd); mini.addEventListener('pointercancel', miniEnd);
 
   /* ---------- окно «Цвета»: сетка, спектр, слайдеры, непрозрачность, пипетка, сохранённые цвета ---------- */
   const hex2 = v => Math.round(v).toString(16).padStart(2, '0');
@@ -1133,11 +1177,70 @@ function openShotEditor(dataUrl, title) {
       try {
         const b64 = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = no; fr.readAsDataURL(blob); });
         await Native.RP.saveImage({ data: b64 }); toast('Сохранено в «Фото»');
-      } catch (err) { uiAlert('Не удалось сохранить: ' + (err && err.message || err)); }
+      } catch (err) {
+        // нет доступа к «Фото» — сразу предлагаем открыть настройки приложения (там пункт «Фото»)
+        if (/denied|доступа/i.test(String(err && (err.code || err.message) || err)) && Native.RP.openSettings) {
+          if (await uiDialog({ text: 'Нет доступа к «Фото». Откройте настройки Fixpoint → «Фото» и выберите «Добавлять фото» или «Полный доступ».', ok: 'Открыть настройки', cancel: 'Отмена' }))
+            Native.RP.openSettings().catch(() => {});
+        } else uiAlert('Не удалось сохранить: ' + (err && err.message || err));
+      }
       return;
     }
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fileName(); a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000); toast('Снимок сохранён');
   };
-  $e('[data-a="share"]').onclick = async () => deliverFile(await result(), fileName(), title);
+  $e('[data-a="share"]').onclick = async () => deliverFile(await result(), fileName());   // только картинка, без подписи (просьба пользователя)
+}
+
+/* ---------- экспорт 3D-модели (GLB) прямо с «Ещё», без экрана 3D и без фото (просьба пользователя 2026-10-15) ---------- */
+async function exportGlbModel(pid) {
+  const { project, rooms } = await loadProjectData(pid);
+  if (!rooms.length) return uiAlert('Схема пуста — сначала обмерьте или нарисуйте комнаты.');
+  const THREE = await threeReady();
+  const { GLTFExporter } = await import('./vendor/GLTFExporter.js');
+  const S = buildTourScene(THREE, rooms);
+  // в файл — только сама модель, как её видно в 3D: стены с проёмами, полы, двери, окна, мебель; без фото, света, потолков и вспомогательных линий
+  const keep = new Set([...S.solidWalls, ...S.plainFloors, ...S.furniture]);
+  S.scene.traverse(o => { if (o.isMesh || o.isLine || o.isLineSegments || o.isLight) o.visible = false; });
+  const show = o => { o.visible = true; o.traverse(c => { c.visible = true; }); };
+  keep.forEach(show);
+  S.solidWalls.forEach(w => { w.name = w.name || 'Стена'; });
+  S.plainFloors.forEach((f, i) => { f.name = `${rooms[i].name} · пол`; });
+  const buf = await new GLTFExporter().parseAsync(S.scene, { binary: true, onlyVisible: true, maxTextureSize: 1024 });
+  const blob = new Blob([buf], { type: 'model/gltf-binary' });
+  S.scene.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  return { blob, file: `${(project.name || 'model').replace(/[\\/:*?"<>|]+/g, '_')}.glb` };
+}
+
+// окно «3D-модель готова» — жидким стеклом; кнопки-значки: ✕ закрыть, сохранить (в «Файлы» на iPhone), отправить
+function showGlbDialog(blob, file, onDone) {
+  const back = document.createElement('div');
+  back.className = 'ui-dlg-back';
+  const host = document.createElement('div');
+  host.className = 'ui-dlg glb-dlg';
+  host.innerHTML = `<div class="sh-title">3D-модель готова</div>
+    <p class="mut small">${esc(file)} · ${(blob.size / 1048576).toFixed(1).replace('.', ',')} МБ<br>Формат GLB открывается в Blender, SketchUp, онлайн-просмотрщиках и на сайтах.</p>
+    <div class="glb-btns">
+      <button class="round-btn" data-glb="x" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <button class="round-btn" data-glb="save" aria-label="Сохранить"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v9M8 12.5l4 4 4-4"/></svg></button>
+      <button class="round-btn go" data-glb="send" aria-label="Отправить"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7.5 7.5L12 3l4.5 4.5"/><path d="M6 11H5a1 1 0 00-1 1v8a1 1 0 001 1h14a1 1 0 001-1v-8a1 1 0 00-1-1h-1"/></svg></button>
+    </div>`;
+  back.appendChild(host); document.body.appendChild(back);
+  requestAnimationFrame(() => back.classList.add('on'));
+  const done = () => { back.classList.remove('on'); setTimeout(() => back.remove(), 180); onDone && onDone(); };
+  host.querySelector('[data-glb="x"]').onclick = done;
+  host.querySelector('[data-glb="send"]').onclick = async () => { await deliverFile(blob, file); done(); };
+  host.querySelector('[data-glb="save"]').onclick = async () => {
+    if (Native.RP && Native.RP.saveFile) {   // на iPhone — в «Файлы» → «На iPhone» → Fixpoint
+      try {
+        const b64 = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = no; fr.readAsDataURL(blob); });
+        await Native.RP.saveFile({ name: file, data: b64 });
+        toast('Сохранено: «Файлы» → «На iPhone» → Fixpoint');
+      } catch (err) { uiAlert('Не удалось сохранить: ' + (err && err.message || err)); return; }
+    } else {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000); toast('Файл сохранён');
+    }
+    done();
+  };
 }

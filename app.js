@@ -190,6 +190,7 @@ async function render() {
       if (parts[2] === 'verify') return await viewVerify(pid);
       if (parts[2] === 'calc') return await viewCalc(pid);
       if (parts[2] === 'hd') return await viewHD(pid, parts[3] || null);
+      if (parts[2] === 'team') return await viewTeam(pid);
       if (parts[2] === 'ghost' && parts[3] && parts[4]) return await viewGhost(pid, parts[3], parts[4]);
       if (parts[2] === 'tour') return await viewTour(pid, parts[3] || null);
       return await viewPlan(pid);
@@ -200,6 +201,8 @@ async function render() {
     app.innerHTML = `<div class="pad"><h2>Ошибка</h2><p class="mut">${esc(err.message)}</p>
       <button class="btn" onclick="location.hash=''">На главную</button></div>`;
   } finally {
+    // экраны, которые закрываются свайпом вправо (просьба пользователя 2026-10-15)
+    if (/^#\/p\/[^/]+\/(calc|report|hd|team)(\/|$)/.test(location.hash)) { const b = document.querySelector('.topbar [data-nav]'); if (b) b.dataset.swipeBack = ''; }
     // после перехода свайпом — короткий въезд экрана с нужной стороны
     // класс въезда снимается всегда: иначе он оставался после свайпа, и каждая перерисовка того же экрана
     // (вход/выход из редактора, «Отмена») снова «въезжала» сбоку — на iPhone экран дёргался
@@ -217,6 +220,14 @@ const swipeNav = { dir: 0 };
   let st = null;
   const start = (x, y, target) => {
     st = null;
+    // вложенные экраны («Площади», «Задание для мастеров», «HD-скан», «Команда»): свайп вправо — назад, по стрелке шапки
+    const back = document.querySelector('.topbar [data-swipe-back]');
+    if (back) {
+      if (document.querySelector('.plan-sheet:not(.hidden), .tpl-sheet, .ui-dlg-back')) return;
+      if (target.closest && target.closest('input, textarea, select, .swipe')) return;
+      st = { x, y, t: Date.now(), back: back.dataset.nav };
+      return;
+    }
     if (!document.querySelector('.bottomnav')) return;
     if (document.querySelector('.plan-sheet:not(.hidden), .tpl-sheet, .viewer:not(.hidden), .shot-ed')) return;
     const edge = x < EDGE || x > innerWidth - EDGE;
@@ -225,9 +236,10 @@ const swipeNav = { dir: 0 };
   };
   const end = (x, y) => {
     if (!st) return;
-    const dx = x - st.x, dy = y - st.y, dt = Date.now() - st.t;
+    const dx = x - st.x, dy = y - st.y, dt = Date.now() - st.t, back = st.back;
     st = null;
     if (dt > 700 || Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+    if (back) { if (dx > 0) { swipeNav.dir = -1; nav(back); } return; }
     const items = [...document.querySelectorAll('.bottomnav .nav-item')];
     const i = items.findIndex(b => b.classList.contains('active'));
     const k = dx < 0 ? i + 1 : i - 1;   // влево — следующая вкладка, вправо — предыдущая
@@ -802,6 +814,7 @@ async function viewPlan(pid) {
         <div class="plan-tools">
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool ${planUndo.stack.length ? '' : 'hidden'}" id="plan-undo" title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
+          ${rooms.length && !planState.edit ? `<button class="plan-tool plan-shot" id="plan-shot" title="Снимок схемы — нарисовать поверх, сохранить или отправить" aria-label="Снимок схемы">${ICONS.camera}<span>Фото</span></button>` : ''}
           ${rooms.length && !planState.edit ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
           ${planState.edit && rooms.length ? `<button class="plan-tool danger hidden" id="clear-plan" title="Удалить выбранную комнату" aria-label="Удалить комнату">${ICONS.trash}</button>` : ''}
         </div>
@@ -872,6 +885,11 @@ async function viewPlan(pid) {
   };
   const sharePlanBtn = $('#share-plan');
   if (sharePlanBtn) sharePlanBtn.onclick = () => exportProject(pid, false);
+  // «Фото»: снимок схемы как она видна сейчас → тот же редактор, что у снимка 3D (рисовать, сохранить в «Фото», отправить)
+  if ($('#plan-shot')) $('#plan-shot').onclick = async () => {
+    try { openShotEditor(await planSnapshot($('#plan')), `${project.name} — схема`); }
+    catch (err) { console.error(err); uiAlert('Не удалось сделать снимок схемы: ' + (err && err.message || err)); }
+  };
   setupPlan(pid, rooms, counts, points, project, shots, openShot);
 }
 
@@ -1079,6 +1097,7 @@ const ICONS = {
   report: svgIco('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/>'),
   lock: svgIco('<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
   calc: svgIco('<rect x="3" y="3" width="15" height="6" rx="2"/><path d="M18 6h2.5v5H12v3"/><rect x="10.5" y="14" width="3" height="7" rx="1"/>'), // валик
+  phone: svgIco('<path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z"/>'),
   user: svgIco('<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'),
   // «i» — скруглённый квадрат с закрашенной i с засечками (по образцу пользователя, 2026-10-09)
   info: svgIco('<rect x="3" y="3" width="18" height="18" rx="5"/>'
@@ -2132,12 +2151,12 @@ async function viewHD(pid, stageId = null) {
   // HD-скан — у этапа: показываем выбранный, иначе последний этап, где он есть
   const withHD = stages.filter(s => s.hdCapture || s.hdScan);
   const st = stages.find(s => s.id === stageId) || withHD[withHD.length - 1] || stages[0];
-  if (!st) { app.innerHTML = `${header('HD-скан', false)}<div class="pad"><p class="mut">Сначала добавьте этап — HD-скан снимается обходом этапа.</p></div>${bottomNav(pid, 'more')}`; return; }
+  if (!st) { app.innerHTML = `${header('HD-скан', `#/p/${pid}/more`)}<div class="pad"><p class="mut">Сначала добавьте этап — HD-скан снимается обходом этапа.</p></div>${bottomNav(pid, 'more')}`; return; }
   const cap = st.hdCapture, hd = st.hdScan;
   let capOk = false;
   if (cap && Native.RP && Native.RP.fileInfo) { try { capOk = !!(await Native.RP.fileInfo({ path: cap.path })).exists; } catch {} }
   app.innerHTML = `
-    ${header('HD-скан', false)}
+    ${header('HD-скан', `#/p/${pid}/more`)}
     <div class="pad"><div class="cards">
       <select class="inp" id="hd-stage">${stages.map(s => `<option value="${s.id}" ${s.id === st.id ? 'selected' : ''}>${esc(s.name)}${s.hdScan ? ' · модель' : s.hdCapture ? ' · пакет' : ''}</option>`).join('')}</select>
       <div class="card">
@@ -2575,6 +2594,9 @@ async function viewWall(pid, wallKey) {
         }).join('')}
       </div>
     </div>
+    ${wIdx >= 0 || (isSurf && rooms.length > 1) ? `<!-- стрелки к соседней стене (комнате) — внизу экрана, жидким стеклом (просьба пользователя 2026-10-15) -->
+    <button class="wall-arrow l" id="wall-prev" aria-label="Предыдущая"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <button class="wall-arrow r" id="wall-next" aria-label="Следующая"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>` : ''}
     <input type="file" id="cam" accept="image/*" capture="environment" class="hidden-input">
     <input type="file" id="gal" accept="image/*" multiple class="hidden-input">
     <div id="viewer" class="viewer hidden"></div>`;
@@ -2637,6 +2659,11 @@ async function viewWall(pid, wallKey) {
     const go = (hash, dir) => { wallSlide = dir; location.replace(hash); };
     const scrollsX = el => { for (; el && el !== app; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
 
+    // стрелки: то же, что свайп — шторка уезжает в сторону, соседняя въезжает с другой
+    for (const [id, dir] of [['#wall-prev', -1], ['#wall-next', 1]]) {
+      const btn = $(id); if (!btn) continue;
+      btn.onclick = () => { const hash = neighbor(dir); if (!hash) return; moveX(-dir * innerWidth, 160); setTimeout(() => go(hash, dir), 150); };
+    }
     miniEl.addEventListener('click', e => {
       const w = e.target.closest('[data-mini-wall]'), r = e.target.closest('[data-mini-room]');
       if (w) { if (w.dataset.miniWall !== side) { const k = wEdges.findIndex(x => x.id === w.dataset.miniWall); go(`#/p/${pid}/w/${encodeURIComponent(roomId + ':' + w.dataset.miniWall)}`, k > wIdx ? 1 : -1); } return; }
@@ -2927,11 +2954,7 @@ async function viewMore(pid) {
       <div class="cards">
         <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
-        <div class="card">
-          <b>Команда объекта</b>
-          <p class="mut small">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
-          <button class="btn ghost wide" id="set-name">${I('user')}Подпись: ${esc(userName() || 'не задана')}</button>
-        </div>
+        <button class="btn wide" data-nav="#/p/${pid}/team">${I('user')}Команда объекта${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
         ${stages.some(s => s.hdCapture || s.hdScan) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
@@ -2944,7 +2967,86 @@ async function viewMore(pid) {
     const el = $('#diag');
     if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
   }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
-  $('#export-glb').onclick = () => { tourState.exportGlb = true; nav(`#/p/${pid}/tour`); };
+  // экспорт GLB — прямо отсюда, без экрана 3D и без фото (модель собирается «за кадром»)
+  $('#export-glb').onclick = async () => {
+    const b = $('#export-glb'); if (b.disabled) return;
+    b.disabled = true; const label = b.innerHTML; b.innerHTML = `${I('download')}Собираю 3D-модель…`;
+    try { const r = await exportGlbModel(pid); if (r) showGlbDialog(r.blob, r.file); }
+    catch (err) { console.error(err); uiAlert('Не удалось собрать модель: ' + (err && err.message || err)); }
+    finally { b.disabled = false; b.innerHTML = label; }
+  };
+}
+
+/* ---------- команда объекта: исполнители (просьба пользователя 2026-10-15) ---------- */
+const TEAM_ROLES = ['Прораб', 'Электрик', 'Сантехник', 'Плиточник', 'Отделочник', 'Маляр', 'Монтажник', 'Дизайнер', 'Заказчик'];
+async function viewTeam(pid) {
+  const { project } = await loadProjectData(pid);
+  if (!project) return nav('');
+  const team = project.team || [];
+  app.innerHTML = `
+    ${header('Команда объекта', `#/p/${pid}/more`)}
+    <div class="pad more-pad">
+      <div class="cards">
+        <div class="card team-card">
+          <b>Исполнители</b>
+          ${team.length ? team.map(m => `<div class="team-row" data-mid="${m.id}">
+            <span class="team-ava">${esc((m.name || '?').trim().slice(0, 1).toUpperCase())}</span>
+            <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(m.role || '')}</span></span>
+            ${m.phone ? `<a class="team-call" href="tel:${esc(m.phone.replace(/[^\d+]/g, ''))}" data-nonav aria-label="Позвонить">${I('phone')}</a>` : ''}
+          </div>`).join('') : '<p class="mut small">Пока никого. Добавьте мастеров, которые работают на объекте.</p>'}
+          <button class="btn primary wide" id="team-add">＋ Добавить исполнителя</button>
+        </div>
+        <div class="card">
+          <b>Обмен файлами</b>
+          <p class="mut small">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
+          <button class="btn ghost wide" id="set-name">${I('user')}Моя подпись: ${esc(userName() || 'не задана')}</button>
+        </div>
+      </div>
+    </div>
+    ${bottomNav(pid, 'more')}`;
+  const save = async () => { project.team = team; await dbPut('projects', project); render(); };
+  // окно исполнителя: имя, специальность (быстрый выбор), телефон; ✕ — закрыть, ✓ — сохранить, корзина — удалить
+  const edit = m => {
+    const isNew = !m; m = m ? { ...m } : { id: uid(), name: '', role: '', phone: '' };
+    const host = document.createElement('div');
+    host.className = 'plan-sheet tpl-sheet walk-sheet team-sheet';
+    host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">${isNew ? 'Новый исполнитель' : 'Исполнитель'}</div>
+      <label class="team-f">Имя<input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="Например, Сергей" autocomplete="off"></label>
+      <label class="team-f">Специальность<input class="inp" id="tm-role" value="${esc(m.role)}" placeholder="Электрик, плиточник…" autocomplete="off"></label>
+      <div class="team-roles">${TEAM_ROLES.map(r => `<button class="chip ${r === m.role ? 'on' : ''}" data-role="${r}">${r}</button>`).join('')}</div>
+      <label class="team-f">Телефон<input class="inp" id="tm-phone" type="tel" value="${esc(m.phone)}" placeholder="+7 …" autocomplete="off"></label>
+      <div class="walk-actions">
+        <button class="round-btn" data-k="x" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        ${isNew ? '' : `<button class="round-btn" data-k="del" aria-label="Удалить">${I('trash')}</button>`}
+        <button class="round-btn go" data-k="ok" aria-label="Сохранить"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
+      </div>`;
+    document.body.appendChild(host);
+    const close = () => host.remove();
+    host.querySelectorAll('[data-role]').forEach(b => b.onclick = () => {
+      host.querySelector('#tm-role').value = b.dataset.role;
+      host.querySelectorAll('[data-role]').forEach(x => x.classList.toggle('on', x === b));
+    });
+    host.querySelector('[data-k="x"]').onclick = close;
+    const del = host.querySelector('[data-k="del"]');
+    if (del) del.onclick = async () => {
+      if (!await uiConfirm(`Удалить «${m.name}» из команды?`)) return;
+      const i = team.findIndex(x => x.id === m.id); if (i >= 0) team.splice(i, 1);
+      close(); await save();
+    };
+    host.querySelector('[data-k="ok"]').onclick = async () => {
+      m.name = host.querySelector('#tm-name').value.trim();
+      m.role = host.querySelector('#tm-role').value.trim();
+      m.phone = host.querySelector('#tm-phone').value.trim();
+      if (!m.name) { host.querySelector('#tm-name').focus(); return toast('Укажите имя'); }
+      const i = team.findIndex(x => x.id === m.id);
+      if (i >= 0) team[i] = m; else team.push(m);
+      close(); await save();
+    };
+    swipeDownToClose(host, close);
+    if (isNew) setTimeout(() => host.querySelector('#tm-name').focus(), 50);
+  };
+  $('#team-add').onclick = () => edit(null);
+  app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call')) edit(team.find(m => m.id === r.dataset.mid)); });
   $('#set-name').onclick = async () => {
     const t = await uiPrompt('Ваше имя и роль (подпись на фото и пометках):', userName());
     if (t === null) return;
@@ -2995,7 +3097,7 @@ async function buildExport(kind, projects, rooms, stages, photos) {
 async function deliverFile(blob, name, title) {
   const file = new File([blob], name, { type: blob.type });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title }); return; } catch (err) { if (err && err.name === 'AbortError') return; }
+    try { await navigator.share(title ? { files: [file], title } : { files: [file] }); return; } catch (err) { if (err && err.name === 'AbortError') return; }   // без title — только файл, без подписи
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -3159,3 +3261,35 @@ if (navigator.storage && navigator.storage.persist) {
   navigator.storage.persist().catch(() => {});
 }
 render();
+
+/* снимок схемы (SVG → JPEG): стили из app.css переносятся в атрибуты, иначе в картинке схема будет чёрной */
+async function planSnapshot(svg) {
+  const r = svg.getBoundingClientRect(), k = Math.min(3, Math.max(2, devicePixelRatio || 2));
+  const clone = svg.cloneNode(true);
+  const PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin',
+    'opacity', 'display', 'visibility', 'font-family', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'paint-order', 'vector-effect'];
+  const src = [svg, ...svg.querySelectorAll('*')], dst = [clone, ...clone.querySelectorAll('*')];
+  src.forEach((el, i) => {
+    const cs = getComputedStyle(el), d = dst[i];
+    d.removeAttribute('class');
+    d.setAttribute('style', PROPS.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';'));
+  });
+  clone.setAttribute('width', r.width); clone.setAttribute('height', r.height);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  // фото плана (blob:) в картинку-SVG не загрузится — переводим в data URL
+  for (const im of clone.querySelectorAll('image')) {
+    const href = im.getAttribute('href') || im.getAttribute('xlink:href');
+    if (href && href.startsWith('blob:')) {
+      const b = await (await fetch(href)).blob();
+      im.setAttribute('href', await new Promise(ok => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(b); }));
+    }
+  }
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }));
+  try {
+    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('схема не отрисовалась')); i.src = url; });
+    const c = document.createElement('canvas'); c.width = Math.round(r.width * k); c.height = Math.round(r.height * k);
+    const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.94);   // весь экран схемы как есть (без кнопок — они не в SVG), на белом; не обрезаем (просьба пользователя)
+  } finally { URL.revokeObjectURL(url); }
+}

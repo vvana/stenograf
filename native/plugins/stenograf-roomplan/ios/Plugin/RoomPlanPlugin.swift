@@ -26,6 +26,8 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "deleteFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "htmlPdf", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveImage", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -127,12 +129,32 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
-                call.reject("Нет доступа к «Фото» — разрешите в Настройках → Fixpoint → Фото"); return
+                call.reject("Нет доступа к «Фото»", "denied"); return
             }
             PHPhotoLibrary.shared().performChanges({ PHAssetChangeRequest.creationRequestForAsset(from: img) }) { ok, err in
                 if ok { call.resolve() } else { call.reject(err?.localizedDescription ?? "Не удалось сохранить") }
             }
         }
+    }
+
+    /// Страница приложения в «Настройках» (там пункт «Фото»). Прямо на сам пункт iOS открыть не даёт.
+    @objc func openSettings(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let url = URL(string: UIApplication.openSettingsURLString) else { call.reject("Нет ссылки"); return }
+            UIApplication.shared.open(url) { ok in call.resolve(["opened": ok]) }
+        }
+    }
+
+    /// Файл (base64) → Documents/exports/<имя> — виден в «Файлы» → «На iPhone» → Fixpoint (UIFileSharingEnabled).
+    @objc func saveFile(_ call: CAPPluginCall) {
+        guard let b64 = call.getString("data"), let data = Data(base64Encoded: b64) else { call.reject("Нет данных"); return }
+        let raw = call.getString("name") ?? "Fixpoint.bin"
+        let name = raw.replacingOccurrences(of: "[/\\:*?\"<>|]", with: "_", options: .regularExpression)
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("exports", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(name)
+        do { try data.write(to: url, options: .atomic); call.resolve(["path": url.path]) }
+        catch { call.reject("Не удалось сохранить: \(error.localizedDescription)") }
     }
 
     @objc func fileInfo(_ call: CAPPluginCall) {

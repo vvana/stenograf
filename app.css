@@ -1118,15 +1118,10 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 /* раскрытая подсказка «i» — того же стекла, что и сама кнопка (просьба пользователя 2026-10-14) */
 .plan-wrap.full #view-hint[open] summary, .plan-wrap.full #editor-hint[open] summary, .plan-wrap.full #mode-hint[open] summary {
   background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30); }
-/* капсулы со значком на полноэкранной схеме: по центру кнопки стоит надпись, значок — слева от неё
-   (раньше по центру была пара «значок + надпись», и слово казалось сдвинутым вправо — замечание пользователя 2026-10-14) */
+/* капсулы со значком: значок + надпись центрируются как единое целое (уточнение пользователя 2026-10-15; вариант «надпись по центру, значок слева» отменён) */
 .plan-wrap.full .plan-actions .pa-btn:not(.pa-round) { white-space: nowrap; }
-.plan-wrap.full .plan-actions .pa-btn:not(.pa-round) > svg { margin-left: -29px; }   /* значок «висит» слева, ширину не занимает: 22 + зазор 7 */
-.plan-wrap.full .plan-actions .btn > .ic { margin-left: -28.6px; }                  /* у .btn: значок 15,6 + отступ 7 + зазор 6 */
-.plan-wrap.full:not(.editing) .plan-glass-edit { padding: 0 46px 0 16px; }   /* «Редактор»: надпись по центру кнопки, карандаш слева (кнопка у края, ширина не жмёт) */
-@media (max-width: 389px) {   /* на узких телефонах длинной надписи не хватает места — значок обратно в поток, без «висящего» отступа */
-  .plan-wrap.full .plan-actions .pa-btn:not(.pa-round) > svg { margin-left: 0; }
-}
+
+.plan-wrap.full:not(.editing) .plan-glass-edit { padding: 0 18px; }   /* значок + надпись — по центру кнопки как единое целое (поля одинаковые) */
 
 /* 3D: кнопка «Фото» — стеклянная, справа над переключателем режимов */
 .tour-shot { pointer-events: auto; position: absolute; z-index: 5; right: 24px; bottom: calc(58px + 8px + 12px + 64px + 14px + env(safe-area-inset-bottom));
@@ -1181,9 +1176,13 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
   transition: opacity .2s, transform .3s cubic-bezier(.3,1.4,.5,1); }
 .se-mini.right { left: auto; right: 18px; }
 .se-mini svg { width: 26px; height: 83px; margin-top: 8px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
-.shot-ed .se-tools { transform-origin: 10% 100%; transition: transform .32s cubic-bezier(.3,1.25,.5,1), opacity .2s; }
-.shot-ed:not(.tray-open) .se-tools { transform: scale(.2); opacity: 0; pointer-events: none; }
-.shot-ed.tray-open .se-mini { opacity: 0; transform: scale(.6); pointer-events: none; }
+/* свернуть/развернуть — как в «Разметке» iOS: панель на месте сжимается (clip-path) в кружок в своём углу, лишние инструменты гаснут, кружок проявляется в конце */
+.shot-ed .se-tools { clip-path: inset(0 round 52px); transition: clip-path .36s cubic-bezier(.32,.9,.35,1), opacity .12s; }
+.shot-ed:not(.tray-open) .se-tools { clip-path: var(--to-mini, inset(0 round 52px)); opacity: 0; pointer-events: none; transition: clip-path .36s cubic-bezier(.32,.9,.35,1), opacity .12s .3s; }
+.shot-ed .se-tools > :not(.on) { transition: opacity .18s; }
+.shot-ed:not(.tray-open) .se-tools > :not(.on) { opacity: 0; }
+.shot-ed.tray-open .se-mini { opacity: 0; pointer-events: none; transition: opacity 0s; }
+.shot-ed:not(.tray-open) .se-mini { transition: opacity .1s .3s, transform .34s cubic-bezier(.25,1.2,.4,1); }
 .se-grip { cursor: pointer; padding: 6px 0; background-clip: content-box; height: 5px; top: 2px; }
 .se-colors { display: none !important; }
 /* окно «Цвета» */
@@ -1226,3 +1225,74 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .se-mini { width: 94px; height: 94px; bottom: calc(env(safe-area-inset-bottom) + 15px); left: 14px; }
 .se-mini.right { right: 14px; }
 .se-mini svg { width: 34px; height: 109px; margin-top: 12px; }
+
+/* перетаскивание кружка и смахивание панели — строго за пальцем, без анимации (иначе пружина догоняет палец и всё дёргается) */
+.se-tools { touch-action: none; }
+.shot-ed .se-mini.dragging, .shot-ed .se-tools.dragging { transition: none !important; }
+.se-mini { transition: opacity .2s, transform .34s cubic-bezier(.25,1.2,.4,1); will-change: transform; }
+
+/* схема: «Фото» — стеклянная круглая, как «Фото» в 3D, рядом с «Отправить» */
+.plan-tool.plan-shot { flex-direction: column; gap: 1px; border-radius: 50%; color: rgba(255,255,255,.95); border: 1px solid rgba(255,255,255,.55);
+  font: 600 9px system-ui, -apple-system, sans-serif; text-shadow: 0 1px 2px rgba(30,25,15,.4);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.14), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.plan-tool.plan-shot svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.plan-tool.plan-shot:active { transform: scale(.9); }
+/* при кнопке точек съёмки в ряд не помещается — «Фото» уходит во второй ряд, под них */
+.plan-wrap.full:not(.editing) .plan-tools:has(#toggle-shots) { flex-wrap: wrap; width: 120px; }
+
+/* команда объекта */
+.team-card { display: flex; flex-direction: column; gap: 10px; }
+.team-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.team-ava { width: 40px; height: 40px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--acc); background: color-mix(in srgb, var(--acc) 14%, var(--card)); }
+.team-who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.team-who b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-call { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, var(--card)); }
+.team-call .ic { margin: 0; }
+.team-sheet .team-f { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 13px; color: var(--mut); }
+.team-sheet .team-f .inp { font-size: 16px; color: var(--ink); }
+.team-roles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.team-roles .chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.team-roles .chip.on { background: var(--acc); border-color: var(--acc); color: #fff; }
+.team-sheet .round-btn .ic { margin: 0; }
+.team-sheet .round-btn[data-k="del"] { color: #ffd2c8; }
+/* редактор / создание комнаты: «Создать» и «Фото плана» — по размеру как «Редактор» (по содержимому, поля 18), между ✕ и ✓ по центру */
+.plan-wrap.full.editing .plan-actions { justify-content: space-between; }
+.plan-wrap.full.editing .plan-actions #trace-room { flex: 0 0 auto; padding: 0 18px; }
+.plan-wrap.full.editing #mode-tools #mode-plan { flex: 0 0 auto; padding: 0 18px; }
+/* «Редактор», «Создать», «Фото плана» — одной ширины (140: влезает самая длинная надпись «Фото плана») */
+.plan-wrap.full:not(.editing) .plan-glass-edit { width: 140px; justify-content: center; }
+.plan-wrap.full.editing .plan-actions #trace-room, .plan-wrap.full.editing #mode-tools #mode-plan { width: 140px; flex: 0 0 140px; padding: 0 10px; justify-content: center; }
+
+/* экран стены / пола / потолка: стрелки к соседней — внизу, круглые стеклянные (2026-10-15) */
+.wall-arrow { position: fixed; z-index: 30; bottom: calc(env(safe-area-inset-bottom) + 16px); width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  color: rgba(255,255,255,.97); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.16), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.wall-arrow.l { left: 22px; } .wall-arrow.r { right: 22px; }
+.wall-arrow svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.wall-arrow:active { transform: scale(.9); }
+#app:has(.wall-arrow) .wall-sheet { padding-bottom: calc(env(safe-area-inset-bottom) + 84px); }   /* последние фото не прячутся под стрелками */
+/* стрелки экрана стены — на той же высоте, что «+» на «Этапах» (низ на 78 px от низа экрана) */
+.wall-arrow { bottom: calc(78px + env(safe-area-inset-bottom)); }
+#app:has(.wall-arrow) .wall-sheet { padding-bottom: calc(env(safe-area-inset-bottom) + 150px); }
+/* стрелки экрана стены — то же жидкое стекло и размер, что «+» на «Этапах» (54 px, отступ от края 23) */
+.wall-arrow { width: 54px; height: 54px; color: #fff;
+  background: radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.38) 0%, rgba(255,255,255,0) 50%), rgba(74, 64, 54, .20);
+  -webkit-backdrop-filter: blur(2.5px) saturate(1.5); backdrop-filter: blur(2.5px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,.55);
+  box-shadow: 0 8px 22px rgba(30,25,15,.22), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -5px 10px rgba(30,25,15,.14); }
+.wall-arrow.l { left: 23px; } .wall-arrow.r { right: 23px; }
+.wall-arrow svg { filter: drop-shadow(0 1px 2px rgba(30,25,15,.35)); }
+/* 3D: кнопка «Фото» — слева вверху, под полем выбора этапа (просьба пользователя 2026-10-15) */
+.tour-shot { top: calc(10px + 42px + 12px); bottom: auto; right: auto; left: 12px; }
+
+/* окно «3D-модель готова» — жидким стеклом, кнопки-значки */
+.glb-dlg .sh-title { font-weight: 700; font-size: 17px; text-align: center; }
+.glb-dlg p { margin: 8px 0 0; text-align: center; }
+.glb-btns { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding: 0 6px; }
+.glb-btns .round-btn { width: 56px; height: 56px; }
