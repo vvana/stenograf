@@ -1092,12 +1092,10 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .plan-wrap.full:not(.editing) .plan-glass-edit { left: auto; right: 18px; }
 .plan-wrap.full:not(.editing) .plan-tools { right: auto; left: 64px; }
 .plan-wrap.full:not(.editing) #view-hint { top: 16px; }
-.plan-wrap.full:not(.editing):has(#view-hint[open]) .plan-glass-edit { display: none; }   /* раскрытая подсказка не перекрывается кнопкой */
 /* подсказки «i» на полноэкранной схеме: сам блок прозрачен для касаний (он растянут по ширине и закрывал «Редактор»),
    нажимается только кнопка «i» */
 .plan-wrap.full #view-hint, .plan-wrap.full #editor-hint, .plan-wrap.full #mode-hint { pointer-events: none; }
 .plan-wrap.full #view-hint summary, .plan-wrap.full #editor-hint summary, .plan-wrap.full #mode-hint summary { pointer-events: auto; }
-.plan-wrap.full:not(.editing):has(#view-hint[open]) .plan-tools { display: none; }   /* раскрытая подсказка «i» ложится на «Отправить» — прячем, пока открыта */
 /* редактор и создание комнаты: кнопка «i» того же размера, что ✕ / ✓ (56 px, просьба пользователя 2026-10-14) */
 .plan-wrap.full.editing #editor-hint summary, .plan-wrap.full.editing #mode-hint summary { min-height: 56px; min-width: 56px; border-radius: 28px; padding: 0 16px; justify-content: center; }
 .plan-wrap.full.editing #editor-hint summary svg, .plan-wrap.full.editing #mode-hint summary svg { width: 26px; height: 26px; }
@@ -1242,6 +1240,24 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .plan-tool.plan-shot:active { transform: scale(.9); }
 /* при кнопке точек съёмки в ряд не помещается — «Фото» уходит во второй ряд, под них */
 .plan-wrap.full:not(.editing) .plan-tools:has(#toggle-shots) { flex-wrap: wrap; width: 120px; }
+
+/* просмотр схемы: раскрытая подсказка «i» — отдельной стеклянной плашкой под рядом кнопок; «i» остаётся кругом, кнопки не прячутся (просьба пользователя 2026-10-15) */
+.plan-wrap.full:not(.editing) #view-hint[open] summary { padding: 0; align-items: center; }
+.plan-wrap.full:not(.editing) #view-hint .ihint-text { position: absolute; top: 66px; left: 0; width: calc(100vw - 44px); max-width: 520px; box-sizing: border-box;
+  padding: 12px 16px; border-radius: 22px; color: #fff; font-size: 14px; line-height: 1.4; text-shadow: 0 1px 2px rgba(30,25,15,.35); border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5); box-shadow: 0 6px 16px rgba(30,25,15,.14), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08); }   /* то же стекло, что у кнопок */
+
+/* редактор схемы (2026-10-15): нижние «отменить» и корзина — 56 px, как ✕; «отменить» видна всегда, пока нечего отменять — бледная и неактивная */
+.plan-wrap.full.editing .plan-tools { gap: 10px; }
+.plan-wrap.full.editing .plan-tools .plan-tool { width: 56px; height: 56px; border-radius: 50%; }
+.plan-wrap.full.editing .plan-tools .plan-tool svg { width: 25px; height: 25px; }
+.plan-wrap.full .plan-tool:disabled { opacity: .4; pointer-events: none; }
+/* верхний ряд при выбранной комнате (✕ · Размеры · Мебель (N) · ✓) — капсулы ужимаются, ✓ не уезжает за край */
+.plan-wrap.full.editing .plan-actions { gap: 8px; }
+.plan-wrap.full.editing #room-tools { min-width: 0; gap: 8px; }
+.plan-wrap.full.editing #room-tools .btn { flex: 1 1 0; min-width: 0; padding: 0 10px; gap: 7px; font-size: 13px; }
+.plan-wrap.full.editing #room-tools .btn .ic { margin-right: 0; }   /* было 7 px отступа + 6 px gap — слишком широко (просьба пользователя) */
 
 /* команда объекта */
 .team-card { display: flex; flex-direction: column; gap: 10px; }

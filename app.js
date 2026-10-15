@@ -722,8 +722,7 @@ function setWallLength(r, i, len) {
   const d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1e-9;
   const dx = (B[0] - A[0]) / d * (len - d), dy = (B[1] - A[1]) / d * (len - d);
   const move = k => { const P = r.pts[k]; r.pts[k] = [cm(P[0] + dx), cm(P[1] + dy), ...P.slice(2)]; };
-  move((i + 1) % n);
-  if (n >= 3) move((i + 2) % n);
+  move((i + 1) % n);   // двигается только конец этой стены; следующая стена меняет длину и угол (просьба пользователя 2026-10-15 — без сохранения 90°)
 }
 const cm = v => Math.round(v * 100) / 100;
 
@@ -813,7 +812,7 @@ async function viewPlan(pid) {
         <button class="plan-glass-edit" id="toggle-edit-in" title="Редактор схемы"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>Редактор</span></button>` : ''}
         <div class="plan-tools">
           ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
-          ${planState.edit ? `<button class="plan-tool ${planUndo.stack.length ? '' : 'hidden'}" id="plan-undo" title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
+          ${planState.edit ? `<button class="plan-tool" id="plan-undo" ${planUndo.stack.length ? '' : 'disabled'} title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
           ${rooms.length && !planState.edit ? `<button class="plan-tool plan-shot" id="plan-shot" title="Снимок схемы — нарисовать поверх, сохранить или отправить" aria-label="Снимок схемы">${ICONS.camera}<span>Фото</span></button>` : ''}
           ${rooms.length && !planState.edit ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
           ${planState.edit && rooms.length ? `<button class="plan-tool danger hidden" id="clear-plan" title="Удалить выбранную комнату" aria-label="Удалить комнату">${ICONS.trash}</button>` : ''}
@@ -1205,7 +1204,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const edges = roomEdges(r);
       const showNums = true; // номера стен у всех комнат — по ним подписаны фото, длины и отчёт
       // название уменьшается в узкой комнате, чтобы по краям оставалось место для размеров стен
-      const nameFs = Math.max(0.2, Math.min(0.42, (bb.w - 0.9) / (0.56 * Math.max(1, r.name.length))));
+      const nameFs = Math.max(0.2, Math.min(0.36, (bb.w - 0.9) / (0.56 * Math.max(1, r.name.length))));
       // название и высота — неподвижные препятствия для подписей стен
       dims.push({ cls: 'obstacle', fixed: true, fs: nameFs, x: cx, y: cy, deg: 0, txt: r.name, ux: 0, uy: 0, nx: 0, ny: 0, slide: 0 });
       // высота потолка — тем же размером, что размеры стен (WALL_DIM_FS); строкой ниже названия (и его овала в редакторе)
@@ -1445,7 +1444,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     planUndo.stack.push({ rooms: snapRooms || structuredClone(rooms), plan: project.plan ? { k: project.plan.k, ox: project.plan.ox, oy: project.plan.oy } : null, ...extra });
     planUndo.dirty = true;
     if (planUndo.stack.length > 40) planUndo.stack.shift();
-    const b = $('#plan-undo'); if (b) b.classList.remove('hidden');
+    const b = $('#plan-undo'); if (b) b.disabled = false;
   }
   async function undoEdit() {
     const snap = planUndo.stack.pop();
