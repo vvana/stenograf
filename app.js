@@ -236,7 +236,9 @@ const swipeNav = { dir: 0 };
     if (!document.querySelector('.bottomnav')) return;
     if (document.querySelector('.plan-sheet:not(.hidden), .tpl-sheet, .viewer:not(.hidden), .shot-ed')) return;
     const edge = x < EDGE || x > innerWidth - EDGE;
-    if (!edge && target.closest && target.closest(BUSY)) return;
+    // полноэкранная схема в просмотре: пустое место вокруг схемы — как свободное место экрана (свайп листает вкладки)
+    const planEmpty = target.closest && target.closest('.plan-wrap.full:not(.editing) #plan-box') && !target.closest('.plan-view');
+    if (!edge && !planEmpty && target.closest && target.closest(BUSY)) return;
     st = { x, y, t: Date.now() };
   };
   const end = (x, y) => {
@@ -1612,7 +1614,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     }
     // в редакторе один палец сдвигает схему с пустого места (и в рисовании: тап — угол, ведение — сдвиг)
     else if (fingers.size === 1) gest = { two: false, v: { ...planView }, p: units(e.clientX, e.clientY), panning: false,
-      editPan: planState.edit && !!drag && (drag.kind === 'tap-empty' || drag.kind === 'tap-mode') };
+      editPan: planState.edit && !!drag && (drag.kind === 'tap-empty' || drag.kind === 'tap-mode'),
+      // в просмотре схему двигает только палец, начавший на самой схеме (комната, стена, мебель…); с пустого места — свайп вкладок
+      onPlan: e.target !== svg && !!e.target.closest('.plan-view') };
   });
   svg.addEventListener('pointermove', e => {
     const f = fingers.get(e.pointerId);
@@ -1629,7 +1633,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       const qx = v0.tx - m0[0], qy = v0.ty - m0[1], cs = Math.cos(dr), sn = Math.sin(dr);
       Object.assign(planView, { k: v0.k * ds, r: v0.r + dr, tx: ds * (cs * qx - sn * qy) + m1[0], ty: ds * (sn * qx + cs * qy) + m1[1] });
       moveView();
-    } else if (!gest.two && (planView.k > 1.05 || gest.editPan || (!planState.edit && svg.closest('.plan-wrap.full')))) {
+    } else if (!gest.two && (gest.editPan || (!planState.edit && (svg.closest('.plan-wrap.full') ? gest.onPlan : planView.k > 1.05)))) {
       if (!gest.panning && Math.hypot(f.x - f.sx, f.y - f.sy) < 8) return;
       gest.panning = true; if (drag) drag.moved = true;
       const P = units(f.x, f.y);
@@ -3039,19 +3043,17 @@ async function viewTeam(pid) {
             ${m.phone ? `<a class="team-call" href="tel:${esc(m.phone.replace(/[^\d+]/g, ''))}" data-nonav aria-label="Позвонить">${I('phone')}</a>` : ''}
           </div>`).join('')}
         </div>` : ''}
-        <div class="card">
-          <div class="team-head"><b>Обмен файлами</b>
-            <details class="ihint team-hint"><summary title="Как это работает" aria-label="Как это работает">${ICONS.info}</summary></details>
-          </div>
-          <p class="mut small team-hint-text hidden">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
-        </div>
       </div>
     </div>
+    <!-- «i» — внизу слева, жидким стеклом: как обмениваться файлами (плашка «Обмен файлами» убрана, просьба пользователя 2026-10-16) -->
+    <button class="glass-fab left team-info" id="team-info" title="Обмен файлами" aria-label="Обмен файлами">${ICONS.info}</button>
+    <div class="team-info-pop hidden" id="team-info-pop"><b>Обмен файлами</b>Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</div>
     <!-- добавить исполнителя — круглая «+» внизу справа, как на «Этапах», только оранжевая (просьба пользователя 2026-10-16) -->
     <button class="glass-fab go" id="team-add" title="Добавить исполнителя" aria-label="Добавить исполнителя"><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
     ${bottomNav(pid, 'more')}`;
   const save = async () => { project.team = team; await dbPut('projects', project); render(); };
-  const th = $('.team-hint'); if (th) th.ontoggle = () => $('.team-hint-text').classList.toggle('hidden', !th.open);
+  $('#team-info').onclick = e => { e.stopPropagation(); $('#team-info-pop').classList.toggle('hidden'); };
+  $('#team-info-pop').onclick = () => $('#team-info-pop').classList.add('hidden');
   // окно исполнителя: имя, специальность (быстрый выбор), телефон; ✕ — закрыть, ✓ — сохранить, корзина — удалить
   const edit = m => {
     const isNew = !m; m = m ? { ...m } : { id: uid(), name: '', role: '', phone: '' };
