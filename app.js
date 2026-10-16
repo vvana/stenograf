@@ -56,14 +56,18 @@ function wallBaseName(room, side) {
 
 // имя/роль для подписи фото и пометок (хранится на устройстве)
 function userName() {
+  if (!ASK_NAME) return '';   // имя автора не ставится вовсе (решение пользователя 2026-10-16); старые подписи у фото остаются
   let n = '';
   try { n = localStorage.getItem('stenograf.user') || ''; } catch {}
   return n;
 }
 // то же, но если имя не задано — спросить (окно асинхронное)
+// с 2026-10-16 (решение пользователя: «подпись не нужна, я просто отправляю задания») имя больше не спрашивается —
+// кнопки «Моя подпись» нет; уже заданное имя по-прежнему пишется автором фото и пометок. Вернуть вопрос — ASK_NAME = true.
+const ASK_NAME = false;
 async function userNameAsk() {
   let n = userName();
-  if (!n) {
+  if (!n && ASK_NAME) {
     const t = await uiPrompt('Как вас подписывать на фото и пометках? Например «Сергей, электрик»', '');
     if (t && t.trim()) { n = t.trim(); try { localStorage.setItem('stenograf.user', n); } catch {} }
   }
@@ -221,11 +225,12 @@ const swipeNav = { dir: 0 };
   const start = (x, y, target) => {
     st = null;
     // вложенные экраны («Площади», «Задание для мастеров», «HD-скан», «Команда»): свайп вправо — назад, по стрелке шапки
-    const back = document.querySelector('.topbar [data-swipe-back]');
+    // отметка — у стрелки шапки или у другой кнопки «назад» на экране (✕ альбома этапа: data-swipe-back="адрес")
+    const back = document.querySelector('.topbar [data-swipe-back], #app [data-swipe-back]');
     if (back) {
       if (document.querySelector('.plan-sheet:not(.hidden), .tpl-sheet, .ui-dlg-back')) return;
       if (target.closest && target.closest('input, textarea, select, .swipe')) return;
-      st = { x, y, t: Date.now(), back: back.dataset.nav };
+      st = { x, y, t: Date.now(), back: back.dataset.swipeBack || back.dataset.nav };
       return;
     }
     if (!document.querySelector('.bottomnav')) return;
@@ -778,7 +783,6 @@ async function viewPlan(pid) {
         ${planState.edit ? `<!-- выбрана комната: «Размеры» и «Мебель» на месте «Создать» -->
         <span id="room-tools" class="tools hidden">
           <button class="btn small-btn" id="room-lengths" title="Высота потолка и длины стен — схема подстроится">${I('ruler')}Размеры</button>
-          <button class="btn small-btn hidden" id="room-furn">${I('sofa')}Мебель</button>
         </span>
         <span id="wall-tools" class="tools hidden">
           <button class="pa-btn" id="add-vertex" title="Разбить стену углом посередине">${ICONS.corner}<span>Добавить угол</span></button>
@@ -1167,8 +1171,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       return [(cs * px + sn * py) / k, (-sn * px + cs * py) / k];
     });
     const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
-    const x = Math.floor(Math.min(...xs)) - 1, y = Math.floor(Math.min(...ys)) - 1;
-    return { x, y, w: Math.ceil(Math.max(...xs)) + 1 - x, h: Math.ceil(Math.max(...ys)) + 1 - y };
+    const mx = Math.max(...xs) - Math.min(...xs), my = Math.max(...ys) - Math.min(...ys);   // запас — экран с каждой стороны (сдвиг жестом идёт без перерисовки)
+    const x = Math.floor(Math.min(...xs) - mx) - 1, y = Math.floor(Math.min(...ys) - my) - 1;
+    return { x, y, w: Math.ceil(Math.max(...xs) + mx) + 1 - x, h: Math.ceil(Math.max(...ys) + my) + 1 - y };
   }
 
   function draw() {
@@ -1212,7 +1217,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       s += `<g>
         <path class="room ${sel ? 'sel' : ''}" data-drag="move" data-room="${r.id}" d="${path}"/>
         <path class="wall-outline" d="${path}"/>
-        ${(r.objects || []).map((o, k) => furnSvg(o, r, planState.edit && sel && planState.furnList ? k + 1 : null)).join('')}
+        ${project.hideFurn ? '' : (r.objects || []).map((o, k) => furnSvg(o, r, planState.furnList === r.id ? k + 1 : null)).join('')}
         ${planState.edit && sel ? namePill(r, cx, cy, nameFs, 2 * Math.min(cx - bb.x, bb.x + bb.w - cx)) : `<text class="room-label${planState.edit ? ' editable' : ''}" ${planState.edit ? `data-rename-room="${r.id}"` : ''} style="font-size:${nameFs.toFixed(3)}px" x="${cx}" y="${cy}" dy="0.35em">${esc(r.name)}</text>`}
         <text class="room-label room-h" style="font-size:${WALL_DIM_FS}px" x="${cx}" y="${hY.toFixed(3)}" dy="0.35em">${roomHeightText(r)}</text>`;
       for (const e of edges) {
@@ -1358,7 +1363,30 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       svg.querySelectorAll('path.room[data-room]').forEach(el => { const b = el.getBoundingClientRect(); if (b.width) planRoomRects[el.dataset.room] = b; });
       const cb = svg.getBoundingClientRect(); if (cb.width) planCardRect = cb;
     }
-    placeLenInput(lenAt);
+    placeLenInput(lenAt); lastLenAt = lenAt;
+  }
+  // жест (сдвиг/масштаб/поворот): пока палец двигается, меняем только матрицу вида — без перерисовки схемы, раз в кадр;
+  // целиком схема перерисовывается, когда пальцы отпущены (иначе на телефоне сдвиг шёл рывками — запись пользователя 2026-10-16)
+  let lastLenAt = null, viewRaf = 0, viewMoved = false;
+  function moveView() {
+    viewMoved = true;
+    if (viewRaf) return;
+    viewRaf = requestAnimationFrame(() => {
+      viewRaf = 0;
+      const g = svg.querySelector('.plan-view');
+      if (!g) return draw();
+      const { k, r, tx, ty } = planView, c = Math.cos(r) * k, sn = Math.sin(r) * k;
+      g.setAttribute('transform', `matrix(${c} ${sn} ${-sn} ${c} ${tx} ${ty})`);
+      const ne = $('#plan-north');
+      if (ne && project.north) ne.querySelector('svg').style.transform = `rotate(${((project.north.ang + r) * 180 / Math.PI + 90).toFixed(1)}deg)`;
+      placeLenInput(lastLenAt);
+    });
+  }
+  function settleView() {
+    if (!viewMoved) return;
+    viewMoved = false;
+    if (viewRaf) { cancelAnimationFrame(viewRaf); viewRaf = 0; }
+    draw();
   }
   // овал под названием выбранной комнаты — ровно по фактическому контуру текста (getBBox), а не по оценке ширины
   function fitNamePills() {
@@ -1600,19 +1628,19 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       // точка под пальцами остаётся под пальцами: t1 = ds·R(dr)·(t0 − m0) + m1
       const qx = v0.tx - m0[0], qy = v0.ty - m0[1], cs = Math.cos(dr), sn = Math.sin(dr);
       Object.assign(planView, { k: v0.k * ds, r: v0.r + dr, tx: ds * (cs * qx - sn * qy) + m1[0], ty: ds * (sn * qx + cs * qy) + m1[1] });
-      draw();
+      moveView();
     } else if (!gest.two && (planView.k > 1.05 || gest.editPan || (!planState.edit && svg.closest('.plan-wrap.full')))) {
       if (!gest.panning && Math.hypot(f.x - f.sx, f.y - f.sy) < 8) return;
       gest.panning = true; if (drag) drag.moved = true;
       const P = units(f.x, f.y);
       planView.tx = gest.v.tx + P[0] - gest.p[0]; planView.ty = gest.v.ty + P[1] - gest.p[1];
-      draw();
+      moveView();
     }
   });
   const fingerUp = e => {
     if (!fingers.delete(e.pointerId)) return;
     if (fingers.size === 1) { const [f] = fingers.values(); gest = { two: false, v: { ...planView }, p: units(f.x, f.y), panning: true }; f.sx = f.x; f.sy = f.y; }
-    else if (!fingers.size) gest = null;
+    else if (!fingers.size) { gest = null; settleView(); }
   };
   svg.addEventListener('pointerup', fingerUp);
   svg.addEventListener('pointercancel', fingerUp);
@@ -1621,8 +1649,9 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     const m = units(e.clientX, e.clientY), v = planView;
     const ds = Math.max(0.5, Math.min(8, v.k * Math.exp(-e.deltaY * 0.0015))) / v.k;
     Object.assign(v, { k: v.k * ds, tx: ds * (v.tx - m[0]) + m[0], ty: ds * (v.ty - m[1]) + m[1] });
-    draw();
+    moveView(); clearTimeout(wheelEnd); wheelEnd = setTimeout(settleView, 160);
   }, { passive: false });
+  let wheelEnd = 0;
 
   async function insertVertex(room, i) {
     if (room.pts.length >= MAX_CORNERS) return toast(`Максимум ${MAX_CORNERS} углов`);
@@ -1766,10 +1795,6 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
 
     if (!sel) {
       $('#room-lengths').onclick = () => lengthsSheet(room);
-      const furnBtn = $('#room-furn');
-      furnBtn.classList.toggle('hidden', !(room.objects && room.objects.length));
-      furnBtn.innerHTML = `${I('sofa')}Мебель (${(room.objects || []).length})`;
-      furnBtn.onclick = () => furnitureSheet(room);
     } else if (sel.type === 'vertex') {
       const i = sel.i;
       const ang = $('#v-angle'), rad = $('#v-radius');
@@ -1841,8 +1866,10 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
       sw = null;
     });
   }
+  let furnViewBack = null;   // вид схемы до сдвига под окно мебели
   function hideSheet() {
     sheet.classList.add('hidden'); sheet.classList.remove('furn-sheet'); sheet.innerHTML = ''; app.style.paddingBottom = '';
+    if (furnViewBack) { Object.assign(planView, furnViewBack); furnViewBack = null; planState.furnList = false; draw(); }
     if (planState.furnList || planState.lengthsOpen) { planState.furnList = false; planState.lengthsOpen = null; draw(); }
   }
 
@@ -1855,8 +1882,12 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     showSheet(`<div class="sh-title">${esc(r.name)}</div>
       <p class="mut small">Фото стен — тап по стене на схеме.${r.measured === 'lidar' ? ' Комната обмерена лидаром.' : ''}</p>
       ${item('c', I('ceiling'), 'Потолок')}${item('f', I('floor'), 'Пол')}
+      ${(r.objects || []).length ? `<button class="btn wide" id="rm-furn">${I('sofa')}Мебель (${r.objects.length})</button>` : ''}
       <button class="btn wide hidden" id="rm-remeasure">${I('scan')}Переобмерить лидаром</button>`, sh => {
       sh.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { hideSheet(); nav(`#/p/${pid}/w/${encodeURIComponent(r.id + ':' + b.dataset.go)}`); });
+      // мебель — в меню комнаты на «Схеме» (из редактора убрана, просьба пользователя 2026-10-16)
+      const fb = sh.querySelector('#rm-furn');
+      if (fb) fb.onclick = () => { hideSheet(); setTimeout(() => furnitureSheet(r), 200); };
       // переобмер этой комнаты (обмер вынесен из редактора) — только на телефоне с лидаром
       lidarAvailable().then(ok => {
         const rb = sh.querySelector('#rm-remeasure');
@@ -1873,7 +1904,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
 
   // мебель комнаты: номера на схеме, смена типа (если RoomPlan ошибся) и удаление
   function furnitureSheet(room) {
-    planState.furnList = true; draw();
+    planState.furnList = room.id; draw();   // номера предметов — у этой комнаты (и в просмотре, и в редакторе)
     sheet.classList.add('furn-sheet');
     // комната должна быть видна над списком: даём странице запас снизу и прокручиваем к комнате
     app.style.paddingBottom = '60vh';
@@ -1881,6 +1912,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + scrollY - (top ? top.offsetHeight : 0) - 12) });
     const list = room.objects || [];
     showSheet(`<div class="sh-title">Мебель: ${esc(room.name)}</div>
+      <label class="furn-show"><input type="checkbox" id="furn-show" ${project.hideFurn ? '' : 'checked'}> Показать мебель</label>
       <p class="mut small">Распознано лидаром (RoomPlan). Номера — на схеме. Если тип определён неверно — выберите правильный.</p>
       ${list.map((o, k) => `<div class="furn-row">
         <b>${k + 1}</b>
@@ -1888,15 +1920,32 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         <span class="mut small">${fmtM(o.w)}×${fmtM(o.d)}${furnName(o) !== (OBJECT_NAMES[o.cat] || o.cat) ? `<br>${esc(furnName(o).toLowerCase())}` : ''}</span>
         <button class="iconbtn danger" data-fdel="${k}" title="Удалить">${I('trash')}</button>
       </div>`).join('') || '<p class="mut">Мебели нет.</p>'}`, sh => {
+      // схема на весь экран не прокручивается — сдвигаем вид, чтобы комната с номерами была видна над окном (при закрытии вид возвращается)
+      const rp = document.querySelector(`#plan path.room[data-room="${room.id}"]`), svgEl = $('#plan');
+      if (rp && svgEl && svgEl.closest('.plan-wrap.full')) {
+        const rr = rp.getBoundingClientRect(), top = sh.getBoundingClientRect().top, head = (document.querySelector('.topbar') || {}).offsetHeight || 60;
+        const want = Math.max(head + 12, top - 16 - rr.height);   // верх комнаты: под шапкой, и чтобы низ не уходил под окно
+        const dy = want - rr.top;
+        if (Math.abs(dy) > 2) {
+          const m = svgEl.getScreenCTM();
+          furnViewBack = { ...planView };
+          planView.ty += dy / m.d; draw();
+        }
+      }
+      // «Показать мебель» — мебель на схеме всего объекта видна или скрыта (хранится в объекте; на 3D не влияет)
+      sh.querySelector('#furn-show').onchange = async e => {
+        if (e.target.checked) delete project.hideFurn; else project.hideFurn = true;
+        await dbPut('projects', project); draw();
+      };
       sh.querySelectorAll('[data-ft]').forEach(s => s.onchange = async () => {
-        pushUndo();
+        if (planState.edit) pushUndo();   // вне редактора истории «отменить» нет — правка сохраняется сразу
         const o = list[+s.dataset.ft]; o.cat = s.value; o.attrs = [];
         await dbPut('rooms', room); draw();
       });
       sh.querySelectorAll('[data-fdel]').forEach(b => b.onclick = async () => {
         const k = +b.dataset.fdel;
         if (!await uiConfirm(`Удалить «${furnName(list[k])}» со схемы и из 3D?`)) return;
-        pushUndo();
+        if (planState.edit) pushUndo();
         list.splice(k, 1); room.objects = list;
         await dbPut('rooms', room); hideSheet(); render();
       });
@@ -2255,7 +2304,7 @@ async function viewStages(pid) {
               <span class="drag-handle" title="Перетащите, чтобы поменять порядок" aria-label="Переместить">⠿</span>
               <div class="stage-main">
                 <div class="stage-name">${esc(s.name)}</div>
-                <div class="mut small stage-sub">${counts[s.id] || 0} фото${s.hint ? ` · <span class="stage-hint">${esc(s.hint)}</span>` : ''}</div>
+                <div class="mut small stage-sub">${counts[s.id] || 0} фото</div>
                 <div class="room-tags">${stageRoomTags(s, rooms)}</div>
                 <button class="chip stage-chip ${STATUS[s.status || 0].cls}" data-status="${s.id}">${STATUS[s.status || 0].t}</button>
               </div>
@@ -2460,7 +2509,7 @@ async function viewStageAlbum(pid, stageId) {
       ${orphans.length ? `<div class="album-group"><div class="album-title">Без привязки к стене <span class="mut small">· ${orphans.length}</span></div>${thumbs(orphans)}</div>` : ''}
     </div>
     <div id="viewer" class="viewer hidden"></div>
-    <button class="glass-fab left" id="album-close" title="К списку этапов" aria-label="Закрыть этап"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <button class="glass-fab left" id="album-close" data-swipe-back="#/p/${pid}/stages" title="К списку этапов" aria-label="Закрыть этап"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     ${bottomNav(pid, 'stages')}`;
 
   $('#rename-stage').onclick = async () => {
@@ -2956,14 +3005,11 @@ async function viewMore(pid) {
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
-      <details class="about"><summary>${I('info')}О приложении</summary><div class="mut small" id="diag" style="overflow-wrap:anywhere">Проверяю модуль лидара…</div></details>
+      <div class="app-version">${appVersionText()}</div>
     </div>
     ${bottomNav(pid, 'more')}`;
 
-  nativeDiagnostics().then(d => {
-    const el = $('#diag');
-    if (el) el.innerHTML = Object.entries(d).map(([k, v]) => `<div><b>${esc(k)}:</b> ${esc(v)}</div>`).join('');
-  }).catch(err => { const el = $('#diag'); if (el) el.textContent = 'Диагностика упала: ' + err.message; });
+  // «О приложении» (диагностика лидара) убрано 2026-10-16 по просьбе пользователя; nativeDiagnostics() оставлена в native.js на случай отладки
   // экспорт GLB — прямо отсюда, без экрана 3D и без фото (модель собирается «за кадром»)
   $('#export-glb').onclick = async () => {
     const b = $('#export-glb'); if (b.disabled) return;
@@ -2982,26 +3028,30 @@ async function viewTeam(pid) {
   const team = project.team || [];
   app.innerHTML = `
     ${header('Команда объекта', `#/p/${pid}/more`)}
-    <div class="pad more-pad">
+    <div class="pad team-pad">
+      ${team.length ? '' : '<p class="mut team-empty">Пока никого. Добавьте мастеров, которые работают на объекте.</p>'}
       <div class="cards">
-        <div class="card team-card">
+        ${team.length ? `<div class="card team-card">
           <b>Исполнители</b>
-          ${team.length ? team.map(m => `<div class="team-row" data-mid="${m.id}">
+          ${team.map(m => `<div class="team-row" data-mid="${m.id}">
             <span class="team-ava">${esc((m.name || '?').trim().slice(0, 1).toUpperCase())}</span>
             <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(m.role || '')}</span></span>
             ${m.phone ? `<a class="team-call" href="tel:${esc(m.phone.replace(/[^\d+]/g, ''))}" data-nonav aria-label="Позвонить">${I('phone')}</a>` : ''}
-          </div>`).join('') : '<p class="mut small">Пока никого. Добавьте мастеров, которые работают на объекте.</p>'}
-          <button class="btn primary wide" id="team-add">＋ Добавить исполнителя</button>
-        </div>
+          </div>`).join('')}
+        </div>` : ''}
         <div class="card">
-          <b>Обмен файлами</b>
-          <p class="mut small">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
-          <button class="btn ghost wide" id="set-name">${I('user')}Моя подпись: ${esc(userName() || 'не задана')}</button>
+          <div class="team-head"><b>Обмен файлами</b>
+            <details class="ihint team-hint"><summary title="Как это работает" aria-label="Как это работает">${ICONS.info}</summary></details>
+          </div>
+          <p class="mut small team-hint-text hidden">Пока без сервера — обмен файлами. Схему отправляют из окна «Схема» (значок «Отправить»), объект или этап — свайпом вправо по объекту или этапу. Полученный файл открывают через «Импорт файла» на главном экране: всё сольётся без дублей.</p>
         </div>
       </div>
     </div>
+    <!-- добавить исполнителя — круглая «+» внизу справа, как на «Этапах», только оранжевая (просьба пользователя 2026-10-16) -->
+    <button class="glass-fab go" id="team-add" title="Добавить исполнителя" aria-label="Добавить исполнителя"><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
     ${bottomNav(pid, 'more')}`;
   const save = async () => { project.team = team; await dbPut('projects', project); render(); };
+  const th = $('.team-hint'); if (th) th.ontoggle = () => $('.team-hint-text').classList.toggle('hidden', !th.open);
   // окно исполнителя: имя, специальность (быстрый выбор), телефон; ✕ — закрыть, ✓ — сохранить, корзина — удалить
   const edit = m => {
     const isNew = !m; m = m ? { ...m } : { id: uid(), name: '', role: '', phone: '' };
@@ -3044,12 +3094,6 @@ async function viewTeam(pid) {
   };
   $('#team-add').onclick = () => edit(null);
   app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call')) edit(team.find(m => m.id === r.dataset.mid)); });
-  $('#set-name').onclick = async () => {
-    const t = await uiPrompt('Ваше имя и роль (подпись на фото и пометках):', userName());
-    if (t === null) return;
-    try { localStorage.setItem('stenograf.user', t.trim()); } catch {}
-    render();
-  };
 }
 
 /* ---------- резервная копия ---------- */
@@ -3289,4 +3333,12 @@ async function planSnapshot(svg) {
     ctx.drawImage(img, 0, 0, c.width, c.height);
     return c.toDataURL('image/jpeg', 0.94);   // весь экран схемы как есть (без кнопок — они не в SVG), на белом; не обрезаем (просьба пользователя)
   } finally { URL.revokeObjectURL(url); }
+}
+
+// строка версии внизу «Ещё»: сборка iPhone — хеш коммита и дата (version.js пишет native/scripts/www.js), в браузере — «веб-версия»
+function appVersionText() {
+  const b = window.FIXPOINT_BUILD;
+  if (!b) return 'Fixpoint · веб-версия';
+  const [y, m, d] = String(b.date || '').split('-');
+  return `Fixpoint · сборка ${esc(b.sha)}${d ? ` · ${d}.${m}.${y}` : ''}`;
 }

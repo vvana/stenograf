@@ -118,7 +118,7 @@ body {
 
 /* ---------- нижняя навигация ---------- */
 .bottomnav {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 26;   /* выше шторок схемы (25): смахнутая шторка уходит под меню, а не поверх него */
   display: flex;
   background: var(--card); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
@@ -1259,7 +1259,9 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .plan-wrap.full.editing .plan-actions { gap: 8px; }
 .plan-wrap.full.editing #room-tools { min-width: 0; gap: 8px; }
 .plan-wrap.full.editing #room-tools .btn { flex: 1 1 0; min-width: 0; padding: 0 10px; gap: 7px; font-size: 13px; }
-.plan-wrap.full.editing #room-tools .btn .ic { margin-right: 0; }   /* было 7 px отступа + 6 px gap — слишком широко (просьба пользователя) */
+.plan-wrap.full.editing #room-tools .btn .ic { margin-right: 0; }
+.plan-wrap.full.editing #room-tools { justify-content: center; }
+.plan-wrap.full.editing #room-tools .btn { flex: 0 0 140px; }   /* одна «Размеры» — размером с «Создать» (Мебель ушла в меню комнаты на «Схеме») */   /* было 7 px отступа + 6 px gap — слишком широко (просьба пользователя) */
 
 /* окно выбора — переключатель-слайдер (uiChoose в ui.js), стекло как у переключателя режимов на экране 3D (.tour-modes): без оранжевого */
 .ui-seg { position: relative; display: flex; margin-top: 14px; height: 50px; padding: 4px; border-radius: 999px; box-sizing: border-box; touch-action: none;
@@ -1292,6 +1294,48 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .home-hint summary:focus-visible { outline: none; }
 .home-hint[open] summary { padding: 12px 18px 12px 15px; align-items: flex-start; text-align: left; }
 .home-hint .ihint-text { color: #fff; font-size: 14px; line-height: 1.4; }
+
+/* окно «Мебель»: галочка «Показать мебель» над списком */
+.furn-show { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; font-weight: 600; cursor: pointer; }
+.furn-show input { width: 22px; height: 22px; accent-color: var(--acc); }
+
+/* «Начать обход» в списке этапов — оранжевое жидкое стекло, как «Обмер комнаты» на схеме (просьба пользователя 2026-10-16) */
+.walk-tile { border-radius: 22px; color: #fff; text-shadow: 0 1px 2px rgba(30,25,15,.35); border: 1px solid rgba(255,255,255,.5);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .78);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.16), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.walk-tile svg { filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.walk-tile:active { transform: scale(.94); background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .9); }
+
+/* строка версии внизу «Ещё» */
+.app-version { margin: 14px 0 4px; text-align: center; font-size: 12px; color: var(--mut); opacity: .8; }
+
+/* «Ещё»: кнопки толще и равномерно по высоте экрана между шапкой и нижним меню (просьба пользователя 2026-10-16); версия — внизу */
+.more-pad { display: flex; flex-direction: column; box-sizing: border-box;
+  min-height: calc(100dvh - var(--top-h, 61px) - env(safe-area-inset-top) - 64px - env(safe-area-inset-bottom)); }
+.more-pad .cards { flex: 1; display: flex; flex-direction: column; gap: 14px; margin-top: 0; }
+.more-pad .cards > .btn { flex: 1 1 0; min-height: 64px; max-height: 104px; border-radius: 20px; font-size: 16px; white-space: nowrap; }
+.more-pad .cards > .btn .ic svg { width: 1.3em; height: 1.3em; }
+.more-pad .app-version { margin: 12px 0 0; }
+
+/* команда объекта (2026-10-16): пусто — текст сверху; «Обмен файлами» — текст под «i»; «+» — оранжевая стеклянная кнопка внизу справа */
+.team-empty { margin: 2px 4px 12px; text-align: center; }
+.team-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.team-hint summary { padding: 0; }
+.team-hint summary svg { width: 22px; height: 22px; }
+.team-hint-text { margin: 8px 0 0; }
+.glass-fab.go { color: #fff; border-color: rgba(255,255,255,.5);
+  background: radial-gradient(110% 80% at 30% 8%, rgba(255,255,255,.38) 0%, rgba(255,255,255,0) 50%), rgba(217, 95, 24, .82); }
+.glass-fab.go:active { background-color: rgba(217, 95, 24, .95); }
+
+/* 3D: подложка мини-схемы — жидкое стекло, как переключатель режимов (вместо белой рамки; просьба пользователя 2026-10-16) */
+.tour-plan { border-radius: 22px; padding: 8px; box-sizing: border-box; border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .17);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 18px rgba(30,25,15,.12), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.06); }
+.tour-plan .tp-room { fill: rgba(255,255,255,.55); }
+.tour-plan .tp-room.sel { fill: color-mix(in srgb, var(--acc) 55%, transparent); }
 
 /* команда объекта */
 .team-card { display: flex; flex-direction: column; gap: 10px; }

@@ -28,6 +28,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "saveImage", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveFileAs", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -157,6 +158,31 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         catch { call.reject("Не удалось сохранить: \(error.localizedDescription)") }
     }
 
+    /// Файл (base64) → системное окно «Сохранить в Файлы»: пользователь сам выбирает папку (iCloud Drive, «На iPhone», Google Drive…).
+    /// Ответ {saved: true/false}; отмена — saved: false.
+    private var exportDelegate: ExportPickerDelegate?
+    @objc func saveFileAs(_ call: CAPPluginCall) {
+        guard let b64 = call.getString("data"), let data = Data(base64Encoded: b64) else { call.reject("Нет данных"); return }
+        let raw = call.getString("name") ?? "Fixpoint.bin"
+        let name = raw.replacingOccurrences(of: "[/\\:*?\"<>|]", with: "_", options: .regularExpression)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(name)
+        do { try data.write(to: url, options: .atomic) } catch { call.reject("Не удалось подготовить файл: \(error.localizedDescription)"); return }
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
+            let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+            let d = ExportPickerDelegate { [weak self] saved in
+                self?.exportDelegate = nil
+                try? FileManager.default.removeItem(at: dir)
+                call.resolve(["saved": saved])
+            }
+            self.exportDelegate = d
+            picker.delegate = d
+            host.present(picker, animated: true)
+        }
+    }
+
     @objc func fileInfo(_ call: CAPPluginCall) {
         guard let url = docFile(call) else { call.resolve(["exists": false]); return }
         let size = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue
@@ -252,4 +278,11 @@ final class ModelPreviewSource: NSObject, QLPreviewControllerDataSource {
     init(url: URL, title: String) { item = ModelPreviewItem(url: url, title: title) }
     func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
     func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { item }
+}
+
+final class ExportPickerDelegate: NSObject, UIDocumentPickerDelegate {
+    let done: (Bool) -> Void
+    init(_ done: @escaping (Bool) -> Void) { self.done = done }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { done(true) }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(false) }
 }

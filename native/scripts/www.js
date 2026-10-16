@@ -27,6 +27,17 @@ for (const d of DIRS) {
   copied.push(d + '/');
 }
 
+// версия сборки — короткий хеш коммита и дата; приложение показывает её строкой внизу «Ещё»
+{
+  let sha = (process.env.GITHUB_SHA || '').slice(0, 7);
+  if (!sha) { try { sha = require('child_process').execSync('git rev-parse --short HEAD', { cwd: root }).toString().trim(); } catch { sha = 'local'; } }
+  const date = new Date().toISOString().slice(0, 10);
+  fs.writeFileSync(path.join(out, 'version.js'), `window.FIXPOINT_BUILD = ${JSON.stringify({ sha, date })};\n`);
+  const ip = path.join(out, 'index.html');
+  fs.writeFileSync(ip, fs.readFileSync(ip, 'utf8').replace('<script src="ui.js"></script>', '<script src="version.js"></script>\n  <script src="ui.js"></script>'));
+  copied.push('version.js (' + sha + ', ' + date + ')');
+}
+
 // проверка ссылок index.html
 const html = fs.readFileSync(path.join(out, 'index.html'), 'utf8');
 const refs = [...html.matchAll(/(?:src|href)="([^"#?]+)"/g)].map(m => m[1])

@@ -729,7 +729,12 @@ async function viewTour(pid, roomId = null) {
   function drawPlan() {
     const pad = 0.4;
     const vb = `${minX - pad} ${minZ - pad} ${maxX - minX + pad * 2} ${maxZ - minZ + pad * 2}`;
-    $('#tour-plan').innerHTML = `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet">
+    // подложка по форме квартиры: ширина 150 px, высота по пропорциям схемы (100–150 px) — без пустых полей
+    const box = $('#tour-plan'), cs = getComputedStyle(box);
+    const edge = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    const inner = box.offsetWidth - (parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth));
+    if (inner > 0) box.style.height = `${Math.round(Math.max(100, Math.min(150, inner * (maxZ - minZ + pad * 2) / (maxX - minX + pad * 2) + edge)))}px`;
+    box.innerHTML = `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet">
       ${rooms.map(r => `<path class="tp-room ${r.id === tourState.roomId ? 'sel' : ''}" data-room="${r.id}" d="${roomPath(r)}"/>`).join('')}
       ${rooms.map(r => { const c = roomCenter(r); return `<text class="tp-label" x="${c[0]}" y="${c[1]}">${esc(r.name)}</text>`; }).join('')}
       <g id="tp-eye" style="display:none"><path id="tp-cone" class="tp-cone"/><circle class="tp-dot" r="${Math.max(0.12, span * 0.025)}"/></g>
@@ -1231,11 +1236,19 @@ function showGlbDialog(blob, file, onDone) {
   host.querySelector('[data-glb="x"]').onclick = done;
   host.querySelector('[data-glb="send"]').onclick = async () => { await deliverFile(blob, file); done(); };
   host.querySelector('[data-glb="save"]').onclick = async () => {
-    if (Native.RP && Native.RP.saveFile) {   // на iPhone — в «Файлы» → «На iPhone» → Fixpoint
+    if (Native.RP && Native.RP.saveFile) {   // на iPhone — системное окно «Сохранить в Файлы»: куда сохранить, выбирает пользователь
       try {
         const b64 = await new Promise((ok, no) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1]); fr.onerror = no; fr.readAsDataURL(blob); });
-        await Native.RP.saveFile({ name: file, data: b64 });
-        toast('Сохранено: «Файлы» → «На iPhone» → Fixpoint');
+        let r = null;
+        try { r = await Native.RP.saveFileAs({ name: file, data: b64 }); }
+        catch (e) {   // старая сборка без saveFileAs — как раньше, в «Файлы» → «На iPhone» → Fixpoint
+          if (!/not implemented|unimplemented|не реализ/i.test(String(e && (e.code || e.message) || e))) throw e;
+          await Native.RP.saveFile({ name: file, data: b64 });
+          toast('Сохранено: «Файлы» → «На iPhone» → Fixpoint');
+          return done();
+        }
+        if (!r || !r.saved) return;   // отмена в окне выбора папки — остаёмся в окне «модель готова»
+        toast('Сохранено');
       } catch (err) { uiAlert('Не удалось сохранить: ' + (err && err.message || err)); return; }
     } else {
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file; a.click();
