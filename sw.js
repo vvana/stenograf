@@ -21,6 +21,7 @@ const ASSETS = [
   './app.js',
   './manifest.webmanifest',
   './icon-192.png',
+  './logo.png',
   './icon-512.png',
   './apple-touch-icon.png',
 ];
