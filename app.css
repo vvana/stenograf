@@ -1497,5 +1497,5 @@ button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
 .sug-row:first-child { border-top: 0; }
 .sug-row:active { background: color-mix(in srgb, var(--acc) 10%, var(--card)); }
 /* знак в шапке и на пустом главном экране — картинка (2026-10-17) */
-.topbar .logo .logo-img { width: 34px; height: 34px; margin: -4px 4px -4px -4px; display: block; }
+.topbar .logo .logo-img { width: 32px; height: 32px; margin: 0 6px 0 0; display: block; }   /* без отрицательных отступов: h1 с overflow:hidden обрезал верх знака */
 .empty-ico.logo-big .logo-img { width: 88px; height: 88px; display: inline-block; }
