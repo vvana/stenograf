@@ -3015,9 +3015,8 @@ async function viewMore(pid) {
     ${header('Ещё', false)}
     <div class="pad more-pad">
       <div class="cards">
-        <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
-        <button class="btn wide" data-nav="#/p/${pid}/team">${I('user')}Команда объекта${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
+        <button class="btn wide" data-nav="#/p/${pid}/team">${I('user')}Команда и задания${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
         ${stages.some(s => s.hdCapture || s.hdScan) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
@@ -3053,13 +3052,23 @@ async function pickContact() {
   const [c] = await navigator.contacts.select(['name', 'tel'], { multiple: false });
   return c ? { name: (c.name || [])[0] || '', phones: c.tel || [] } : null;
 }
+// специальности исполнителя → фильтр задания: электрик → электрика, сантехник → сантехника, остальные мастера → «прочее»;
+// прораб, заказчик, дизайнер и исполнитель без специальности видят всё
+function memberTrades(m) {
+  const roles = memberRoles(m);
+  if (!roles.length || roles.some(r => /прораб|заказчик|дизайнер/i.test(r))) return 'all';
+  const t = new Set(roles.map(r => /электр/i.test(r) ? 'electric' : /сантех/i.test(r) ? 'plumb' : 'other'));
+  return [...t];
+}
 async function viewTeam(pid) {
   const { project } = await loadProjectData(pid);
   if (!project) return nav('');
   const team = project.team || [];
   app.innerHTML = `
-    ${header('Команда объекта', `#/p/${pid}/more`)}
+    ${header('Команда и задания', `#/p/${pid}/more`)}
     <div class="pad team-pad">
+      <!-- «Задание для мастеров» переехало сюда из «Ещё» (решение пользователя 2026-10-17): общее задание + задание каждому исполнителю -->
+      <button class="glass-pill team-task-all" id="task-all">${I('report')}Общее задание — вся разметка</button>
       ${team.length ? '' : '<p class="mut team-empty">Пока никого. Добавьте мастеров, которые работают на объекте.</p>'}
       <div class="cards" id="team-list">
         ${team.map(m => `<div class="swipe" data-id="${m.id}">
@@ -3067,6 +3076,7 @@ async function viewTeam(pid) {
           <div class="card team-row swipe-body" data-mid="${m.id}">
             <span class="team-ava">${esc((m.name || '?').trim().slice(0, 1).toUpperCase())}</span>
             <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(memberRoles(m).join(', '))}</span></span>
+            <button class="team-task" data-task="${m.id}" data-nonav title="Задание по специальности" aria-label="Задание">${I('report')}</button>
             ${m.phone ? `<a class="team-call" href="tel:${esc(m.phone.replace(/[^\d+]/g, ''))}" data-nonav aria-label="Позвонить">${I('phone')}</a>` : ''}
           </div>
         </div>`).join('')}
@@ -3150,7 +3160,15 @@ async function viewTeam(pid) {
     swipeDownToClose(host, close);
   };
   $('#team-add').onclick = () => edit(null);
-  app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call')) edit(team.find(m => m.id === r.dataset.mid)); });
+  app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call, .team-task')) edit(team.find(m => m.id === r.dataset.mid)); });
+  // задание: общее — вся разметка; исполнителю — с фильтром по его специальностям
+  $('#task-all').onclick = () => { reportTrade = 'all'; reportFor = null; nav(`#/p/${pid}/report`); };
+  app.querySelectorAll('[data-task]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const m = team.find(x => x.id === b.dataset.task); if (!m) return;
+    reportTrade = memberTrades(m); reportFor = { name: m.name };
+    nav(`#/p/${pid}/report`);
+  });
   // удаление свайпом влево, как у этапов: сразу, с 3 секундами на отмену
   attachSwipe($('#team-list'), async id => {
     const i = team.findIndex(x => x.id === id); if (i < 0) return false;
