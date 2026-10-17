@@ -396,6 +396,9 @@ async function viewProjects() {
   const photosAll = await dbAll('photos');
   const counts = {};
   photosAll.forEach(p => { counts[p.projectId] = (counts[p.projectId] || 0) + 1; });
+  // мини-схема объекта в карточке (просьба пользователя 2026-10-17)
+  const roomsBy = {};
+  (await dbAll('rooms')).forEach(r => { if (r.pts || r.w) { normalizeRoom(r); (roomsBy[r.projectId] = roomsBy[r.projectId] || []).push(r); } });
 
   app.innerHTML = `
     ${header('Fixpoint', null)}
@@ -414,6 +417,7 @@ async function viewProjects() {
             <div class="card project-card swipe-body" data-nav="#/p/${p.id}">
               <div class="project-name">${esc(p.name)}</div>
               <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
+              ${roomsBy[p.id] ? `<span class="proj-mini" aria-hidden="true">${projMiniSvg(roomsBy[p.id])}</span>` : ''}
               <button class="card-edit" data-nonav data-rename="${p.id}" title="Переименовать объект" aria-label="Переименовать объект">${ICONS.edit}</button>
             </div>
           </div>`).join('')}
@@ -692,6 +696,15 @@ function surfMiniSvg(rooms, curId) {
       return `<g class="sm-room${r.id === curId ? ' on' : ''}" data-mini-room="${r.id}"><path d="${roomPath(r)}"/><text x="${cx}" y="${cy}" dy="0.36em" font-size="${fs.toFixed(3)}">${esc(r.name)}</text></g>`;
     }).join('')}
   </svg>`;
+}
+
+// мини-схема объекта для карточки на главном: только контуры комнат, без подписей
+function projMiniSvg(rooms) {
+  const bbs = rooms.map(roomBBox);
+  const x0 = Math.min(...bbs.map(b => b.x)), y0 = Math.min(...bbs.map(b => b.y));
+  const x1 = Math.max(...bbs.map(b => b.x + b.w)), y1 = Math.max(...bbs.map(b => b.y + b.h));
+  const sz = Math.max(x1 - x0, y1 - y0, 1), pad = sz * 0.05;
+  return `<svg viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}" preserveAspectRatio="xMidYMid meet" style="stroke-width:${(sz * 0.025).toFixed(3)}">${rooms.map(r => `<path d="${roomPath(r)}"/>`).join('')}</svg>`;
 }
 
 function isWallId(r, id) { return (r.wallIds || []).includes(id); }
