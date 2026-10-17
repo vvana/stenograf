@@ -3026,6 +3026,20 @@ async function viewMore(pid) {
 
 /* ---------- команда объекта: исполнители (просьба пользователя 2026-10-15) ---------- */
 const TEAM_ROLES = ['Прораб', 'Электрик', 'Сантехник', 'Плиточник', 'Отделочник', 'Маляр', 'Монтажник', 'Дизайнер', 'Заказчик'];
+// специальностей у исполнителя может быть несколько (просьба пользователя 2026-10-17): m.roles — массив,
+// m.role — те же роли строкой через запятую (для старых записей и файлов обмена)
+const memberRoles = m => Array.isArray(m.roles) ? m.roles : (m.role || '').split(/\s*,\s*/).filter(Boolean);
+// контакт из телефонной книги — необязательно, имя и телефон можно вписать руками.
+// На iPhone — системное окно выбора (приложение видит только выбранный контакт), в браузере — Contact Picker API, если есть
+const canPickContact = () => !!((Native.RP && Native.isNative) || (navigator.contacts && navigator.contacts.select));
+async function pickContact() {
+  if (Native.RP && Native.isNative) {
+    const r = await Native.RP.pickContact();
+    return r && r.picked ? { name: r.name || '', phones: r.phones || [] } : null;
+  }
+  const [c] = await navigator.contacts.select(['name', 'tel'], { multiple: false });
+  return c ? { name: (c.name || [])[0] || '', phones: c.tel || [] } : null;
+}
 async function viewTeam(pid) {
   const { project } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -3034,15 +3048,15 @@ async function viewTeam(pid) {
     ${header('Команда объекта', `#/p/${pid}/more`)}
     <div class="pad team-pad">
       ${team.length ? '' : '<p class="mut team-empty">Пока никого. Добавьте мастеров, которые работают на объекте.</p>'}
-      <div class="cards">
-        ${team.length ? `<div class="card team-card">
-          <b>Исполнители</b>
-          ${team.map(m => `<div class="team-row" data-mid="${m.id}">
+      <div class="cards" id="team-list">
+        ${team.map(m => `<div class="swipe" data-id="${m.id}">
+          ${swipeButtons(false)}
+          <div class="card team-row swipe-body" data-mid="${m.id}">
             <span class="team-ava">${esc((m.name || '?').trim().slice(0, 1).toUpperCase())}</span>
-            <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(m.role || '')}</span></span>
+            <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(memberRoles(m).join(', '))}</span></span>
             ${m.phone ? `<a class="team-call" href="tel:${esc(m.phone.replace(/[^\d+]/g, ''))}" data-nonav aria-label="Позвонить">${I('phone')}</a>` : ''}
-          </div>`).join('')}
-        </div>` : ''}
+          </div>
+        </div>`).join('')}
       </div>
     </div>
     <!-- «i» — внизу слева, жидким стеклом: как обмениваться файлами (плашка «Обмен файлами» убрана, просьба пользователя 2026-10-16) -->
@@ -3054,37 +3068,66 @@ async function viewTeam(pid) {
   const save = async () => { project.team = team; await dbPut('projects', project); render(); };
   $('#team-info').onclick = e => { e.stopPropagation(); $('#team-info-pop').classList.toggle('hidden'); };
   $('#team-info-pop').onclick = () => $('#team-info-pop').classList.add('hidden');
-  // окно исполнителя: имя, специальность (быстрый выбор), телефон; ✕ — закрыть, ✓ — сохранить, корзина — удалить
+  const check = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>`;
+  const roleOpt = (r, on) => `<label class="role-opt"><input type="checkbox" value="${esc(r)}" ${on ? 'checked' : ''}><span class="wh-box">${check}</span><span>${esc(r)}</span></label>`;
+  // окно исполнителя: «Выбрать из контактов» (необязательно), имя, специальности (раскрывающийся список с галочками), телефон;
+  // ✕ — закрыть, ✓ — сохранить. Удаление — свайпом влево по строке, как у этапов (просьба пользователя 2026-10-17)
   const edit = m => {
-    const isNew = !m; m = m ? { ...m } : { id: uid(), name: '', role: '', phone: '' };
+    const isNew = !m; m = m ? { ...m } : { id: uid(), name: '', roles: [], phone: '' };
+    const roles = memberRoles(m), extra = roles.filter(r => !TEAM_ROLES.includes(r));
     const host = document.createElement('div');
     host.className = 'plan-sheet tpl-sheet walk-sheet team-sheet';
     host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">${isNew ? 'Новый исполнитель' : 'Исполнитель'}</div>
+      ${canPickContact() ? `<button class="glass-pill" id="tm-contact">${I('user')}Выбрать из контактов</button>` : ''}
       <label class="team-f">Имя<input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="Например, Сергей" autocomplete="off"></label>
-      <label class="team-f">Специальность<input class="inp" id="tm-role" value="${esc(m.role)}" placeholder="Электрик, плиточник…" autocomplete="off"></label>
-      <div class="team-roles">${TEAM_ROLES.map(r => `<button class="chip ${r === m.role ? 'on' : ''}" data-role="${r}">${r}</button>`).join('')}</div>
+      <div class="team-f">Специальность
+        <details class="role-pick">
+          <summary class="glass-pill role-sum"><span id="tm-role-sum"></span><svg class="role-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></summary>
+          <div class="role-list" id="tm-roles">
+            ${TEAM_ROLES.map(r => roleOpt(r, roles.includes(r))).join('')}
+            ${extra.map(r => roleOpt(r, true)).join('')}
+            <input class="inp role-custom" id="tm-role-custom" placeholder="Другая — впишите и нажмите «Ввод»" autocomplete="off" enterkeyhint="done">
+          </div>
+        </details>
+      </div>
       <label class="team-f">Телефон<input class="inp" id="tm-phone" type="tel" value="${esc(m.phone)}" placeholder="+7 …" autocomplete="off"></label>
       <div class="walk-actions">
         <button class="round-btn" data-k="x" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        ${isNew ? '' : `<button class="round-btn" data-k="del" aria-label="Удалить">${I('trash')}</button>`}
         <button class="round-btn go" data-k="ok" aria-label="Сохранить"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
       </div>`;
     document.body.appendChild(host);
     const close = () => host.remove();
-    host.querySelectorAll('[data-role]').forEach(b => b.onclick = () => {
-      host.querySelector('#tm-role').value = b.dataset.role;
-      host.querySelectorAll('[data-role]').forEach(x => x.classList.toggle('on', x === b));
-    });
-    host.querySelector('[data-k="x"]').onclick = close;
-    const del = host.querySelector('[data-k="del"]');
-    if (del) del.onclick = async () => {
-      if (!await uiConfirm(`Удалить «${m.name}» из команды?`)) return;
-      const i = team.findIndex(x => x.id === m.id); if (i >= 0) team.splice(i, 1);
-      close(); await save();
+    const list = host.querySelector('#tm-roles'), custom = host.querySelector('#tm-role-custom');
+    const picked = () => [...list.querySelectorAll('input[type=checkbox]:checked')].map(x => x.value);
+    const sum = () => {
+      const r = picked();
+      host.querySelector('#tm-role-sum').textContent = r.length ? r.join(', ') : 'Выберите — можно несколько';
+      host.querySelector('.role-sum').classList.toggle('empty', !r.length);
     };
+    list.addEventListener('change', sum); sum();
+    // своя специальность: «Ввод» добавляет её в список отмеченной
+    const addCustom = () => {
+      const v = custom.value.trim(); if (!v) return;
+      const have = [...list.querySelectorAll('input[type=checkbox]')].find(x => x.value.toLowerCase() === v.toLowerCase());
+      if (have) have.checked = true; else custom.insertAdjacentHTML('beforebegin', roleOpt(v, true));
+      custom.value = ''; sum();
+    };
+    custom.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } });
+    custom.addEventListener('blur', addCustom);
+    const cbtn = host.querySelector('#tm-contact');
+    if (cbtn) cbtn.onclick = async () => {
+      let c; try { c = await pickContact(); } catch (err) { console.error(err); return toast('Контакты недоступны — впишите имя и телефон'); }
+      if (!c) return;
+      if (c.name) host.querySelector('#tm-name').value = c.name;
+      const phones = [...new Set((c.phones || []).map(x => String(x).trim()).filter(Boolean))];
+      const ph = phones.length > 1 ? await pickSheet('Какой номер?', c.name, phones.map(x => ({ html: esc(x), value: x }))) : phones[0];
+      if (ph) host.querySelector('#tm-phone').value = ph;
+    };
+    host.querySelector('[data-k="x"]').onclick = close;
     host.querySelector('[data-k="ok"]').onclick = async () => {
+      addCustom();
       m.name = host.querySelector('#tm-name').value.trim();
-      m.role = host.querySelector('#tm-role').value.trim();
+      m.roles = picked(); m.role = m.roles.join(', ');
       m.phone = host.querySelector('#tm-phone').value.trim();
       if (!m.name) { host.querySelector('#tm-name').focus(); return toast('Укажите имя'); }
       const i = team.findIndex(x => x.id === m.id);
@@ -3092,10 +3135,21 @@ async function viewTeam(pid) {
       close(); await save();
     };
     swipeDownToClose(host, close);
-    if (isNew) setTimeout(() => host.querySelector('#tm-name').focus(), 50);
   };
   $('#team-add').onclick = () => edit(null);
   app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call')) edit(team.find(m => m.id === r.dataset.mid)); });
+  // удаление свайпом влево, как у этапов: сразу, с 3 секундами на отмену
+  attachSwipe($('#team-list'), async id => {
+    const i = team.findIndex(x => x.id === id); if (i < 0) return false;
+    const [gone] = team.splice(i, 1);
+    await save();
+    undoBar(`«${gone.name}» удалён из команды`, async () => {
+      const p = await dbGet('projects', pid); if (!p) return;
+      p.team = p.team || []; p.team.splice(Math.min(i, p.team.length), 0, gone);
+      await dbPut('projects', p); render();
+    });
+    return true;
+  });
 }
 
 /* ---------- резервная копия ---------- */

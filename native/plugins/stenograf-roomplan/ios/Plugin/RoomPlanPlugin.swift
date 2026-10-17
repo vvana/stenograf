@@ -6,6 +6,7 @@ import ARKit
 import AVFoundation
 import QuickLook
 import Photos
+import ContactsUI
 
 /// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
@@ -29,6 +30,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFileAs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pickContact", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -183,6 +185,29 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Выбор контакта системным окном iOS (CNContactPickerViewController): окно работает вне приложения,
+    /// поэтому разрешение на доступ ко всей книге контактов не нужно — приложение получает только выбранный контакт.
+    /// Ответ {picked, name, phones: [String]}; отмена — picked: false.
+    private var contactDelegate: ContactPickerDelegate?
+    @objc func pickContact(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
+            let picker = CNContactPickerViewController()
+            picker.displayedPropertyKeys = [CNContactPhoneNumbersKey]
+            let d = ContactPickerDelegate { [weak self] contact in
+                self?.contactDelegate = nil
+                guard let c = contact else { call.resolve(["picked": false]); return }
+                var name = [c.givenName, c.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+                if name.isEmpty { name = c.organizationName }
+                let phones = c.phoneNumbers.map { $0.value.stringValue }
+                call.resolve(["picked": true, "name": name, "phones": phones])
+            }
+            self.contactDelegate = d
+            picker.delegate = d
+            host.present(picker, animated: true)
+        }
+    }
+
     @objc func fileInfo(_ call: CAPPluginCall) {
         guard let url = docFile(call) else { call.resolve(["exists": false]); return }
         let size = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue
@@ -285,4 +310,11 @@ final class ExportPickerDelegate: NSObject, UIDocumentPickerDelegate {
     init(_ done: @escaping (Bool) -> Void) { self.done = done }
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { done(true) }
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(false) }
+}
+
+final class ContactPickerDelegate: NSObject, CNContactPickerDelegate {
+    let done: (CNContact?) -> Void
+    init(_ done: @escaping (CNContact?) -> Void) { self.done = done }
+    func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) { done(contact) }
+    func contactPickerDidCancel(_ picker: CNContactPickerViewController) { done(nil) }
 }
