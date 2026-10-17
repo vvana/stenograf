@@ -3060,6 +3060,34 @@ function memberTrades(m) {
   const t = new Set(roles.map(r => /электр/i.test(r) ? 'electric' : /сантех/i.test(r) ? 'plumb' : 'other'));
   return [...t];
 }
+// окно связи с исполнителем. Номер: для звонка и SMS — как есть (только цифры и «+»), для WhatsApp/Telegram —
+// международный без «+» (российский 8XXXXXXXXXX → 7XXXXXXXXXX). Мессенджеры — по https-ссылкам wa.me / t.me:
+// iOS сам откроет приложение, если оно стоит, иначе страницу в Safari
+function contactSheet(m) {
+  const raw = m.phone.replace(/[^\d+]/g, '');
+  let intl = raw.replace(/\D/g, '');
+  if (!raw.startsWith('+') && intl.length === 11 && intl[0] === '8') intl = '7' + intl.slice(1);
+  const ico = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const ways = [
+    ['call', 'Позвонить', I('phone'), `tel:${raw}`],
+    ['sms', 'SMS', ico('<path d="M4 5h16v11H9l-5 4z"/>'), `sms:${raw}`],
+    ['wa', 'WhatsApp', ico('<path d="M4 20l1.3-4A8 8 0 1 1 8 18.7z"/><path d="M9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 .8a4 4 0 0 1-2-2l.8-1-1-2z"/>'), `https://wa.me/${intl}`],
+    ['tg', 'Telegram', ico('<path d="M21 4L3 11l6 2 2 6 3-4 5 4z"/><path d="M9 13l8-6"/>'), `https://t.me/+${intl}`],
+  ];
+  const host = document.createElement('div');
+  host.className = 'plan-sheet tpl-sheet walk-sheet contact-sheet';
+  host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div>
+    <div class="sh-title">${esc(m.name)}</div><div class="mut small contact-num">${esc(m.phone)}</div>
+    <div class="contact-ways">${ways.map(([k, t, i]) => `<button class="glass-pill contact-${k}" data-way="${k}">${i}<span>${t}</span></button>`).join('')}</div>`;
+  document.body.appendChild(host);
+  const close = () => host.remove();
+  host.querySelectorAll('[data-way]').forEach(b => b.onclick = () => {
+    const url = ways.find(w => w[0] === b.dataset.way)[3];
+    close();
+    if (url.startsWith('https:')) window.open(url, '_blank'); else location.href = url;
+  });
+  swipeDownToClose(host, close);
+}
 async function viewTeam(pid) {
   const { project } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -3077,7 +3105,7 @@ async function viewTeam(pid) {
             <span class="team-ava">${esc((m.name || '?').trim().slice(0, 1).toUpperCase())}</span>
             <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(memberRoles(m).join(', '))}</span></span>
             <button class="team-task" data-task="${m.id}" data-nonav title="Задание по специальности" aria-label="Задание">${I('report')}</button>
-            ${m.phone ? `<a class="team-call" href="tel:${esc(m.phone.replace(/[^\d+]/g, ''))}" data-nonav aria-label="Позвонить">${I('phone')}</a>` : ''}
+            ${m.phone ? `<button class="team-call" data-call="${m.id}" data-nonav aria-label="Связаться">${I('phone')}</button>` : ''}
           </div>
         </div>`).join('')}
       </div>
@@ -3161,6 +3189,11 @@ async function viewTeam(pid) {
   };
   $('#team-add').onclick = () => edit(null);
   app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call, .team-task')) edit(team.find(m => m.id === r.dataset.mid)); });
+  // связаться: стеклянное окно «Позвонить / SMS / WhatsApp / Telegram» (просьба пользователя 2026-10-17)
+  app.querySelectorAll('[data-call]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const m = team.find(x => x.id === b.dataset.call); if (m && m.phone) contactSheet(m);
+  });
   // задание: общее — вся разметка; исполнителю — с фильтром по его специальностям
   $('#task-all').onclick = () => { reportTrade = 'all'; reportFor = null; nav(`#/p/${pid}/report`); };
   app.querySelectorAll('[data-task]').forEach(b => b.onclick = e => {

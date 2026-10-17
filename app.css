@@ -1464,3 +1464,15 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .team-task { width: 40px; height: 40px; border-radius: 50%; flex: none; border: 0; padding: 0; cursor: pointer; display: flex; align-items: center; justify-content: center;
   color: var(--acc); background: color-mix(in srgb, var(--acc) 12%, var(--card)); }
 .team-task .ic { margin: 0; }
+/* окно «Связаться» — стеклянные кнопки сеткой 2×2 (2026-10-17) */
+button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
+.contact-sheet .sh-title { text-align: center; margin-bottom: 0; }
+.contact-num { text-align: center; margin: -4px 0 6px; }
+.contact-ways { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.contact-ways .glass-pill { flex-direction: column; gap: 6px; min-height: 84px; border-radius: 24px; font-size: 15px; }
+.contact-ways .glass-pill svg { width: 28px; height: 28px; }
+.contact-ways .ic { margin: 0; }
+.contact-call svg { color: #1f8a4c; }
+.contact-sms svg { color: #2f7dd1; }
+.contact-wa svg { color: #25a35a; }
+.contact-tg svg { color: #2a9fd8; }
