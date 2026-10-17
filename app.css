@@ -1490,3 +1490,9 @@ button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
 .team-form .btn.wide { margin: 0; }
 .team-form .role-custom { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; font-size: 15px; }
 .team-pad .team-task-all { margin: 0 0 12px; }
+/* подсказки из контактов под полями «Имя» / «Телефон» (2026-10-17) */
+.sug-list { display: flex; flex-direction: column; margin-top: -6px; border-radius: 12px; overflow: hidden; }
+.sug-list:not(:empty) { border: 1px solid var(--acc); }
+.sug-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); background: var(--card); font: inherit; font-size: 15px; color: var(--ink); text-align: left; cursor: pointer; }
+.sug-row:first-child { border-top: 0; }
+.sug-row:active { background: color-mix(in srgb, var(--acc) 10%, var(--card)); }

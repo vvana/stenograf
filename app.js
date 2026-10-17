@@ -3049,6 +3049,9 @@ const TEAM_ROLES = ['Прораб', 'Электрик', 'Сантехник', '�
 const memberRoles = m => Array.isArray(m.roles) ? m.roles : (m.role || '').split(/\s*,\s*/).filter(Boolean);
 // контакт из телефонной книги — необязательно, имя и телефон можно вписать руками.
 // На iPhone — системное окно выбора (приложение видит только выбранный контакт), в браузере — Contact Picker API, если есть
+// поиск по контактам при вводе: только в нативной версии с методом searchContacts и если доступ не запрещён
+let contactsDenied = false;
+const canSearchContacts = () => !!(Native.isNative && Native.RP && Native.RP.searchContacts && !contactsDenied);
 const canPickContact = () => !!((Native.RP && Native.isNative) || (navigator.contacts && navigator.contacts.select));
 async function pickContact() {
   if (Native.RP && Native.isNative) {
@@ -3138,8 +3141,9 @@ async function viewTeam(pid) {
     host.className = 'plan-sheet tpl-sheet walk-sheet team-sheet';
     host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">${isNew ? 'Новый исполнитель' : 'Исполнитель'}</div>
       <div class="calc-form team-form">
-        ${canPickContact() ? `<button type="button" class="btn wide" id="tm-contact">${I('user')}Выбрать из контактов</button>` : ''}
-        <label>Имя <input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="Например, Сергей" autocomplete="off"></label>
+        ${canPickContact() ? `<button type="button" class="btn wide ${canSearchContacts() ? 'hidden' : ''}" id="tm-contact">${I('user')}Выбрать из контактов</button>` : ''}
+        <label>Имя <input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="${canSearchContacts() ? 'Имя — подскажем из контактов' : 'Например, Сергей'}" autocomplete="off"></label>
+        <div class="sug-list" id="tm-sug-name"></div>
         <div class="calc-group" id="tm-role-group"><span>Специальность</span>
           <button type="button" class="inp calc-field" id="tm-role-sum"></button>
           <div class="calc-checks hidden" id="tm-roles">
@@ -3149,6 +3153,7 @@ async function viewTeam(pid) {
           </div>
         </div>
         <label>Телефон <input class="inp" id="tm-phone" type="tel" value="${esc(m.phone)}" placeholder="+7 …" autocomplete="off"></label>
+        <div class="sug-list" id="tm-sug-phone"></div>
       </div>
       <div class="walk-actions">
         <button class="round-btn" data-k="x" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
@@ -3178,6 +3183,36 @@ async function viewTeam(pid) {
     };
     custom.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } });
     custom.addEventListener('blur', addCustom);
+    // подсказки из контактов при вводе имени или телефона (просьба пользователя 2026-10-17); кнопка «Выбрать из контактов»
+    // показывается, только если доступа к контактам нет (или старая сборка без поиска)
+    const suggestHost = { name: host.querySelector('#tm-sug-name'), phone: host.querySelector('#tm-sug-phone') };
+    let sugT = 0, sugSeq = 0;
+    const hideSug = () => Object.values(suggestHost).forEach(x => { if (x) x.innerHTML = ''; });
+    const fillFrom = async c => {
+      hideSug();
+      if (c.name) host.querySelector('#tm-name').value = c.name;
+      const phones = [...new Set((c.phones || []).map(x => String(x).trim()).filter(Boolean))];
+      const ph = phones.length > 1 ? await pickSheet('Какой номер?', c.name, phones.map(x => ({ html: esc(x), value: x }))) : phones[0];
+      if (ph) host.querySelector('#tm-phone').value = ph;
+    };
+    const suggest = (field) => {
+      clearTimeout(sugT);
+      const box = suggestHost[field], q = host.querySelector(field === 'name' ? '#tm-name' : '#tm-phone').value.trim();
+      if (!box || !canSearchContacts() || q.length < (field === 'name' ? 2 : 3)) { hideSug(); return; }
+      sugT = setTimeout(async () => {
+        const seq = ++sugSeq;
+        let r; try { r = await Native.RP.searchContacts({ q }); } catch { return; }
+        if (seq !== sugSeq) return;
+        if (r.access === 'denied') { contactsDenied = true; const b = host.querySelector('#tm-contact'); if (b) b.classList.remove('hidden'); hideSug(); return; }
+        hideSug();
+        const items = r.items || [];
+        if (!items.length) return;
+        box.innerHTML = items.map((c, k) => `<button type="button" class="sug-row" data-k="${k}"><b>${esc(c.name || 'Без имени')}</b><span class="mut small">${esc((c.phones || []).join(', '))}</span></button>`).join('');
+        box.querySelectorAll('[data-k]').forEach(b => b.onclick = () => fillFrom(items[+b.dataset.k]));
+      }, 220);
+    };
+    host.querySelector('#tm-name').addEventListener('input', () => suggest('name'));
+    host.querySelector('#tm-phone').addEventListener('input', () => suggest('phone'));
     const cbtn = host.querySelector('#tm-contact');
     if (cbtn) cbtn.onclick = async () => {
       let c; try { c = await pickContact(); } catch (err) { console.error(err); return toast('Контакты недоступны — впишите имя и телефон'); }

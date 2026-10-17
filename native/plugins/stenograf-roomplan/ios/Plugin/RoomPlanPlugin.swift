@@ -6,6 +6,7 @@ import ARKit
 import AVFoundation
 import QuickLook
 import Photos
+import Contacts
 import ContactsUI
 
 /// Мост Fixpoint ↔ Apple RoomPlan.
@@ -31,6 +32,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFileAs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickContact", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "searchContacts", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -205,6 +207,51 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
             self.contactDelegate = d
             picker.delegate = d
             host.present(picker, animated: true)
+        }
+    }
+
+    /// Подсказки при вводе имени/телефона исполнителя: поиск по контактам телефона (нужен доступ к контактам —
+    /// при первом вызове iOS спрашивает; с iOS 18 можно дать доступ к части контактов). Ответ {access, items:[{name, phones}]};
+    /// access: "ok" | "denied". Ищем по вхождению в имя (без регистра) или по цифрам номера (от 3 цифр), не больше 8 контактов.
+    private let contactStore = CNContactStore()
+    @objc func searchContacts(_ call: CAPPluginCall) {
+        let q = (call.getString("q") ?? "").trimmingCharacters(in: .whitespaces)
+        let run = {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let needle = q.lowercased()
+                let digits = q.filter { $0.isNumber }
+                let byPhone = digits.count >= 3 && digits.count * 2 >= q.filter { !$0.isWhitespace }.count
+                let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactOrganizationNameKey, CNContactPhoneNumbersKey] as [CNKeyDescriptor]
+                let req = CNContactFetchRequest(keysToFetch: keys)
+                var items: [[String: Any]] = []
+                if !needle.isEmpty {
+                    try? self.contactStore.enumerateContacts(with: req) { c, stop in
+                        var name = [c.givenName, c.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+                        if name.isEmpty { name = c.organizationName }
+                        let phones = c.phoneNumbers.map { $0.value.stringValue }
+                        if phones.isEmpty { return }
+                        let hit: Bool
+                        if byPhone {
+                            hit = phones.contains { p in p.filter { $0.isNumber }.contains(digits) }
+                        } else {
+                            hit = name.lowercased().contains(needle)
+                        }
+                        if hit { items.append(["name": name, "phones": phones]) }
+                        if items.count >= 8 { stop.pointee = true }
+                    }
+                }
+                call.resolve(["access": "ok", "items": items])
+            }
+        }
+        switch CNContactStore.authorizationStatus(for: .contacts) {
+        case .notDetermined:
+            contactStore.requestAccess(for: .contacts) { granted, _ in
+                if granted { run() } else { call.resolve(["access": "denied", "items": []]) }
+            }
+        case .denied, .restricted:
+            call.resolve(["access": "denied", "items": []])
+        default:   // .authorized и (iOS 18+) .limited — ищем в том, что доступно
+            run()
         }
     }
 
