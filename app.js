@@ -2163,6 +2163,8 @@ async function stageWalk(pid, stageId = null) {
       <p class="mut small">Снятая область подсвечивается зелёным.</p>
       <label class="walk-hd"><input type="checkbox" id="walk-hd"><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>HD — с обработкой на компьютере</b>
         <span class="mut small">Кроме фото стен телефон снимет до 1000 кадров в полном разрешении (до ≈ 1 ГБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере.</span></span></label>
+      <label class="walk-hd"><input type="checkbox" id="walk-leaf" ${doorLeafFilterOn() ? 'checked' : ''}><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>Убирать створки дверей</b>
+        <span class="mut small">Приоткрытая дверь не станет куском стены на схеме. Снимите галочку, если фильтр убрал настоящую короткую стену.</span></span></label>
       <div class="walk-actions">
         <button class="round-btn" data-k="x" title="Отмена" aria-label="Отмена"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         <button class="round-btn go" data-k="go" title="Начать обход" aria-label="Начать обход"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
@@ -2170,6 +2172,7 @@ async function stageWalk(pid, stageId = null) {
     document.body.appendChild(host);
     host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
       const hd = host.querySelector('#walk-hd').checked;
+      if (b.dataset.k !== 'x') setDoorLeafFilter(host.querySelector('#walk-leaf').checked);
       host.remove();
       resolve(b.dataset.k === 'x' ? null : hd ? 'hd' : 'std');
     });
@@ -3021,11 +3024,14 @@ async function viewMore(pid) {
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
+      ${Native.isNative ? `<label class="leaf-row"><span><b>Убирать створки дверей</b><span class="mut small">при обмере и обходе лидаром</span></span>
+        <input type="checkbox" id="leaf-filter" ${doorLeafFilterOn() ? 'checked' : ''}><span class="sw-track"><span class="sw-knob"></span></span></label>` : ''}
       <div class="app-version">${appVersionText()}</div>
     </div>
     ${bottomNav(pid, 'more')}`;
 
   // «О приложении» (диагностика лидара) убрано 2026-10-16 по просьбе пользователя; nativeDiagnostics() оставлена в native.js на случай отладки
+  const lf = $('#leaf-filter'); if (lf) lf.onchange = () => { setDoorLeafFilter(lf.checked); toast(lf.checked ? 'Створки дверей будут убираться' : 'Фильтр створок выключен'); };
   // экспорт GLB — прямо отсюда, без экрана 3D и без фото (модель собирается «за кадром»)
   $('#export-glb').onclick = async () => {
     const b = $('#export-glb'); if (b.disabled) return;
