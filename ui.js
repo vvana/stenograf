@@ -73,7 +73,8 @@ function uiDialog({ text, input = false, value = '', ok = 'ОК', cancel = 'От
       if (e.key === 'Enter') { e.preventDefault(); yes(); }
       else if (e.key === 'Escape') { e.preventDefault(); cancel ? no() : yes(); }
     });
-    setTimeout(() => { if (inp) { inp.focus(); inp.select(); } else bOk.focus(); }, 30);
+    // текст не выделяем — курсор в конец (просьба пользователя 2026-10-17: выделение при редактировании мешает)
+    setTimeout(() => { if (inp) { inp.focus(); const n = inp.value.length; try { inp.setSelectionRange(n, n); } catch {} } else bOk.focus(); }, 30);
   });
 }
 const uiAlert = text => uiDialog({ text, cancel: null });
