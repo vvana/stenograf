@@ -1485,3 +1485,8 @@ button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
 .leaf-row .sw-knob { position: absolute; top: 2px; left: 2px; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .18s; }
 .leaf-row input:checked + .sw-track { background: var(--acc); }
 .leaf-row input:checked + .sw-track .sw-knob { transform: translateX(20px); }
+/* окно исполнителя в стиле «Площадей и материалов» (2026-10-17) */
+.team-form { margin-top: 4px; }
+.team-form .btn.wide { margin: 0; }
+.team-form .role-custom { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; font-size: 15px; }
+.team-pad .team-task-all { margin: 0 0 12px; }

@@ -3102,7 +3102,7 @@ async function viewTeam(pid) {
     ${header('Команда и задания', `#/p/${pid}/more`)}
     <div class="pad team-pad">
       <!-- «Задание для мастеров» переехало сюда из «Ещё» (решение пользователя 2026-10-17): общее задание + задание каждому исполнителю -->
-      <button class="glass-pill team-task-all" id="task-all">${I('report')}Общее задание — вся разметка</button>
+      <button class="btn wide team-task-all" id="task-all">${I('report')}Список заданий</button>
       ${team.length ? '' : '<p class="mut team-empty">Пока никого. Добавьте мастеров, которые работают на объекте.</p>'}
       <div class="cards" id="team-list">
         ${team.map(m => `<div class="swipe" data-id="${m.id}">
@@ -3126,7 +3126,9 @@ async function viewTeam(pid) {
   $('#team-info').onclick = e => { e.stopPropagation(); $('#team-info-pop').classList.toggle('hidden'); };
   $('#team-info-pop').onclick = () => $('#team-info-pop').classList.add('hidden');
   const check = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>`;
-  const roleOpt = (r, on) => `<label class="role-opt"><input type="checkbox" value="${esc(r)}" ${on ? 'checked' : ''}><span class="wh-box">${check}</span><span>${esc(r)}</span></label>`;
+  // окно в стиле «Площадей и материалов» (просьба пользователя 2026-10-17): подписи над полями, поле-список со стрелкой,
+  // галочки — строками в рамке, как «Стены / Пол / Потолок»
+  const roleOpt = (r, on) => `<label class="calc-check"><input type="checkbox" value="${esc(r)}" ${on ? 'checked' : ''}>${esc(r)}</label>`;
   // окно исполнителя: «Выбрать из контактов» (необязательно), имя, специальности (раскрывающийся список с галочками), телефон;
   // ✕ — закрыть, ✓ — сохранить. Удаление — свайпом влево по строке, как у этапов (просьба пользователя 2026-10-17)
   const edit = m => {
@@ -3135,19 +3137,19 @@ async function viewTeam(pid) {
     const host = document.createElement('div');
     host.className = 'plan-sheet tpl-sheet walk-sheet team-sheet';
     host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">${isNew ? 'Новый исполнитель' : 'Исполнитель'}</div>
-      ${canPickContact() ? `<button class="glass-pill" id="tm-contact">${I('user')}Выбрать из контактов</button>` : ''}
-      <label class="team-f">Имя<input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="Например, Сергей" autocomplete="off"></label>
-      <div class="team-f">Специальность
-        <details class="role-pick">
-          <summary class="glass-pill role-sum"><span id="tm-role-sum"></span><svg class="role-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></summary>
-          <div class="role-list" id="tm-roles">
+      <div class="calc-form team-form">
+        ${canPickContact() ? `<button type="button" class="btn wide" id="tm-contact">${I('user')}Выбрать из контактов</button>` : ''}
+        <label>Имя <input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="Например, Сергей" autocomplete="off"></label>
+        <div class="calc-group" id="tm-role-group"><span>Специальность</span>
+          <button type="button" class="inp calc-field" id="tm-role-sum"></button>
+          <div class="calc-checks hidden" id="tm-roles">
             ${TEAM_ROLES.map(r => roleOpt(r, roles.includes(r))).join('')}
             ${extra.map(r => roleOpt(r, true)).join('')}
             <input class="inp role-custom" id="tm-role-custom" placeholder="Другая — впишите и нажмите «Ввод»" autocomplete="off" enterkeyhint="done">
           </div>
-        </details>
+        </div>
+        <label>Телефон <input class="inp" id="tm-phone" type="tel" value="${esc(m.phone)}" placeholder="+7 …" autocomplete="off"></label>
       </div>
-      <label class="team-f">Телефон<input class="inp" id="tm-phone" type="tel" value="${esc(m.phone)}" placeholder="+7 …" autocomplete="off"></label>
       <div class="walk-actions">
         <button class="round-btn" data-k="x" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         <button class="round-btn go" data-k="ok" aria-label="Сохранить"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
@@ -3158,8 +3160,13 @@ async function viewTeam(pid) {
     const picked = () => [...list.querySelectorAll('input[type=checkbox]:checked')].map(x => x.value);
     const sum = () => {
       const r = picked();
-      host.querySelector('#tm-role-sum').textContent = r.length ? r.join(', ') : 'Выберите — можно несколько';
-      host.querySelector('.role-sum').classList.toggle('empty', !r.length);
+      const f = host.querySelector('#tm-role-sum');
+      f.textContent = r.length ? r.join(', ') : 'Выберите — можно несколько';
+      f.classList.toggle('none', !r.length);
+    };
+    host.querySelector('#tm-role-sum').onclick = () => {
+      const g = host.querySelector('#tm-role-group'), open = !g.classList.contains('open');
+      g.classList.toggle('open', open); list.classList.toggle('hidden', !open);
     };
     list.addEventListener('change', sum); sum();
     // своя специальность: «Ввод» добавляет её в список отмеченной
