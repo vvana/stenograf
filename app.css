@@ -1457,3 +1457,5 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .proj-mini path { fill: color-mix(in srgb, var(--acc) 10%, var(--card)); stroke: #6b7178; stroke-linejoin: round; }
 /* карточка не растёт из-за схемы: название в одну строку с многоточием, схема — по высоте карточки (просьба пользователя 2026-10-17) */
 .project-card:has(.proj-mini) .project-name, .project-card:has(.proj-mini) .project-name + .mut { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* окно с полем ввода — без масштаба при появлении: на iOS курсор оставался там, где поле было во время анимации (2026-10-17) */
+.ui-dlg.has-input { transform: none; transition: opacity .18s ease; }
