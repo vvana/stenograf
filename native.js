@@ -12,7 +12,7 @@ const Native = (() => {
     if (typeof cap.nativePromise === 'function') {
       via = 'nativePromise';
       const call = m => (opts = {}) => cap.nativePromise('RoomPlan', m, opts);
-      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo'), quickLook: call('quickLook'), shareFile: call('shareFile'), fileInfo: call('fileInfo'), deleteFile: call('deleteFile'), htmlPdf: call('htmlPdf'), saveImage: call('saveImage'), openSettings: call('openSettings'), saveFile: call('saveFile'), saveFileAs: call('saveFileAs') };
+      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo'), quickLook: call('quickLook'), shareFile: call('shareFile'), fileInfo: call('fileInfo'), deleteFile: call('deleteFile'), htmlPdf: call('htmlPdf'), saveImage: call('saveImage'), openSettings: call('openSettings'), saveFile: call('saveFile'), saveFileAs: call('saveFileAs'), pickContact: call('pickContact'), searchContacts: call('searchContacts') };
     } else if (cap.Plugins && cap.Plugins.RoomPlan) {
       via = 'Plugins.RoomPlan';
       RP = cap.Plugins.RoomPlan;
@@ -74,6 +74,39 @@ async function nativeDiagnostics() {
 const median = arr => { const a = arr.slice().sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : 0; };
 const dist2 = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
 
+// Фильтр створок дверей (просьба пользователя 2026-10-17): межкомнатные двери не прижимаются к стене, и RoomPlan
+// принимает приоткрытую створку за кусок стены — контур комнаты портится. Створкой считаем «стену», которая
+//  • короткая (0,45–1,25 м — ширина полотна),
+//  • одним концом стоит у края двери/проёма, найденного RoomPlan (≤ 30 см),
+//  • и при этом ниже остальных стен (полотно ≈ 2 м, стены — до потолка) или другим концом висит в воздухе
+//    (рядом нет конца другой стены — у настоящей короткой стены оба конца на стыках).
+// Включён по умолчанию; выключается галочкой в окне запуска обхода и на «Ещё» (localStorage, на всё приложение).
+const DOOR_LEAF_KEY = 'fixpoint.doorLeafFilter';
+function doorLeafFilterOn() { try { return localStorage.getItem(DOOR_LEAF_KEY) !== '0'; } catch { return true; } }
+function setDoorLeafFilter(on) { try { localStorage.setItem(DOOR_LEAF_KEY, on ? '1' : '0'); } catch {} }
+function doorLeafIds(scan) {
+  const out = new Set();
+  if (!doorLeafFilterOn() || !scan) return out;
+  const walls = (scan.walls || []).filter(w => w.w > 0.15);
+  const doors = [...(scan.doors || []), ...(scan.openings || [])];
+  if (!doors.length || walls.length < 4) return out;
+  const maxH = Math.max(...walls.map(w => w.h || 0));
+  const ends = w => [[w.x0, w.y0], [w.x1, w.y1]];
+  const nearDoor = p => doors.some(d => Math.min(dist2(p, [d.x0, d.y0]), dist2(p, [d.x1, d.y1])) <= 0.3);
+  for (const w of walls) {
+    if (!(w.w >= 0.45 && w.w <= 1.25)) continue;
+    const [a, b] = ends(w);
+    const free = nearDoor(a) ? b : nearDoor(b) ? a : null;
+    if (!free) continue;
+    const short = w.h > 0 && w.h < maxH - 0.2;
+    const dangling = !walls.some(o => o !== w && ends(o).some(q => dist2(q, free) < 0.3));
+    if (short || dangling) out.add(w.id);
+  }
+  // если после фильтра стен меньше трёх — это не створки, а сама комната; ничего не убираем
+  if (walls.length - out.size < 3) out.clear();
+  return out;
+}
+
 function lineIntersect(p1, p2, p3, p4) {
   const d = (p1[0] - p2[0]) * (p3[1] - p4[1]) - (p1[1] - p2[1]) * (p3[0] - p4[0]);
   if (Math.abs(d) < 1e-6) return null;
@@ -86,7 +119,8 @@ function lineIntersect(p1, p2, p3, p4) {
 
 // стены скана (отрезки в плане) → замкнутый многоугольник; chain[i] — стена от pts[i] к pts[i+1]
 function scanToPolygon(scan) {
-  const walls = (scan.walls || []).filter(w => w.w > 0.15)
+  const leaves = doorLeafIds(scan);
+  const walls = (scan.walls || []).filter(w => w.w > 0.15 && !leaves.has(w.id))
     .map(w => ({ id: w.id, a: [w.x0, w.y0], b: [w.x1, w.y1], len: Math.hypot(w.x1 - w.x0, w.y1 - w.y0), h: w.h, curve: w.curve || null, top: w.top || null }));
   if (walls.length < 3) return null;
   walls.sort((p, q) => q.len - p.len);
@@ -644,7 +678,8 @@ async function lidarMeasure(pid, rooms, room) {
   await saveNorth(pid, scan, turn);
   if (scan.usdz) { r.usdz = await b64Blob(scan.usdz, 'model/vnd.usdz+zip'); r.usdzAt = Date.now(); await dbPut('rooms', r); }
   const open = (scanToPolygon(scan) || {}).open;
-  toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м${open ? ' · одна сторона не отсканирована — замкнута прямой' : ''}`);
+  const leafN = doorLeafIds(scan).size;
+  toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м${open ? ' · одна сторона не отсканирована — замкнута прямой' : ''}${leafN ? ` · створок дверей убрано: ${leafN}` : ''}`);
   const res = scanToPolygon(scan);
   if (res) await proposeMirrors(r, scan, res, idMap);
   return r;
@@ -677,7 +712,8 @@ async function lidarApartment(pid, rooms, stageId, opts = {}) {
       return room && m.place && m.place.toPlan ? { room, toPlan: m.place.toPlan } : null;
     });
   }
-  toast(`Квартира: ${results.length} комн.${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
+  const leafN = (scan.rooms || []).reduce((n, sr) => n + doorLeafIds(sr).size, 0);
+  toast(`Квартира: ${results.length} комн.${leafN ? `, створок дверей убрано: ${leafN}` : ''}${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
   return results;
 }
 

@@ -264,7 +264,8 @@ const swipeNav = { dir: 0 };
 })();
 
 // знак приложения «Слои в скане» (как иконка): три слоя-этапа
-const LOGO = '<svg viewBox="0 0 120 120" aria-hidden="true"><path d="M60 89.9L99.1 73.8 60 57.7 20.9 73.8Z" fill="#c4cad6"/><path d="M60 76.1L99.1 60 60 43.9 20.9 60Z" fill="#8a97b0"/><path d="M60 62.3L99.1 46.2 60 30.1 20.9 46.2Z" fill="#3f4f73"/></svg>';
+// знак приложения — объёмные три слоя с новой иконки (2026-10-17), вырезан на прозрачном фоне
+const LOGO = '<img class="logo-img" src="logo.png" alt="" aria-hidden="true">';
 // backHash: адрес для стрелки «назад»; null — главный экран (знак вместо стрелки); false — без стрелки
 // (экраны с нижним меню: по ним ходят вкладками и свайпом — решение пользователя 2026-10-08)
 // название открытого объекта — мелко под заголовком на всех его экранах (ставит render)
@@ -396,6 +397,9 @@ async function viewProjects() {
   const photosAll = await dbAll('photos');
   const counts = {};
   photosAll.forEach(p => { counts[p.projectId] = (counts[p.projectId] || 0) + 1; });
+  // мини-схема объекта в карточке (просьба пользователя 2026-10-17)
+  const roomsBy = {};
+  (await dbAll('rooms')).forEach(r => { if (r.pts || r.w) { normalizeRoom(r); (roomsBy[r.projectId] = roomsBy[r.projectId] || []).push(r); } });
 
   app.innerHTML = `
     ${header('Fixpoint', null)}
@@ -414,6 +418,7 @@ async function viewProjects() {
             <div class="card project-card swipe-body" data-nav="#/p/${p.id}">
               <div class="project-name">${esc(p.name)}</div>
               <div class="mut small">${counts[p.id] || 0} фото · создан ${fmtDate(p.created)}</div>
+              ${roomsBy[p.id] ? `<span class="proj-mini" aria-hidden="true">${projMiniSvg(roomsBy[p.id])}</span>` : ''}
               <button class="card-edit" data-nonav data-rename="${p.id}" title="Переименовать объект" aria-label="Переименовать объект">${ICONS.edit}</button>
             </div>
           </div>`).join('')}
@@ -692,6 +697,15 @@ function surfMiniSvg(rooms, curId) {
       return `<g class="sm-room${r.id === curId ? ' on' : ''}" data-mini-room="${r.id}"><path d="${roomPath(r)}"/><text x="${cx}" y="${cy}" dy="0.36em" font-size="${fs.toFixed(3)}">${esc(r.name)}</text></g>`;
     }).join('')}
   </svg>`;
+}
+
+// мини-схема объекта для карточки на главном: только контуры комнат, без подписей
+function projMiniSvg(rooms) {
+  const bbs = rooms.map(roomBBox);
+  const x0 = Math.min(...bbs.map(b => b.x)), y0 = Math.min(...bbs.map(b => b.y));
+  const x1 = Math.max(...bbs.map(b => b.x + b.w)), y1 = Math.max(...bbs.map(b => b.y + b.h));
+  const sz = Math.max(x1 - x0, y1 - y0, 1), pad = sz * 0.05;
+  return `<svg viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}" preserveAspectRatio="xMidYMid meet" style="stroke-width:${(sz * 0.025).toFixed(3)}">${rooms.map(r => `<path d="${roomPath(r)}"/>`).join('')}</svg>`;
 }
 
 function isWallId(r, id) { return (r.wallIds || []).includes(id); }
@@ -2157,6 +2171,8 @@ async function stageWalk(pid, stageId = null) {
       <p class="mut small">Снятая область подсвечивается зелёным.</p>
       <label class="walk-hd"><input type="checkbox" id="walk-hd"><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>HD — с обработкой на компьютере</b>
         <span class="mut small">Кроме фото стен телефон снимет до 1000 кадров в полном разрешении (до ≈ 1 ГБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере.</span></span></label>
+      <label class="walk-hd"><input type="checkbox" id="walk-leaf" ${doorLeafFilterOn() ? 'checked' : ''}><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>Убирать створки дверей</b>
+        <span class="mut small">Приоткрытая дверь не станет куском стены на схеме. Снимите галочку, если фильтр убрал настоящую короткую стену.</span></span></label>
       <div class="walk-actions">
         <button class="round-btn" data-k="x" title="Отмена" aria-label="Отмена"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         <button class="round-btn go" data-k="go" title="Начать обход" aria-label="Начать обход"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
@@ -2164,6 +2180,7 @@ async function stageWalk(pid, stageId = null) {
     document.body.appendChild(host);
     host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
       const hd = host.querySelector('#walk-hd').checked;
+      if (b.dataset.k !== 'x') setDoorLeafFilter(host.querySelector('#walk-leaf').checked);
       host.remove();
       resolve(b.dataset.k === 'x' ? null : hd ? 'hd' : 'std');
     });
@@ -3043,18 +3060,20 @@ async function viewMore(pid) {
     ${header('Ещё', false)}
     <div class="pad more-pad">
       <div class="cards">
-        <button class="btn wide accent-border" data-nav="#/p/${pid}/report">${I('report')}Задание для мастеров</button>
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
-        <button class="btn wide" data-nav="#/p/${pid}/team">${I('user')}Команда объекта${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
+        <button class="btn wide accent-border" data-nav="#/p/${pid}/team">${I('user')}Команда и задания${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
         ${stages.some(s => stageHDCaps(s).length || s.hdScan) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
+      ${Native.isNative ? `<label class="leaf-row"><span><b>Убирать створки дверей</b><span class="mut small">при обмере и обходе лидаром</span></span>
+        <input type="checkbox" id="leaf-filter" ${doorLeafFilterOn() ? 'checked' : ''}><span class="sw-track"><span class="sw-knob"></span></span></label>` : ''}
       <div class="app-version">${appVersionText()}</div>
     </div>
     ${bottomNav(pid, 'more')}`;
 
   // «О приложении» (диагностика лидара) убрано 2026-10-16 по просьбе пользователя; nativeDiagnostics() оставлена в native.js на случай отладки
+  const lf = $('#leaf-filter'); if (lf) lf.onchange = () => { setDoorLeafFilter(lf.checked); toast(lf.checked ? 'Створки дверей будут убираться' : 'Фильтр створок выключен'); };
   // экспорт GLB — прямо отсюда, без экрана 3D и без фото (модель собирается «за кадром»)
   $('#export-glb').onclick = async () => {
     const b = $('#export-glb'); if (b.disabled) return;
@@ -3067,23 +3086,79 @@ async function viewMore(pid) {
 
 /* ---------- команда объекта: исполнители (просьба пользователя 2026-10-15) ---------- */
 const TEAM_ROLES = ['Прораб', 'Электрик', 'Сантехник', 'Плиточник', 'Отделочник', 'Маляр', 'Монтажник', 'Дизайнер', 'Заказчик'];
+// специальностей у исполнителя может быть несколько (просьба пользователя 2026-10-17): m.roles — массив,
+// m.role — те же роли строкой через запятую (для старых записей и файлов обмена)
+const memberRoles = m => Array.isArray(m.roles) ? m.roles : (m.role || '').split(/\s*,\s*/).filter(Boolean);
+// контакт из телефонной книги — необязательно, имя и телефон можно вписать руками.
+// На iPhone — системное окно выбора (приложение видит только выбранный контакт), в браузере — Contact Picker API, если есть
+// поиск по контактам при вводе: только в нативной версии с методом searchContacts и если доступ не запрещён
+let contactsDenied = false;
+const canSearchContacts = () => !!(Native.isNative && Native.RP && Native.RP.searchContacts && !contactsDenied);
+const canPickContact = () => !!((Native.RP && Native.isNative) || (navigator.contacts && navigator.contacts.select));
+async function pickContact() {
+  if (Native.RP && Native.isNative) {
+    const r = await Native.RP.pickContact();
+    return r && r.picked ? { name: r.name || '', phones: r.phones || [] } : null;
+  }
+  const [c] = await navigator.contacts.select(['name', 'tel'], { multiple: false });
+  return c ? { name: (c.name || [])[0] || '', phones: c.tel || [] } : null;
+}
+// специальности исполнителя → фильтр задания: электрик → электрика, сантехник → сантехника, остальные мастера → «прочее»;
+// прораб, заказчик, дизайнер и исполнитель без специальности видят всё
+function memberTrades(m) {
+  const roles = memberRoles(m);
+  if (!roles.length || roles.some(r => /прораб|заказчик|дизайнер/i.test(r))) return 'all';
+  const t = new Set(roles.map(r => /электр/i.test(r) ? 'electric' : /сантех/i.test(r) ? 'plumb' : 'other'));
+  return [...t];
+}
+// окно связи с исполнителем. Номер: для звонка и SMS — как есть (только цифры и «+»), для WhatsApp/Telegram —
+// международный без «+» (российский 8XXXXXXXXXX → 7XXXXXXXXXX). Мессенджеры — по https-ссылкам wa.me / t.me:
+// iOS сам откроет приложение, если оно стоит, иначе страницу в Safari
+function contactSheet(m) {
+  const raw = m.phone.replace(/[^\d+]/g, '');
+  let intl = raw.replace(/\D/g, '');
+  if (!raw.startsWith('+') && intl.length === 11 && intl[0] === '8') intl = '7' + intl.slice(1);
+  const ico = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const ways = [
+    ['call', 'Позвонить', I('phone'), `tel:${raw}`],
+    ['sms', 'SMS', ico('<path d="M4 5h16v11H9l-5 4z"/>'), `sms:${raw}`],
+    ['wa', 'WhatsApp', ico('<path d="M4 20l1.3-4A8 8 0 1 1 8 18.7z"/><path d="M9 9.5c0 3 2.5 5.5 5.5 5.5l1-1.5-2-1-1 .8a4 4 0 0 1-2-2l.8-1-1-2z"/>'), `https://wa.me/${intl}`],
+    ['tg', 'Telegram', ico('<path d="M21 4L3 11l6 2 2 6 3-4 5 4z"/><path d="M9 13l8-6"/>'), `https://t.me/+${intl}`],
+  ];
+  const host = document.createElement('div');
+  host.className = 'plan-sheet tpl-sheet walk-sheet contact-sheet';
+  host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div>
+    <div class="sh-title">${esc(m.name)}</div><div class="mut small contact-num">${esc(m.phone)}</div>
+    <div class="contact-ways">${ways.map(([k, t, i]) => `<button class="glass-pill contact-${k}" data-way="${k}">${i}<span>${t}</span></button>`).join('')}</div>`;
+  document.body.appendChild(host);
+  const close = () => host.remove();
+  host.querySelectorAll('[data-way]').forEach(b => b.onclick = () => {
+    const url = ways.find(w => w[0] === b.dataset.way)[3];
+    close();
+    if (url.startsWith('https:')) window.open(url, '_blank'); else location.href = url;
+  });
+  swipeDownToClose(host, close);
+}
 async function viewTeam(pid) {
   const { project } = await loadProjectData(pid);
   if (!project) return nav('');
   const team = project.team || [];
   app.innerHTML = `
-    ${header('Команда объекта', `#/p/${pid}/more`)}
+    ${header('Команда и задания', `#/p/${pid}/more`)}
     <div class="pad team-pad">
+      <!-- «Задание для мастеров» переехало сюда из «Ещё» (решение пользователя 2026-10-17): общее задание + задание каждому исполнителю -->
+      <button class="btn wide team-task-all" id="task-all">${I('report')}Список заданий</button>
       ${team.length ? '' : '<p class="mut team-empty">Пока никого. Добавьте мастеров, которые работают на объекте.</p>'}
-      <div class="cards">
-        ${team.length ? `<div class="card team-card">
-          <b>Исполнители</b>
-          ${team.map(m => `<div class="team-row" data-mid="${m.id}">
+      <div class="cards" id="team-list">
+        ${team.map(m => `<div class="swipe" data-id="${m.id}">
+          ${swipeButtons(false)}
+          <div class="card team-row swipe-body" data-mid="${m.id}">
             <span class="team-ava">${esc((m.name || '?').trim().slice(0, 1).toUpperCase())}</span>
-            <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(m.role || '')}</span></span>
-            ${m.phone ? `<a class="team-call" href="tel:${esc(m.phone.replace(/[^\d+]/g, ''))}" data-nonav aria-label="Позвонить">${I('phone')}</a>` : ''}
-          </div>`).join('')}
-        </div>` : ''}
+            <span class="team-who"><b>${esc(m.name)}</b><span class="mut small">${esc(memberRoles(m).join(', '))}</span></span>
+            <button class="team-task" data-task="${m.id}" data-nonav title="Задание по специальности" aria-label="Задание">${I('report')}</button>
+            ${m.phone ? `<button class="team-call" data-call="${m.id}" data-nonav aria-label="Связаться">${I('phone')}</button>` : ''}
+          </div>
+        </div>`).join('')}
       </div>
     </div>
     <!-- «i» — внизу слева, жидким стеклом: как обмениваться файлами (плашка «Обмен файлами» убрана, просьба пользователя 2026-10-16) -->
@@ -3095,37 +3170,105 @@ async function viewTeam(pid) {
   const save = async () => { project.team = team; await dbPut('projects', project); render(); };
   $('#team-info').onclick = e => { e.stopPropagation(); $('#team-info-pop').classList.toggle('hidden'); };
   $('#team-info-pop').onclick = () => $('#team-info-pop').classList.add('hidden');
-  // окно исполнителя: имя, специальность (быстрый выбор), телефон; ✕ — закрыть, ✓ — сохранить, корзина — удалить
+  const check = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>`;
+  // окно в стиле «Площадей и материалов» (просьба пользователя 2026-10-17): подписи над полями, поле-список со стрелкой,
+  // галочки — строками в рамке, как «Стены / Пол / Потолок»
+  const roleOpt = (r, on) => `<label class="calc-check"><input type="checkbox" value="${esc(r)}" ${on ? 'checked' : ''}>${esc(r)}</label>`;
+  // окно исполнителя: «Выбрать из контактов» (необязательно), имя, специальности (раскрывающийся список с галочками), телефон;
+  // ✕ — закрыть, ✓ — сохранить. Удаление — свайпом влево по строке, как у этапов (просьба пользователя 2026-10-17)
   const edit = m => {
-    const isNew = !m; m = m ? { ...m } : { id: uid(), name: '', role: '', phone: '' };
+    const isNew = !m; m = m ? { ...m } : { id: uid(), name: '', roles: [], phone: '' };
+    const roles = memberRoles(m), extra = roles.filter(r => !TEAM_ROLES.includes(r));
     const host = document.createElement('div');
     host.className = 'plan-sheet tpl-sheet walk-sheet team-sheet';
     host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">${isNew ? 'Новый исполнитель' : 'Исполнитель'}</div>
-      <label class="team-f">Имя<input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="Например, Сергей" autocomplete="off"></label>
-      <label class="team-f">Специальность<input class="inp" id="tm-role" value="${esc(m.role)}" placeholder="Электрик, плиточник…" autocomplete="off"></label>
-      <div class="team-roles">${TEAM_ROLES.map(r => `<button class="chip ${r === m.role ? 'on' : ''}" data-role="${r}">${r}</button>`).join('')}</div>
-      <label class="team-f">Телефон<input class="inp" id="tm-phone" type="tel" value="${esc(m.phone)}" placeholder="+7 …" autocomplete="off"></label>
+      <div class="calc-form team-form">
+        ${canPickContact() ? `<button type="button" class="btn wide ${canSearchContacts() ? 'hidden' : ''}" id="tm-contact">${I('user')}Выбрать из контактов</button>` : ''}
+        <label>Имя <input class="inp" id="tm-name" value="${esc(m.name)}" placeholder="${canSearchContacts() ? 'Имя — подскажем из контактов' : 'Например, Сергей'}" autocomplete="off"></label>
+        <div class="sug-list" id="tm-sug-name"></div>
+        <div class="calc-group" id="tm-role-group"><span>Специальность</span>
+          <button type="button" class="inp calc-field" id="tm-role-sum"></button>
+          <div class="calc-checks hidden" id="tm-roles">
+            ${TEAM_ROLES.map(r => roleOpt(r, roles.includes(r))).join('')}
+            ${extra.map(r => roleOpt(r, true)).join('')}
+            <input class="inp role-custom" id="tm-role-custom" placeholder="Другая — впишите и нажмите «Ввод»" autocomplete="off" enterkeyhint="done">
+          </div>
+        </div>
+        <label>Телефон <input class="inp" id="tm-phone" type="tel" value="${esc(m.phone)}" placeholder="+7 …" autocomplete="off"></label>
+        <div class="sug-list" id="tm-sug-phone"></div>
+      </div>
       <div class="walk-actions">
         <button class="round-btn" data-k="x" aria-label="Закрыть"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        ${isNew ? '' : `<button class="round-btn" data-k="del" aria-label="Удалить">${I('trash')}</button>`}
         <button class="round-btn go" data-k="ok" aria-label="Сохранить"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
       </div>`;
     document.body.appendChild(host);
     const close = () => host.remove();
-    host.querySelectorAll('[data-role]').forEach(b => b.onclick = () => {
-      host.querySelector('#tm-role').value = b.dataset.role;
-      host.querySelectorAll('[data-role]').forEach(x => x.classList.toggle('on', x === b));
-    });
-    host.querySelector('[data-k="x"]').onclick = close;
-    const del = host.querySelector('[data-k="del"]');
-    if (del) del.onclick = async () => {
-      if (!await uiConfirm(`Удалить «${m.name}» из команды?`)) return;
-      const i = team.findIndex(x => x.id === m.id); if (i >= 0) team.splice(i, 1);
-      close(); await save();
+    const list = host.querySelector('#tm-roles'), custom = host.querySelector('#tm-role-custom');
+    const picked = () => [...list.querySelectorAll('input[type=checkbox]:checked')].map(x => x.value);
+    const sum = () => {
+      const r = picked();
+      const f = host.querySelector('#tm-role-sum');
+      f.textContent = r.length ? r.join(', ') : 'Выберите — можно несколько';
+      f.classList.toggle('none', !r.length);
     };
+    host.querySelector('#tm-role-sum').onclick = () => {
+      const g = host.querySelector('#tm-role-group'), open = !g.classList.contains('open');
+      g.classList.toggle('open', open); list.classList.toggle('hidden', !open);
+    };
+    list.addEventListener('change', sum); sum();
+    // своя специальность: «Ввод» добавляет её в список отмеченной
+    const addCustom = () => {
+      const v = custom.value.trim(); if (!v) return;
+      const have = [...list.querySelectorAll('input[type=checkbox]')].find(x => x.value.toLowerCase() === v.toLowerCase());
+      if (have) have.checked = true; else custom.insertAdjacentHTML('beforebegin', roleOpt(v, true));
+      custom.value = ''; sum();
+    };
+    custom.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } });
+    custom.addEventListener('blur', addCustom);
+    // подсказки из контактов при вводе имени или телефона (просьба пользователя 2026-10-17); кнопка «Выбрать из контактов»
+    // показывается, только если доступа к контактам нет (или старая сборка без поиска)
+    const suggestHost = { name: host.querySelector('#tm-sug-name'), phone: host.querySelector('#tm-sug-phone') };
+    let sugT = 0, sugSeq = 0;
+    const hideSug = () => Object.values(suggestHost).forEach(x => { if (x) x.innerHTML = ''; });
+    const fillFrom = async c => {
+      hideSug();
+      if (c.name) host.querySelector('#tm-name').value = c.name;
+      const phones = [...new Set((c.phones || []).map(x => String(x).trim()).filter(Boolean))];
+      const ph = phones.length > 1 ? await pickSheet('Какой номер?', c.name, phones.map(x => ({ html: esc(x), value: x }))) : phones[0];
+      if (ph) host.querySelector('#tm-phone').value = ph;
+    };
+    const suggest = (field) => {
+      clearTimeout(sugT);
+      const box = suggestHost[field], q = host.querySelector(field === 'name' ? '#tm-name' : '#tm-phone').value.trim();
+      if (!box || !canSearchContacts() || q.length < (field === 'name' ? 2 : 3)) { hideSug(); return; }
+      sugT = setTimeout(async () => {
+        const seq = ++sugSeq;
+        let r; try { r = await Native.RP.searchContacts({ q }); } catch { return; }
+        if (seq !== sugSeq) return;
+        if (r.access === 'denied') { contactsDenied = true; const b = host.querySelector('#tm-contact'); if (b) b.classList.remove('hidden'); hideSug(); return; }
+        hideSug();
+        const items = r.items || [];
+        if (!items.length) return;
+        box.innerHTML = items.map((c, k) => `<button type="button" class="sug-row" data-k="${k}"><b>${esc(c.name || 'Без имени')}</b><span class="mut small">${esc((c.phones || []).join(', '))}</span></button>`).join('');
+        box.querySelectorAll('[data-k]').forEach(b => b.onclick = () => fillFrom(items[+b.dataset.k]));
+      }, 220);
+    };
+    host.querySelector('#tm-name').addEventListener('input', () => suggest('name'));
+    host.querySelector('#tm-phone').addEventListener('input', () => suggest('phone'));
+    const cbtn = host.querySelector('#tm-contact');
+    if (cbtn) cbtn.onclick = async () => {
+      let c; try { c = await pickContact(); } catch (err) { console.error(err); return toast('Контакты недоступны — впишите имя и телефон'); }
+      if (!c) return;
+      if (c.name) host.querySelector('#tm-name').value = c.name;
+      const phones = [...new Set((c.phones || []).map(x => String(x).trim()).filter(Boolean))];
+      const ph = phones.length > 1 ? await pickSheet('Какой номер?', c.name, phones.map(x => ({ html: esc(x), value: x }))) : phones[0];
+      if (ph) host.querySelector('#tm-phone').value = ph;
+    };
+    host.querySelector('[data-k="x"]').onclick = close;
     host.querySelector('[data-k="ok"]').onclick = async () => {
+      addCustom();
       m.name = host.querySelector('#tm-name').value.trim();
-      m.role = host.querySelector('#tm-role').value.trim();
+      m.roles = picked(); m.role = m.roles.join(', ');
       m.phone = host.querySelector('#tm-phone').value.trim();
       if (!m.name) { host.querySelector('#tm-name').focus(); return toast('Укажите имя'); }
       const i = team.findIndex(x => x.id === m.id);
@@ -3133,10 +3276,34 @@ async function viewTeam(pid) {
       close(); await save();
     };
     swipeDownToClose(host, close);
-    if (isNew) setTimeout(() => host.querySelector('#tm-name').focus(), 50);
   };
   $('#team-add').onclick = () => edit(null);
-  app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call')) edit(team.find(m => m.id === r.dataset.mid)); });
+  app.querySelectorAll('.team-row').forEach(r => r.onclick = e => { if (!e.target.closest('.team-call, .team-task')) edit(team.find(m => m.id === r.dataset.mid)); });
+  // связаться: стеклянное окно «Позвонить / SMS / WhatsApp / Telegram» (просьба пользователя 2026-10-17)
+  app.querySelectorAll('[data-call]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const m = team.find(x => x.id === b.dataset.call); if (m && m.phone) contactSheet(m);
+  });
+  // задание: общее — вся разметка; исполнителю — с фильтром по его специальностям
+  $('#task-all').onclick = () => { reportTrade = 'all'; reportFor = null; nav(`#/p/${pid}/report`); };
+  app.querySelectorAll('[data-task]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const m = team.find(x => x.id === b.dataset.task); if (!m) return;
+    reportTrade = memberTrades(m); reportFor = { name: m.name };
+    nav(`#/p/${pid}/report`);
+  });
+  // удаление свайпом влево, как у этапов: сразу, с 3 секундами на отмену
+  attachSwipe($('#team-list'), async id => {
+    const i = team.findIndex(x => x.id === id); if (i < 0) return false;
+    const [gone] = team.splice(i, 1);
+    await save();
+    undoBar(`«${gone.name}» удалён из команды`, async () => {
+      const p = await dbGet('projects', pid); if (!p) return;
+      p.team = p.team || []; p.team.splice(Math.min(i, p.team.length), 0, gone);
+      await dbPut('projects', p); render();
+    });
+    return true;
+  });
 }
 
 /* ---------- резервная копия ---------- */

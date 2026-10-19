@@ -121,14 +121,16 @@ function roomRing(r, seg = 8) {
 
 /* ---------- отчёт: задание для мастеров ---------- */
 
-let reportTrade = 'all'; // фильтр отчёта по специальности
+let reportTrade = 'all'; // фильтр отчёта по специальности: 'all', одна специальность или массив (задание исполнителю)
+let reportFor = null;    // {name, trades} — задание конкретному исполнителю из «Команды и заданий»
+const tradeFits = t => reportTrade === 'all' || (Array.isArray(reportTrade) ? reportTrade.includes(t) : reportTrade === t);
 
 async function viewReport(pid) {
   const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
   const isMain = m => (m.layer || 'main') === 'main';
   const tradeOfMark = m => m.type === 'conduit' ? conduitOf(m.kind)[4] : m.type === 'point' ? tradeOf(m.kind) : null;
-  const fits = m => reportTrade === 'all' ? true : ((m.type === 'point' || m.type === 'conduit') && tradeOfMark(m) === reportTrade);
+  const fits = m => reportTrade === 'all' ? true : ((m.type === 'point' || m.type === 'conduit') && tradeFits(tradeOfMark(m)));
   const hasMarks = p => (p.marks || []).some(m => isMain(m) && fits(m));
   const items = [];
   for (const r of rooms) {
@@ -141,15 +143,15 @@ async function viewReport(pid) {
   const today = fmtDate(Date.now());
 
   app.innerHTML = `
-    ${header('Задание для мастеров', `#/p/${pid}/more`)}
+    ${header(reportFor ? 'Задание: ' + reportFor.name : 'Задание для мастеров', `#/p/${pid}/team`)}
     <div class="pad report" id="report">
       <div class="report-head">
         <h2>${esc(project.name)}</h2>
-        <div class="mut small">${reportTrade === 'all' ? 'Разметка стен и точек' : 'Задание: ' + tradeName(reportTrade)} · ${today} · Fixpoint</div>
+        <div class="mut small">${reportFor ? esc(reportFor.name) + ' · ' : ''}${reportTrade === 'all' ? 'Разметка стен и точек' : 'Задание: ' + [].concat(reportTrade).map(tradeName).join(', ')} · ${today} · Fixpoint</div>
       </div>
       <div class="trade-filter no-print">
         <button class="chip ${reportTrade === 'all' ? 'st1' : 'st0'}" data-trade="all">Всё</button>
-        ${TRADES.map(([t, n]) => `<button class="chip ${reportTrade === t ? 'st1' : 'st0'}" data-trade="${t}">${n}</button>`).join('')}
+        ${TRADES.map(([t, n]) => `<button class="chip ${reportTrade !== 'all' && tradeFits(t) ? 'st1' : 'st0'}" data-trade="${t}">${n}</button>`).join('')}
       </div>
       ${items.length === 0 ? `
         <div class="empty">
@@ -174,7 +176,7 @@ async function viewReport(pid) {
         </div>`}
     </div>`;
 
-  app.querySelectorAll('[data-trade]').forEach(b => { b.onclick = () => { reportTrade = b.dataset.trade; render(); }; });
+  app.querySelectorAll('[data-trade]').forEach(b => { b.onclick = () => { reportTrade = b.dataset.trade; reportFor = null; render(); }; });
   if (!items.length) return;
 
   // запекаем фото с разметкой
@@ -248,9 +250,9 @@ function reportText(project, items, stages) {
   for (const it of items) {
     lines.push('', `${it.room.name} — ${sideTitle(it.room, it.side)}`);
     for (const p of it.list) {
-      const pts = (p.marks || []).filter(m => m.type === 'point' && (m.layer || 'main') === 'main' && (reportTrade === 'all' || tradeOf(m.kind) === reportTrade));
+      const pts = (p.marks || []).filter(m => m.type === 'point' && (m.layer || 'main') === 'main' && tradeFits(tradeOf(m.kind)));
       for (const m of pts) lines.push(`  ${m.done ? '✅' : '•'} ${kindOf(m.kind)[2]}${m.note ? ': ' + m.note : ''}`);
-      const cds = (p.marks || []).filter(m => m.type === 'conduit' && (m.layer || 'main') === 'main' && (reportTrade === 'all' || conduitOf(m.kind)[4] === reportTrade));
+      const cds = (p.marks || []).filter(m => m.type === 'conduit' && (m.layer || 'main') === 'main' && tradeFits(conduitOf(m.kind)[4]));
       for (const m of cds) lines.push(`  ▬ ${conduitLabel(m, null)}`);
     }
   }

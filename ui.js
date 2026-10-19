@@ -73,7 +73,26 @@ function uiDialog({ text, input = false, value = '', ok = 'ОК', cancel = 'От
       if (e.key === 'Enter') { e.preventDefault(); yes(); }
       else if (e.key === 'Escape') { e.preventDefault(); cancel ? no() : yes(); }
     });
-    setTimeout(() => { if (inp) { inp.focus(); inp.select(); } else bOk.focus(); }, 30);
+    // текст не выделяем — курсор в конец (просьба пользователя 2026-10-17: выделение при редактировании мешает)
+    setTimeout(() => { if (inp) { inp.focus(); const n = inp.value.length; try { inp.setSelectionRange(n, n); } catch {} } else bOk.focus(); }, 30);
+    // iOS рисует курсор там, где поле было до сдвига окна (масштаб при появлении, подъём над клавиатурой) — курсор «висел»
+    // правее конца слова (видео пользователя 2026-10-17). Окно с полем появляется без масштаба (класс .has-input), а после
+    // каждого сдвига экрана выделение переустанавливается — WebKit перерисовывает курсор на правильном месте
+    if (inp) {
+      box.classList.add('has-input');
+      const vv = window.visualViewport;
+      let t = 0;
+      const later = () => { clearTimeout(t); t = setTimeout(recaret, 120); };
+      const off = () => { if (vv) { vv.removeEventListener('resize', later); vv.removeEventListener('scroll', later); } };
+      function recaret() {
+        if (done) return off();
+        if (document.activeElement !== inp) return;
+        const s = inp.selectionStart, e = inp.selectionEnd;
+        try { inp.setSelectionRange(0, 0); inp.setSelectionRange(s, e); } catch {}
+      }
+      if (vv) { vv.addEventListener('resize', later); vv.addEventListener('scroll', later); }
+      [350, 700].forEach(ms => setTimeout(recaret, ms));
+    }
   });
 }
 const uiAlert = text => uiDialog({ text, cancel: null });

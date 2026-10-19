@@ -1011,7 +1011,8 @@ html, body { overflow-x: clip; } /* въезд экранов свайпом н�
 .plan-wrap.full { position: relative; }
 .plan-wrap.full .plan-box { padding: 0; }
 .plan-wrap.full #plan { height: calc(100dvh - var(--top-h, 61px) - env(safe-area-inset-top) - 64px - env(safe-area-inset-bottom)); border: 0; border-radius: 0; }   /* белая схема от края до края, без рамки и бежевых полей */
-html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) { background: var(--card); }
+html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) { background: var(--bg); }
+.plan-wrap.full #plan { background: var(--bg); }   /* фон схемы — как у «Этапов» (просьба пользователя 2026-10-17), был белый */
 .plan-wrap.full .plan-actions { position: fixed; z-index: 21; left: 22px; right: 22px; bottom: calc(86px + env(safe-area-inset-bottom)); padding: 0; gap: 10px; }
 .plan-wrap.full .plan-actions .pa-btn { min-height: 56px; border-radius: 28px; flex-direction: row; justify-content: center; gap: 7px; padding: 0 10px;
   color: #fff; text-shadow: 0 1px 2px rgba(30,25,15,.35); border: 1px solid rgba(255,255,255,.55);
@@ -1308,6 +1309,24 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .walk-tile svg { filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
 .walk-tile:active { transform: scale(.94); background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(217, 95, 24, .9); }
 
+/* «Удалить» / «Отправить» под строкой — жидкое стекло того же размера и на той же высоте, что «Начать обход»:
+   плитка обхода отстоит от краёв карточки на 9 px (рамка 1 + padding 13 − margin 5), ширина 84 (просьба пользователя 2026-10-17) */
+.swipe-del, .swipe-send { top: 9px; bottom: 9px; width: 84px; border-radius: 22px; gap: 6px;
+  color: #fff; font: 600 12px/1.15 system-ui, -apple-system, sans-serif; text-shadow: 0 1px 2px rgba(30,25,15,.35);
+  border: 1px solid rgba(255,255,255,.5);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 4px 10px rgba(30,25,15,.14), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08);
+  transition: opacity .15s, transform .28s cubic-bezier(.3,1.6,.5,1); }
+.swipe-del svg, .swipe-send svg { width: 26px; height: 26px; filter: drop-shadow(0 1px 1.5px rgba(30,25,15,.4)); }
+.swipe-del { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(192, 57, 43, .8); }
+.swipe-send { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(47, 125, 209, .8); }
+.swipe-del:active, .swipe-send:active { transform: scale(.94); }
+.swipe-del:active { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(192, 57, 43, .92); }
+.swipe-send:active { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.36) 0%, rgba(255,255,255,0) 55%), rgba(47, 125, 209, .92); }
+/* у объекта карточка ниже — значок поменьше, чтобы подпись помещалась */
+.swipe:has(.project-card) :is(.swipe-del, .swipe-send) { gap: 3px; }
+.swipe:has(.project-card) :is(.swipe-del, .swipe-send) svg { width: 22px; height: 22px; }
+
 /* строка версии внизу «Ещё» */
 .app-version { margin: 14px 0 4px; text-align: center; font-size: 12px; color: var(--mut); opacity: .8; }
 
@@ -1427,3 +1446,83 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .glb-dlg p { margin: 8px 0 0; text-align: center; }
 .glb-btns { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding: 0 6px; }
 .glb-btns .round-btn { width: 56px; height: 56px; }
+
+/* команда объекта (2026-10-17): каждый исполнитель — своя карточка со свайпом «Удалить», как у этапов */
+#team-list .team-row { border-top: 0; padding: 10px 12px; margin: 0; }
+/* светлое жидкое стекло в окне исполнителя: «Выбрать из контактов» и раскрывающийся список специальностей */
+.glass-pill { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 16px; border-radius: 24px; box-sizing: border-box;
+  font: 600 15px/1.2 system-ui, -apple-system, sans-serif; color: var(--ink); cursor: pointer; list-style: none;
+  border: 1px solid rgba(255,255,255,.7);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.75) 0%, rgba(255,255,255,0) 60%), rgba(74, 64, 54, .08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 4px 12px rgba(30,25,15,.12), inset 0 1px 1px rgba(255,255,255,.9), inset 0 -3px 6px rgba(30,25,15,.06);
+  transition: transform .28s cubic-bezier(.3,1.6,.5,1); }
+.glass-pill:active { transform: scale(.96); }
+.glass-pill .ic { margin-right: 0; color: var(--acc); }
+.glass-pill::-webkit-details-marker { display: none; }
+.team-sheet #tm-contact { margin-top: 4px; }
+.role-pick { margin-top: 2px; }
+.role-sum { justify-content: space-between; font-weight: 500; font-size: 16px; text-align: left; }
+.role-sum span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-sum.empty span { color: var(--mut); }
+.role-chev { flex: none; width: 18px; height: 18px; transition: transform .2s; }
+.role-pick[open] .role-chev { transform: rotate(180deg); }
+.role-list { display: flex; flex-direction: column; margin-top: 8px; padding: 4px 12px; border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.7); background: rgba(255,255,255,.55);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 4px 12px rgba(30,25,15,.1); }
+.role-opt { display: flex; align-items: center; gap: 12px; padding: 9px 0; font-size: 16px; color: var(--ink); cursor: pointer; border-bottom: 1px solid var(--line); }
+.role-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.role-opt input:checked + .wh-box { background: #e48c59; border-color: #e48c59; color: #fff; }
+.role-custom { margin: 8px 0 6px; }
+
+/* главный экран: мини-схема объекта перед карандашом, карандаш меньше (просьба пользователя 2026-10-17) */
+.project-card .card-edit { top: 50%; right: 6px; width: 32px; height: 32px; margin-top: -16px; border-radius: 8px; }
+.project-card .card-edit svg { width: 16px; height: 16px; }
+.project-card { padding-right: 44px; }
+.project-card:has(.proj-mini) { padding-right: 112px; }
+.proj-mini { position: absolute; top: 8px; bottom: 8px; right: 42px; width: 64px; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.proj-mini svg { width: 100%; height: 100%; overflow: visible; }
+.proj-mini path { fill: color-mix(in srgb, var(--acc) 10%, var(--card)); stroke: #6b7178; stroke-linejoin: round; }
+/* карточка не растёт из-за схемы: название в одну строку с многоточием, схема — по высоте карточки (просьба пользователя 2026-10-17) */
+.project-card:has(.proj-mini) .project-name, .project-card:has(.proj-mini) .project-name + .mut { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* окно с полем ввода — без масштаба при появлении: на iOS курсор оставался там, где поле было во время анимации (2026-10-17) */
+.ui-dlg.has-input { transform: none; transition: opacity .18s ease; }
+/* «Команда и задания»: общее задание сверху, у исполнителя — кнопка его задания рядом с телефоном (2026-10-17) */
+.team-task-all { width: 100%; margin-bottom: 12px; }
+.team-task { width: 40px; height: 40px; border-radius: 50%; flex: none; border: 0; padding: 0; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  color: var(--acc); background: color-mix(in srgb, var(--acc) 12%, var(--card)); }
+.team-task .ic { margin: 0; }
+/* окно «Связаться» — стеклянные кнопки сеткой 2×2 (2026-10-17) */
+button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
+.contact-sheet .sh-title { text-align: center; margin-bottom: 0; }
+.contact-num { text-align: center; margin: -4px 0 6px; }
+.contact-ways { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.contact-ways .glass-pill { flex-direction: column; gap: 6px; min-height: 84px; border-radius: 24px; font-size: 15px; }
+.contact-ways .glass-pill svg { width: 28px; height: 28px; }
+.contact-ways .ic { margin: 0; }
+.contact-call svg { color: #1f8a4c; }
+.contact-sms svg { color: #2f7dd1; }
+.contact-wa svg { color: #25a35a; }
+.contact-tg svg { color: #2a9fd8; }
+/* «Ещё»: переключатель фильтра створок дверей (2026-10-17) */
+.leaf-row { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: 16px; background: var(--card); border: 1px solid var(--line); cursor: pointer; }
+.leaf-row > span:first-child { display: flex; flex-direction: column; gap: 2px; font-size: 15px; }
+.leaf-row input { position: absolute; opacity: 0; pointer-events: none; }
+.leaf-row .sw-track { flex: none; position: relative; width: 50px; height: 30px; border-radius: 15px; background: var(--line); transition: background .18s; }
+.leaf-row .sw-knob { position: absolute; top: 2px; left: 2px; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .18s; }
+.leaf-row input:checked + .sw-track { background: var(--acc); }
+.leaf-row input:checked + .sw-track .sw-knob { transform: translateX(20px); }
+/* окно исполнителя в стиле «Площадей и материалов» (2026-10-17) */
+.team-form { margin-top: 4px; }
+.team-form .btn.wide { margin: 0; }
+.team-form .role-custom { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; font-size: 15px; }
+.team-pad .team-task-all { margin: 0 0 12px; }
+/* подсказки из контактов под полями «Имя» / «Телефон» (2026-10-17) */
+.sug-list { display: flex; flex-direction: column; margin-top: -6px; border-radius: 12px; overflow: hidden; }
+.sug-list:not(:empty) { border: 1px solid var(--acc); }
+.sug-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); background: var(--card); font: inherit; font-size: 15px; color: var(--ink); text-align: left; cursor: pointer; }
+.sug-row:first-child { border-top: 0; }
+.sug-row:active { background: color-mix(in srgb, var(--acc) 10%, var(--card)); }
+/* знак в шапке и на пустом главном экране — картинка (2026-10-17) */
+.topbar .logo .logo-img { width: 32px; height: 32px; margin: 0 6px 0 0; display: block; }   /* без отрицательных отступов: h1 с overflow:hidden обрезал верх знака */
+.empty-ico.logo-big .logo-img { width: 88px; height: 88px; display: inline-block; }

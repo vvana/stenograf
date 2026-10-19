@@ -6,6 +6,8 @@ import ARKit
 import AVFoundation
 import QuickLook
 import Photos
+import Contacts
+import ContactsUI
 
 /// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
@@ -29,6 +31,8 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFileAs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pickContact", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "searchContacts", returnType: CAPPluginReturnPromise),
     ]
     private var qlSource: ModelPreviewSource?
 
@@ -183,6 +187,74 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Выбор контакта системным окном iOS (CNContactPickerViewController): окно работает вне приложения,
+    /// поэтому разрешение на доступ ко всей книге контактов не нужно — приложение получает только выбранный контакт.
+    /// Ответ {picked, name, phones: [String]}; отмена — picked: false.
+    private var contactDelegate: ContactPickerDelegate?
+    @objc func pickContact(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
+            let picker = CNContactPickerViewController()
+            picker.displayedPropertyKeys = [CNContactPhoneNumbersKey]
+            let d = ContactPickerDelegate { [weak self] contact in
+                self?.contactDelegate = nil
+                guard let c = contact else { call.resolve(["picked": false]); return }
+                var name = [c.givenName, c.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+                if name.isEmpty { name = c.organizationName }
+                let phones = c.phoneNumbers.map { $0.value.stringValue }
+                call.resolve(["picked": true, "name": name, "phones": phones])
+            }
+            self.contactDelegate = d
+            picker.delegate = d
+            host.present(picker, animated: true)
+        }
+    }
+
+    /// Подсказки при вводе имени/телефона исполнителя: поиск по контактам телефона (нужен доступ к контактам —
+    /// при первом вызове iOS спрашивает; с iOS 18 можно дать доступ к части контактов). Ответ {access, items:[{name, phones}]};
+    /// access: "ok" | "denied". Ищем по вхождению в имя (без регистра) или по цифрам номера (от 3 цифр), не больше 8 контактов.
+    private let contactStore = CNContactStore()
+    @objc func searchContacts(_ call: CAPPluginCall) {
+        let q = (call.getString("q") ?? "").trimmingCharacters(in: .whitespaces)
+        let run = {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let needle = q.lowercased()
+                let digits = q.filter { $0.isNumber }
+                let byPhone = digits.count >= 3 && digits.count * 2 >= q.filter { !$0.isWhitespace }.count
+                let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactOrganizationNameKey, CNContactPhoneNumbersKey] as [CNKeyDescriptor]
+                let req = CNContactFetchRequest(keysToFetch: keys)
+                var items: [[String: Any]] = []
+                if !needle.isEmpty {
+                    try? self.contactStore.enumerateContacts(with: req) { c, stop in
+                        var name = [c.givenName, c.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+                        if name.isEmpty { name = c.organizationName }
+                        let phones = c.phoneNumbers.map { $0.value.stringValue }
+                        if phones.isEmpty { return }
+                        let hit: Bool
+                        if byPhone {
+                            hit = phones.contains { p in p.filter { $0.isNumber }.contains(digits) }
+                        } else {
+                            hit = name.lowercased().contains(needle)
+                        }
+                        if hit { items.append(["name": name, "phones": phones]) }
+                        if items.count >= 8 { stop.pointee = true }
+                    }
+                }
+                call.resolve(["access": "ok", "items": items])
+            }
+        }
+        switch CNContactStore.authorizationStatus(for: .contacts) {
+        case .notDetermined:
+            contactStore.requestAccess(for: .contacts) { granted, _ in
+                if granted { run() } else { call.resolve(["access": "denied", "items": []]) }
+            }
+        case .denied, .restricted:
+            call.resolve(["access": "denied", "items": []])
+        default:   // .authorized и (iOS 18+) .limited — ищем в том, что доступно
+            run()
+        }
+    }
+
     @objc func fileInfo(_ call: CAPPluginCall) {
         guard let url = docFile(call) else { call.resolve(["exists": false]); return }
         let size = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue
@@ -285,4 +357,11 @@ final class ExportPickerDelegate: NSObject, UIDocumentPickerDelegate {
     init(_ done: @escaping (Bool) -> Void) { self.done = done }
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { done(true) }
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(false) }
+}
+
+final class ContactPickerDelegate: NSObject, CNContactPickerDelegate {
+    let done: (CNContact?) -> Void
+    init(_ done: @escaping (CNContact?) -> Void) { self.done = done }
+    func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) { done(contact) }
+    func contactPickerDidCancel(_ picker: CNContactPickerViewController) { done(nil) }
 }
