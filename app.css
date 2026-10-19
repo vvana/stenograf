@@ -1372,6 +1372,10 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .walk-mini .sm-room path { fill: color-mix(in srgb, var(--acc) 10%, var(--card)); stroke: var(--top-ink, #2b2f36); stroke-width: var(--sw); stroke-linejoin: round; }
 .walk-mini .sm-room text { fill: var(--ink); font-weight: 600; text-anchor: middle; font-family: system-ui, -apple-system, sans-serif; pointer-events: none; }
 .walk-mini .sm-room:active path { fill: color-mix(in srgb, var(--acc) 35%, var(--card)); }
+.walk-mini .sm-room.on path, .walk-mini.all .sm-room:not(.off) path { fill: color-mix(in srgb, var(--acc) 38%, var(--card)); stroke: var(--acc); stroke-width: calc(var(--sw) * 1.6); }
+.walk-mini .sm-room.on text, .walk-mini.all .sm-room:not(.off) text { fill: color-mix(in srgb, var(--acc) 70%, #000); font-weight: 700; }
+.walk-chosen { margin: 0 0 4px; text-align: center; font-size: 15px; }
+.walk-sheet .walk-mini { height: 96px; margin: 0; }
 .walk-mini .sm-room.off { cursor: default; }
 .walk-mini .sm-room.off path { fill: var(--bg, #f2f0ec); stroke-opacity: .4; }
 .walk-mini .sm-room.off text { fill: var(--mut); opacity: .6; }
@@ -1386,12 +1390,31 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .hd-cap { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .hd-cap:last-of-type { border-bottom: 0; }
 .hd-cap-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hd-cap-name::before { content: '•'; margin-right: 8px; color: var(--mut); }   /* точка, как в перечне */
+.hd-cap-info .small { padding-left: 16px; }
 
 /* «HD-скан»: «i» у «Обучение на компьютере» */
 .hd-train-i { border: 0; background: none; padding: 2px; cursor: pointer; color: var(--mut); display: inline-flex; }
 .hd-train-i svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; }
 .hd-train-i.on { color: var(--acc); }
 .hd-train.hidden { display: none; }
+
+/* альбом этапа: мини-схема «Где нужен этап» */
+.where-mini { height: 140px; margin: 8px 0 4px; }
+/* отмечено несколько соседних комнат — их оранжевые контуры складывались в толстые линии; рамка той же толщины, что у остальных,
+   заливка и подпись — как у выбранной комнаты в окне запуска обхода */
+.where-mini .sm-room.on path { stroke-width: var(--sw); }
+.where-mini .sm-room:not(.on) path { fill: color-mix(in srgb, var(--acc) 10%, var(--card)); }
+
+/* альбом этапа: фото по комнатам — раскрывающиеся карточки */
+.album-room { margin-top: 12px; padding: 0; }
+.album-room > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 14px 16px; cursor: pointer; }
+.album-room > summary::-webkit-details-marker { display: none; }
+.album-room > summary b { flex: 1; }
+.album-chev { width: 18px; height: 18px; flex: none; fill: none; stroke: var(--mut); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform .2s; }
+.album-room[open] .album-chev { transform: rotate(90deg); }
+.album-room > .album-group { margin: 0 16px 14px; }
+#app:has(#album-close) .pad { padding-bottom: 90px; }   /* последние фото прокручиваются выше стеклянного ✕ */
 
 /* команда объекта */
 .team-card { display: flex; flex-direction: column; gap: 10px; }

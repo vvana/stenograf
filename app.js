@@ -2145,6 +2145,15 @@ function pickSheet(title, note, items, top = '', grid2 = false) {   // grid2: б
       <button class="btn ghost wide" data-k="x">Отмена</button>`;
     document.body.appendChild(host);
     host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => { host.remove(); resolve(b.dataset.k === 'x' ? null : items[+b.dataset.k].value); });
+    // касание кнопки комнаты — эта комната подсвечивается на мини-схеме (видно, какую выбираете)
+    const lit = v => host.querySelectorAll('[data-mini-room]').forEach(g => g.classList.toggle('on', g.dataset.miniRoom === v));
+    host.querySelectorAll('[data-k]').forEach(b => {
+      const it = items[+b.dataset.k]; if (!it) return;
+      b.addEventListener('pointerdown', () => lit(it.value === '*' ? null : it.value));
+      b.addEventListener('pointerenter', () => lit(it.value === '*' ? null : it.value));
+      b.addEventListener('pointerleave', () => lit(null));
+      if (it.value === '*') { b.addEventListener('pointerdown', () => host.querySelector('.walk-mini')?.classList.add('all')); b.addEventListener('pointerleave', () => host.querySelector('.walk-mini')?.classList.remove('all')); }
+    });
     // мини-схема сверху (если есть): тап по комнате — выбрать её, как кнопкой
     host.querySelectorAll('[data-mini-room]').forEach(g => {
       if (!items.some(it => it.value === g.dataset.miniRoom)) { g.classList.add('off'); return; }
@@ -2164,15 +2173,18 @@ async function stageWalk(pid, stageId = null) {
   }
   // обычный обход или HD: HD — те же фото стен плюс пакет полноразмерных кадров для обучения модели на компьютере
   // лист запуска обхода: галочка «HD», слева крестик (отмена), справа галочка (начать). Возвращает 'std' | 'hd' | null
-  const askKind = () => new Promise(resolve => {
+  // room: выбранная комната, null — вся квартира, undefined — схемы ещё нет. Сверху — мини-схема с выбранным, чтобы не снять не ту комнату
+  // (просьба пользователя 2026-10-19)
+  const askKind = (room) => new Promise(resolve => {
     const host = document.createElement('div');
     host.className = 'plan-sheet tpl-sheet walk-sheet';
-    host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">Обход: ${esc(st.name)}</div>
+    const chosen = room === undefined || !rooms.length ? ''
+      : `<div class="walk-mini ${room ? '' : 'all'}">${surfMiniSvg(rooms, room ? room.id : null)}</div>
+        <p class="walk-chosen">${room ? `Комната: <b>${esc(room.name)}</b>` : '<b>Вся квартира</b>'}</p>`;
+    host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">Обход: ${esc(st.name)}</div>${chosen}
       <p class="mut small">Снятая область подсвечивается зелёным.</p>
       <label class="walk-hd"><input type="checkbox" id="walk-hd"><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>HD — с обработкой на компьютере</b>
         <span class="mut small">Кроме фото стен телефон снимет до 1000 кадров в полном разрешении (до ≈ 1 ГБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере.</span></span></label>
-      <label class="walk-hd"><input type="checkbox" id="walk-leaf" ${doorLeafFilterOn() ? 'checked' : ''}><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>Убирать створки дверей</b>
-        <span class="mut small">Приоткрытая дверь не станет куском стены на схеме. Снимите галочку, если фильтр убрал настоящую короткую стену.</span></span></label>
       <div class="walk-actions">
         <button class="round-btn" data-k="x" title="Отмена" aria-label="Отмена"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         <button class="round-btn go" data-k="go" title="Начать обход" aria-label="Начать обход"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
@@ -2180,7 +2192,6 @@ async function stageWalk(pid, stageId = null) {
     document.body.appendChild(host);
     host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
       const hd = host.querySelector('#walk-hd').checked;
-      if (b.dataset.k !== 'x') setDoorLeafFilter(host.querySelector('#walk-leaf').checked);
       host.remove();
       resolve(b.dataset.k === 'x' ? null : hd ? 'hd' : 'std');
     });
@@ -2217,7 +2228,7 @@ async function stageWalk(pid, stageId = null) {
     if (!v) return;
     room = v === '*' ? null : rooms.find(r => r.id === v);
   }
-  const kind = await askKind();
+  const kind = await askKind(room);
   if (!kind) return;
   const hd = kind === 'hd';
   try { done(room ? await lidarWalk(pid, room, st.id, { hd }) : await lidarApartment(pid, rooms, st.id, { hd })); }
@@ -2244,7 +2255,7 @@ async function viewHD(pid, stageId = null) {
   const have = {};
   for (const c of caps) { have[c.id] = false; if (Native.RP && Native.RP.fileInfo) { try { have[c.id] = !!(await Native.RP.fileInfo({ path: c.path })).exists; } catch {} } }
   const capRow = c => `<div class="hd-cap">
-      <div class="hd-cap-info"><b>${esc(c.place || 'Пакет')}</b><span class="mut small">${fmtDate(c.created)} · ${c.frames} кадров · ${fmtMB(c.bytes)}${have[c.id] ? '' : ' · удалён с телефона'}</span></div>
+      <div class="hd-cap-info"><b class="hd-cap-name">${esc(c.place || 'Пакет')}</b><span class="mut small">${fmtDate(c.created)} · ${c.frames} кадров · ${fmtMB(c.bytes)}${have[c.id] ? '' : ' · удалён с телефона'}</span></div>
       ${have[c.id] ? `<button class="iconbtn" data-cap-share="${c.id}" title="Отправить на компьютер" aria-label="Отправить">${I('share')}</button>` : ''}
       <button class="iconbtn danger" data-cap-del="${c.id}" title="${have[c.id] ? 'Удалить пакет с телефона' : 'Убрать из списка'}" aria-label="Удалить">${I('trash')}</button>
     </div>`;
@@ -2513,6 +2524,7 @@ async function viewStages(pid) {
 
 /* ---------- экран: альбом этапа — все фото этапа по комнатам и стенам ---------- */
 
+const albumOpen = new Set();   // какие комнаты раскрыты в альбоме этапа (на время работы приложения)
 async function viewStageAlbum(pid, stageId) {
   const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -2548,26 +2560,27 @@ async function viewStageAlbum(pid, stageId) {
         <span class="mut small">${mine.length} фото</span>
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
-      <button class="btn wide big-btn hidden" id="album-walk">${I('walk')}Начать обход</button>
       ${rooms.length ? `<div class="card where-card">
         <b>Где нужен этап</b>
-        <div class="where-quick">
-          <button class="btn small-btn" data-q="all">Все</button>
-          <button class="btn small-btn" data-q="bath">Санузлы</button>
-          <button class="btn small-btn" data-q="kitchen">Кухня</button>
-          <button class="btn small-btn" data-q="room">Комнаты</button>
-        </div>
-        ${rooms.map(r => { const k = roomKind(r); const ids = stageRoomIds(stage, rooms); return `<label class="where-row">
+        <!-- мини-схема: отмеченные помещения закрашены, тап по комнате — включить/выключить (2026-10-19, вместо кнопок «Все / Санузлы / Кухня / Комнаты») -->
+        <div class="walk-mini where-mini">${surfMiniSvg(rooms, null)}</div>
+        ${rooms.map(r => { const ids = stageRoomIds(stage, rooms); return `<label class="where-row">
           <input type="checkbox" data-room="${r.id}" ${!ids || ids.includes(r.id) ? 'checked' : ''}>
           <span>${esc(r.name)}</span>
-          ${k.src && k.kind !== 'room' ? `<span class="mut small where-src">${k.kind === 'bath' ? 'санузел' : 'кухня'} ${k.src}</span>` : ''}
         </label>`; }).join('')}
       </div>` : ''}
       ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p></div>`}
-      ${groups.map(g => `<div class="album-group">
-        <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side))} <span class="mut small">· ${g.list.length}</span> ›</div>
-        ${thumbs(g.list)}
-      </div>`).join('')}
+      ${rooms.filter(r => groups.some(g => g.room === r)).map(r => {
+        // фото этапа — по комнатам раскрывающимися списками (просьба пользователя 2026-10-19), внутри — по стенам, потолку, полу
+        const gs = groups.filter(g => g.room === r), n = gs.reduce((k, g) => k + g.list.length, 0);
+        return `<details class="card album-room" data-aroom="${r.id}" ${albumOpen.has(stage.id + ':' + r.id) ? 'open' : ''}>
+          <summary><b>${esc(r.name)}</b><span class="mut small">${n} фото</span><svg class="album-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></summary>
+          ${gs.map(g => `<div class="album-group">
+            <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side).replace(r.name + ' — ', ''))} <span class="mut small">· ${g.list.length}</span> ›</div>
+            ${thumbs(g.list)}
+          </div>`).join('')}
+        </details>`;
+      }).join('')}
       ${orphans.length ? `<div class="album-group"><div class="album-title">Без привязки к стене <span class="mut small">· ${orphans.length}</span></div>${thumbs(orphans)}</div>` : ''}
     </div>
     <div id="viewer" class="viewer hidden"></div>
@@ -2587,26 +2600,23 @@ async function viewStageAlbum(pid, stageId) {
     app.querySelectorAll('.where-row input').forEach(cb => { cb.checked = !stage.rooms || stage.rooms.includes(cb.dataset.room); });
     markQuick();
   };
+  // мини-схема: закрашены помещения этапа; тап по комнате — переключить её галочку
   const markQuick = () => {
     const ids = stageRoomIds(stage, rooms);
-    app.querySelectorAll('[data-q]').forEach(b => {
-      const want = b.dataset.q === 'all' ? null : rooms.filter(r => roomKind(r).kind === b.dataset.q).map(r => r.id);
-      const on = b.dataset.q === 'all' ? !ids : !!ids && want.length === ids.length && want.every(id => ids.includes(id));
-      b.classList.toggle('on', on);
-    });
+    app.querySelectorAll('.where-mini [data-mini-room]').forEach(g => g.classList.toggle('on', !ids || ids.includes(g.dataset.miniRoom)));
   };
-  app.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
-    if (b.dataset.q === 'all') return saveRooms(null);
-    const ids = rooms.filter(r => roomKind(r).kind === b.dataset.q).map(r => r.id);
-    if (!ids.length) { toast(b.dataset.q === 'bath' ? 'Санузлов не найдено — отметьте помещения вручную' : b.dataset.q === 'kitchen' ? 'Кухни не найдено — отметьте вручную' : 'Жилых комнат не найдено'); return; }
-    saveRooms(ids);
+  app.querySelectorAll('.where-mini [data-mini-room]').forEach(g => g.onclick = () => {
+    const cb = app.querySelector(`.where-row input[data-room="${g.dataset.miniRoom}"]`);
+    if (!cb) return;
+    cb.checked = !cb.checked;
+    saveRooms([...app.querySelectorAll('.where-row input')].filter(x => x.checked).map(x => x.dataset.room));
   });
   app.querySelectorAll('.where-row input').forEach(cb => cb.onchange = () => {
     saveRooms([...app.querySelectorAll('.where-row input')].filter(x => x.checked).map(x => x.dataset.room));
   });
   markQuick();
   $('#album-close').onclick = () => nav(`#/p/${pid}/stages`);
-  lidarAvailable().then(ok => { const b = $('#album-walk'); if (ok && b) { b.classList.remove('hidden'); b.onclick = () => stageWalk(pid, stage.id); } });
+  app.querySelectorAll('.album-room').forEach(d => d.ontoggle = () => { const k = stage.id + ':' + d.dataset.aroom; d.open ? albumOpen.add(k) : albumOpen.delete(k); });
   $('#album-status').onclick = async () => {
     stage.status = ((stage.status || 0) + 1) % 3;
     await dbPut('stages', stage); render();
