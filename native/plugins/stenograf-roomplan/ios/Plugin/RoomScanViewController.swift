@@ -74,7 +74,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var coverageMap: CoverageMapView?
     private var coverageLink: CADisplayLink?
     private var currentSurfaces: [CovSurface] = []
-    private var doneSurfaces: [CovSurface] = []      // комнаты, уже завершённые кнопкой «Следующая»
+    private var doneSurfaces: [CovSurface] = []      // комнаты, уже завершённые кнопкой «Следующая комната»
     private var coverageChecked = false
 
     // AR-призрак
@@ -129,11 +129,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         cancel.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
         bar.addArrangedSubview(cancel)
         if isMulti {
-            nextButton = GlassButton(title: "Следующая")
+            nextButton = GlassButton(title: "Следующая комната")
             nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
             bar.addArrangedSubview(nextButton)
         }
-        doneButton = GlassButton(symbol: "checkmark", label: isMulti ? "Сохранить" : "Готово", tint: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
+        // сканы по комнатам: клетчатый флаг «закончить всё» (галочка путалась с «комната готова»); одиночные — галочка
+        doneButton = GlassButton(symbol: isMulti ? "flag.checkered" : "checkmark", label: isMulti ? "Закончить и сохранить квартиру" : "Готово", tint: UIColor(red: 0.91, green: 0.44, blue: 0.18, alpha: 1))
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
         bar.addArrangedSubview(doneButton)
         view.addSubview(bar)
@@ -260,10 +261,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             ? "HD-обход: ведите телефон вдоль стен, к полу и потолку, и замирайте на секунду — HD-кадр снимается, когда телефон неподвижен. Снятое подсвечивается зелёным"
             : "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Снятое подсвечивается зелёным"
         case "multi": return hd
-            ? "HD-обход квартиры: пройдите комнату вдоль стен, замирая на секунду — HD-кадр снимается, когда телефон неподвижен. Всё зелёное — «Следующая» и в другую комнату"
+            ? "HD-обход квартиры: идите вдоль стен, замирая на секунду — HD-кадр снимается, когда телефон неподвижен. Всё зелёное — «Следующая комната»"
             : wantFrames
-            ? "Обход квартиры: пройдите комнату вдоль стен, наклоняя телефон к полу и потолку, пока всё не станет зелёным, затем «Следующая» — и в другую комнату"
-            : "Обмер квартиры: обойдите комнату, нажмите «Следующая», перейдите в другую. В конце — «Сохранить»"
+            ? "Обход квартиры: пройдите вдоль стен, наклоняя телефон к полу и потолку. Всё зелёное — «Следующая комната»"
+            : "Обмер квартиры: обойдите комнату, нажмите «Следующая комната», перейдите в другую. В конце — флаг 🏁"
         case "final": return hd
             ? "HD-скан: идите медленно и замирайте — кадр снимается, когда телефон неподвижен. Снятое подсвечивается зелёным"
             : "Финальный скан: наводите телефон на всё, что ещё не зелёное. Тап по карте — спрятать подсветку"
@@ -427,9 +428,25 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         captureView.captureSession.stop(pauseARSession: false)   // AR-сессия живёт дальше — общие координаты
     }
 
+    /// сканы по комнатам: кнопка-флаг завершает всю квартиру — сначала спрашиваем (2026-10-19, просьба пользователя)
+    private var finishConfirmed = false
     @objc private func doneTapped() {
-        guard confirmWalls(proceed: { [weak self] in self?.doneTapped() }) else { return }
-        guard confirmCoverage(currentOnly: false, proceed: { [weak self] in self?.doneTapped() }) else { return }
+        if isMulti && !finishConfirmed {
+            let n = capturedRooms.count
+            let ac = UIAlertController(title: "Закончить и сохранить квартиру?",
+                                       message: n > 0 ? "Принято комнат: \(n). Текущую комнату покажем на проверку, затем всё сохранится." : "Текущую комнату покажем на проверку, затем всё сохранится.",
+                                       preferredStyle: .alert)
+            ac.addAction(UIAlertAction(title: "Продолжить скан", style: .cancel))
+            ac.addAction(UIAlertAction(title: "Закончить", style: .default) { [weak self] _ in
+                self?.finishConfirmed = true
+                self?.doneTapped()
+            })
+            present(ac, animated: true)
+            return
+        }
+        guard confirmWalls(proceed: { [weak self] in self?.doneTapped() }) else { finishConfirmed = false; return }
+        guard confirmCoverage(currentOnly: false, proceed: { [weak self] in self?.doneTapped() }) else { finishConfirmed = false; return }
+        finishConfirmed = false
         pendingAction = "done"
         if !isMulti { pollTimer?.invalidate(); pollTimer = nil; stopCoverage() }
         if mode == "ghost" {
@@ -1257,7 +1274,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         // не снимались и не подсвечивались. 1000 кадров 320 px ≈ 300 МБ памяти (по просьбе пользователя; кадр берётся раз в 35 см / 20°, до предела доходит редко).
         guard cam.trackingState == .normal else { return }
         guard keyFrames.count < Self.maxKeyFrames else {
-            statusLabel.text = "Кадров: \(keyFrames.count) — предел, новые не снимаются. Нажмите «Сохранить»"
+            statusLabel.text = "Кадров: \(keyFrames.count) — предел, новые не снимаются. Нажмите флаг 🏁"
             return
         }
         let T = cam.transform
@@ -1445,6 +1462,7 @@ final class GlassButton: UIButton {
             setTitleColor(.white, for: .normal)
             titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
             widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
+            contentEdgeInsets = UIEdgeInsets(top: 0, left: 18, bottom: 0, right: 18)   // «Следующая комната» — с полями по бокам
         }
         heightAnchor.constraint(equalToConstant: Self.side).isActive = true
         accessibilityLabel = label ?? title

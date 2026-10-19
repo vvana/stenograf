@@ -503,7 +503,12 @@ async function viewTour(pid, roomId = null) {
   if (!project) return nav('');
   if (roomId && rooms.some(r => r.id === roomId)) { tourState.roomId = roomId; if (tourState.mode === 'house') tourState.mode = 'inside'; }
   if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
-  if (tourState.stage !== 'all' && !stages.some(s => s.id === tourState.stage)) tourState.stage = 'all';
+  // пункта «Сейчас — последние фото» больше нет (просьба пользователя 2026-10-19): по умолчанию — последний этап, у которого есть фото
+  // (на стене — фото этого этапа, а если его нет — последнее с предыдущих, т. е. то же «сейчас»)
+  if (!stages.some(s => s.id === tourState.stage)) {
+    const withPh = stages.filter(s => photos.some(p => p.stageId === s.id));
+    tourState.stage = (withPh[withPh.length - 1] || stages[stages.length - 1] || { id: 'all' }).id;
+  }
   // HD-модель — у этапа: выбранный этап, если у него она есть, иначе последний этап с моделью
   const hdStage = () => { const ok = stages.filter(s => s.hdScan && s.hdScan.blob); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
   if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
@@ -517,7 +522,6 @@ async function viewTour(pid, roomId = null) {
         <div class="tour-row">
           ${photos.length ? '' : '<div class="inp tour-nophoto">Фото пока нет</div>'}
           ${photos.length ? `<select class="inp" id="tour-stage">
-            <option value="all" ${tourState.stage === 'all' ? 'selected' : ''}>Сейчас — последние фото</option>
             ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
           </select>
           <button id="tour-photos" class="tour-pic ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах">${I('image')}</button>` : ''}
@@ -616,7 +620,7 @@ async function viewTour(pid, roomId = null) {
         const v = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false, sceneRevealMode: GS.SceneRevealMode.Instant });
         const url = URL.createObjectURL(scan.blob);
         // пакет снят в координатах AR-сессии обхода → тот же поворот и сдвиг, которым обход лёг на схему
-        const tr = hs.hdTransform || { ang: 0, ox: 0, oy: 0 };
+        const tr = scan.transform || hs.hdTransform || (stageHDCaps(hs)[0] || {}).transform || { ang: 0, ox: 0, oy: 0 };   // трансформ пакета, из которого обучена модель
         v.rotation.y = -tr.ang; v.position.set(tr.ox, 0, tr.oy);
         if (scan.flip) v.rotation.x = Math.PI;   // модель из программ с осью Y вниз
         try { await v.addSplatScene(url, { format: fmt, showLoadingUI: false, progressiveLoad: false, splatAlphaRemovalThreshold: 5 }); }

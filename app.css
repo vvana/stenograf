@@ -1347,6 +1347,33 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .team-info-pop b { display: block; margin-bottom: 4px; font-size: 15px; }
 .team-info-pop.hidden { display: none; }
 
+/* мини-схема в окне выбора комнаты для обхода */
+.walk-mini { height: 150px; margin: 2px 0 6px; }
+.walk-mini .sm-room { cursor: pointer; }
+.walk-mini .sm-room path { fill: color-mix(in srgb, var(--acc) 10%, var(--card)); stroke: var(--top-ink, #2b2f36); stroke-width: var(--sw); stroke-linejoin: round; }
+.walk-mini .sm-room text { fill: var(--ink); font-weight: 600; text-anchor: middle; font-family: system-ui, -apple-system, sans-serif; pointer-events: none; }
+.walk-mini .sm-room:active path { fill: color-mix(in srgb, var(--acc) 35%, var(--card)); }
+.walk-mini .sm-room.off { cursor: default; }
+.walk-mini .sm-room.off path { fill: var(--bg, #f2f0ec); stroke-opacity: .4; }
+.walk-mini .sm-room.off text { fill: var(--mut); opacity: .6; }
+
+/* окно выбора (pickSheet): кнопки списком; больше 4 комнат — в два столбца */
+.pick-list { display: flex; flex-direction: column; gap: 8px; }
+.pick-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pick-list .btn.wide, .pick-grid2 .btn.wide { margin-top: 0; }
+.pick-grid2 .btn { min-width: 0; padding-left: 8px; padding-right: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* HD-скан: список пакетов этапа */
+.hd-cap { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.hd-cap:last-of-type { border-bottom: 0; }
+.hd-cap-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* «HD-скан»: «i» у «Обучение на компьютере» */
+.hd-train-i { border: 0; background: none; padding: 2px; cursor: pointer; color: var(--mut); display: inline-flex; }
+.hd-train-i svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; }
+.hd-train-i.on { color: var(--acc); }
+.hd-train.hidden { display: none; }
+
 /* команда объекта */
 .team-card { display: flex; flex-direction: column; gap: 10px; }
 .team-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
