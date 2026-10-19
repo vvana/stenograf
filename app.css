@@ -1416,6 +1416,11 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .album-room > .album-group { margin: 0 16px 14px; }
 #app:has(#album-close) .pad { padding-bottom: 90px; }   /* последние фото прокручиваются выше стеклянного ✕ */
 
+/* главный экран: карточка объекта той же высоты, что карточка этапа (127 px; просьба пользователя 2026-10-19), мини-схема крупнее */
+.project-card { min-height: 127px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; }
+.project-card:has(.proj-mini) { padding-right: 150px; }
+.proj-mini { top: 12px; bottom: 12px; width: 100px; }
+
 /* команда объекта */
 .team-card { display: flex; flex-direction: column; gap: 10px; }
 .team-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
