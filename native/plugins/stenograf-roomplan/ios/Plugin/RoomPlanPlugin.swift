@@ -8,6 +8,7 @@ import QuickLook
 import Photos
 import Contacts
 import ContactsUI
+import UniformTypeIdentifiers
 
 /// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
@@ -31,6 +32,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFileAs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pickFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickContact", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "searchContacts", returnType: CAPPluginReturnPromise),
     ]
@@ -182,6 +184,33 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.resolve(["saved": saved])
             }
             self.exportDelegate = d
+            picker.delegate = d
+            host.present(picker, animated: true)
+        }
+    }
+
+    /// Выбор файла системным окном «Файлы»: все места — «На iPhone», iCloud Drive, Google Диск (если стоит его приложение) и т. д.
+    /// Тип не ограничиваем (.item): у .ply/.spz нет системного типа, и окно браузера (<input type=file>) делает их серыми.
+    /// Файл копируется в Documents/import; ответ {picked, path, name, size}; JS читает его через convertFileSrc и удаляет (deleteFile).
+    private var pickDelegate: PickFileDelegate?
+    @objc func pickFile(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+            picker.allowsMultipleSelection = false
+            let d = PickFileDelegate { [weak self] src in
+                self?.pickDelegate = nil
+                guard let src = src else { call.resolve(["picked": false]); return }
+                // в Documents — deleteFile удаляет только там; UUID в имени, чтобы не затереть одноимённый файл
+                let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("import", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let dst = dir.appendingPathComponent(UUID().uuidString + "-" + src.lastPathComponent)
+                do { try FileManager.default.moveItem(at: src, to: dst) }
+                catch { do { try FileManager.default.copyItem(at: src, to: dst) } catch { call.reject("Не удалось взять файл: \(error.localizedDescription)"); return } }
+                let size = ((try? FileManager.default.attributesOfItem(atPath: dst.path)[.size]) as? NSNumber)?.intValue ?? 0
+                call.resolve(["picked": true, "path": dst.path, "name": src.lastPathComponent, "size": size])
+            }
+            self.pickDelegate = d
             picker.delegate = d
             host.present(picker, animated: true)
         }
@@ -357,6 +386,13 @@ final class ExportPickerDelegate: NSObject, UIDocumentPickerDelegate {
     init(_ done: @escaping (Bool) -> Void) { self.done = done }
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { done(true) }
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(false) }
+}
+
+final class PickFileDelegate: NSObject, UIDocumentPickerDelegate {
+    let done: (URL?) -> Void
+    init(_ done: @escaping (URL?) -> Void) { self.done = done }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { done(urls.first) }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(nil) }
 }
 
 final class ContactPickerDelegate: NSObject, CNContactPickerDelegate {

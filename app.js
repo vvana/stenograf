@@ -2289,7 +2289,7 @@ async function viewHD(pid, stageId = null) {
           <button class="btn ghost wide" id="hd-del">${I('trash')}Удалить HD-модель</button>` : ''}
         <button class="btn wide" id="hd-load">${I('download')}${hd ? 'Заменить' : 'Загрузить'} модель (.ply / .spz)</button>
         <input type="file" id="hd-file" accept=".ply,.spz,.splat,.ksplat" class="hidden-input">
-        <p class="mut small">Модель хранится только на этом телефоне и в резервную копию не попадает — слишком большая.</p>
+        <p class="mut small">${Native.isNative ? 'Файл можно выбрать прямо с Google Диска или iCloud. ' : ''}Модель хранится только на этом телефоне и в резервную копию не попадает — слишком большая.</p>
       </div>
     </div></div>
     ${bottomNav(pid, 'more')}`;
@@ -2308,10 +2308,22 @@ async function viewHD(pid, stageId = null) {
     if (have[c.id]) { try { await Native.RP.deleteFile({ path: c.path }); } catch {} }
     await saveCaps(caps.filter(x => x.id !== c.id)); render();
   });
-  on('#hd-load', () => $('#hd-file').click());
-  $('#hd-file').onchange = async e => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
+  // на телефоне — системное окно «Файлы» (видно Google Диск, iCloud и т. д.; .ply не серые); старая сборка / браузер — <input type=file>
+  on('#hd-load', async () => {
+    const RP = Native.RP;
+    if (!Native.isNative || !RP || !RP.pickFile) { $('#hd-file').click(); return; }
+    let r;
+    try { r = await RP.pickFile(); } catch (err) { $('#hd-file').click(); return; }
+    if (!r || !r.picked) return;
+    toast('Загружаю модель…');
+    try {
+      const blob = await (await fetch(window.Capacitor.convertFileSrc('file://' + r.path))).blob();
+      await useModelFile(new File([blob], r.name || 'model.ply'));
+    } catch (err) { uiAlert('Не удалось прочитать файл: ' + err.message); }
+    finally { RP.deleteFile({ path: r.path }).catch(() => {}); }
+  });
+  $('#hd-file').onchange = e => { const f = e.target.files && e.target.files[0]; if (f) useModelFile(f); };
+  const useModelFile = async f => {
     const format = (f.name.split('.').pop() || 'ply').toLowerCase();
     if (!['ply', 'spz', 'splat', 'ksplat'].includes(format)) { uiAlert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
     // модель встаёт на схему по пакету, из которого обучена: пакетов несколько — спросить, какой
