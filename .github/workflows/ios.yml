@@ -56,6 +56,32 @@ jobs:
           # HD-пакеты (Documents) видны в «Файлы → На iPhone → Fixpoint» и в Windows-приложении Apple Devices / iTunes
           /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIFileSharingEnabled true" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :LSSupportsOpeningDocumentsInPlace true" "$PLIST"
+          # HD-модели (.ply/.spz/.splat/.ksplat): Fixpoint есть в «Поделиться» / «Открыть в…» у Telegram, Google Диска, «Файлов», почты
+          /usr/libexec/PlistBuddy -c "Delete :UTImportedTypeDeclarations" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0 dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string 'HD-модель (Gaussian splatting)'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string Alternate" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "$PLIST"
+          i=0
+          for e in ply spz splat ksplat; do
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i dict" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i:UTTypeIdentifier string ru.stenograf.$e" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i:UTTypeDescription string 'Модель $e'" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i:UTTypeConformsTo array" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i:UTTypeConformsTo:0 string public.data" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i:UTTypeTagSpecification dict" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i:UTTypeTagSpecification:public.filename-extension array" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :UTImportedTypeDeclarations:$i:UTTypeTagSpecification:public.filename-extension:0 string $e" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:$i string ru.stenograf.$e" "$PLIST"
+            i=$((i+1))
+          done
+          # если в iOS уже есть свой тип для .ply — его тоже принимаем
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:$i string public.polygon-file-format" "$PLIST"
+          plutil -lint "$PLIST"
           # русский язык приложения — подсказки Apple при сканировании (RoomPlan) тоже будут по-русски
           /usr/libexec/PlistBuddy -c "Set :CFBundleDevelopmentRegion ru" "$PLIST" || /usr/libexec/PlistBuddy -c "Add :CFBundleDevelopmentRegion string ru" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :CFBundleLocalizations" "$PLIST" || true

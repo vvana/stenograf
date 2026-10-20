@@ -2243,6 +2243,55 @@ async function measureApartment(pid) {
 }
 /* ---------- HD-скан: пакет для компьютера и загрузка обученной модели ---------- */
 const fmtMB = b => (b / 1048576).toFixed(b > 104857600 ? 0 : 1).replace('.', ',') + ' МБ';
+const modelFormat = name => { const e = (String(name).split('.').pop() || '').toLowerCase(); return ['ply', 'spz', 'splat', 'ksplat'].includes(e) ? e : null; };
+// записать обученную модель в этап; from — HD-пакет, из которого она обучена (по нему модель встаёт на схему)
+async function attachHDModel(st, f, from) {
+  st.hdScan = { blob: f, name: f.name, size: f.size, format: modelFormat(f.name) || 'ply', created: Date.now(), flip: false, transform: from ? from.transform : null, place: from ? from.place : '' };
+  try { await dbPut('stages', st); return true; } catch (err) { uiAlert('Не удалось сохранить модель (мало места?): ' + err.message); return false; }
+}
+
+// Модель, присланная из другого приложения («Поделиться → Fixpoint» в Telegram, Google Диске, «Файлах»…).
+// Плагин кладёт копию в Documents/import; спрашиваем, к какому HD-пакету (объект · этап · комната) её привязать.
+let incomingBusy = false;
+async function takeIncomingModel() {
+  const RP = Native.RP;
+  if (incomingBusy || !Native.isNative || !RP || !RP.takeIncoming) return;
+  incomingBusy = true;
+  let r = null;
+  try {
+    try { r = await RP.takeIncoming(); } catch { return; }
+    if (!r || !r.path) return;
+    const projects = await dbAll('projects');
+    const cands = [];
+    for (const p of projects) {
+      const stages = (await dbAll('stages')).filter(s => s.projectId === p.id).sort((a, b) => a.ord - b.ord);
+      for (const s of stages) for (const c of stageHDCaps(s)) cands.push({ p, s, c });
+    }
+    if (!cands.length) { uiAlert('Модель «' + r.name + '» получена, но HD-пакетов в приложении нет — не к чему привязать. Сначала сделайте HD-обход этапа.'); return; }
+    let pick = cands[cands.length - 1];
+    if (cands.length > 1) {
+      cands.sort((a, b) => b.c.created - a.c.created);
+      const i = await pickSheet('К какому пакету модель?', 'Модель «' + r.name + '». Выберите пакет, из которого она обучена, — так она встанет на своё место в 3D.',
+        cands.map((x, i) => ({ html: `${esc(x.p.name)} · ${esc(x.s.name)} <small class="mut">· ${esc(x.c.place || 'Пакет')} · ${fmtDate(x.c.created)}</small>`, value: String(i) })));
+      if (i == null) return;
+      pick = cands[+i];
+    }
+    toast('Загружаю модель…');
+    const blob = await (await fetch(window.Capacitor.convertFileSrc('file://' + r.path))).blob();
+    if (await attachHDModel(pick.s, new File([blob], r.name || 'model.ply'), pick.c)) {
+      toast('HD-модель загружена');
+      const h = `#/p/${pick.p.id}/hd/${pick.s.id}`;
+      if (location.hash === h) render(); else nav(h);
+    }
+  } catch (err) { uiAlert('Не удалось загрузить модель: ' + err.message); }
+  finally {
+    if (r && r.path) RP.deleteFile({ path: r.path }).catch(() => {});
+    incomingBusy = false;
+  }
+}
+window.addEventListener('fixpointIncoming', () => takeIncomingModel());
+setTimeout(takeIncomingModel, 1500);   // приложение запущено файлом — забрать после старта
+
 async function viewHD(pid, stageId = null) {
   const { project, stages } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -2324,8 +2373,7 @@ async function viewHD(pid, stageId = null) {
   });
   $('#hd-file').onchange = e => { const f = e.target.files && e.target.files[0]; if (f) useModelFile(f); };
   const useModelFile = async f => {
-    const format = (f.name.split('.').pop() || 'ply').toLowerCase();
-    if (!['ply', 'spz', 'splat', 'ksplat'].includes(format)) { uiAlert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
+    if (!modelFormat(f.name)) { uiAlert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
     // модель встаёт на схему по пакету, из которого обучена: пакетов несколько — спросить, какой
     let from = caps[caps.length - 1] || null;
     if (caps.length > 1) {
@@ -2334,9 +2382,7 @@ async function viewHD(pid, stageId = null) {
       if (!id) return;
       from = caps.find(c => c.id === id);
     }
-    st.hdScan = { blob: f, name: f.name, size: f.size, format, created: Date.now(), flip: false, transform: from ? from.transform : null, place: from ? from.place : '' };
-    try { await dbPut('stages', st); } catch (err) { uiAlert('Не удалось сохранить модель (мало места?): ' + err.message); return; }
-    toast('HD-модель загружена'); render();
+    if (await attachHDModel(st, f, from)) { toast('HD-модель загружена'); render(); }
   };
   $('#hd-stage').onchange = e => nav(`#/p/${pid}/hd/${e.target.value}`);
   on('#hd-view', () => { tourState.mode = 'hd'; tourState.stage = st.id; nav(`#/p/${pid}/tour`); });

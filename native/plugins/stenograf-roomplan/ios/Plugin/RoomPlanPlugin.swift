@@ -33,6 +33,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFileAs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "takeIncoming", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickContact", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "searchContacts", returnType: CAPPluginReturnPromise),
     ]
@@ -191,28 +192,95 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// Выбор файла системным окном «Файлы»: все места — «На iPhone», iCloud Drive, Google Диск (если стоит его приложение) и т. д.
     /// Тип не ограничиваем (.item): у .ply/.spz нет системного типа, и окно браузера (<input type=file>) делает их серыми.
-    /// Файл копируется в Documents/import; ответ {picked, path, name, size}; JS читает его через convertFileSrc и удаляет (deleteFile).
+    /// Файл (после скачивания, если он в облаке) копируется в Documents/import; ответ {picked, path, name, size}; JS читает его через convertFileSrc и удаляет (deleteFile).
     private var pickDelegate: PickFileDelegate?
     @objc func pickFile(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+            // asCopy: false — окно закрывается сразу после тапа, а скачивание (Google Диск, iCloud) идёт уже у нас
+            // через NSFileCoordinator с окном «Загружаю файл…». С asCopy: true окно молча ждало скачивания 150+ МБ,
+            // и казалось, что файл не выбирается (запись экрана пользователя 2026-10-20).
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: false)
             picker.allowsMultipleSelection = false
             let d = PickFileDelegate { [weak self] src in
                 self?.pickDelegate = nil
                 guard let src = src else { call.resolve(["picked": false]); return }
-                // в Documents — deleteFile удаляет только там; UUID в имени, чтобы не затереть одноимённый файл
-                let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("import", isDirectory: true)
-                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                let dst = dir.appendingPathComponent(UUID().uuidString + "-" + src.lastPathComponent)
-                do { try FileManager.default.moveItem(at: src, to: dst) }
-                catch { do { try FileManager.default.copyItem(at: src, to: dst) } catch { call.reject("Не удалось взять файл: \(error.localizedDescription)"); return } }
-                let size = ((try? FileManager.default.attributesOfItem(atPath: dst.path)[.size]) as? NSNumber)?.intValue ?? 0
-                call.resolve(["picked": true, "path": dst.path, "name": src.lastPathComponent, "size": size])
+                let wait = UIAlertController(title: "Загружаю файл…", message: src.lastPathComponent, preferredStyle: .alert)
+                host.present(wait, animated: true)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let scoped = src.startAccessingSecurityScopedResource()
+                    defer { if scoped { src.stopAccessingSecurityScopedResource() } }
+                    // в Documents — deleteFile удаляет только там; UUID в имени, чтобы не затереть одноимённый файл
+                    let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("import", isDirectory: true)
+                    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    let dst = dir.appendingPathComponent(UUID().uuidString + "-" + src.lastPathComponent)
+                    var failure: String?
+                    var coordErr: NSError?
+                    NSFileCoordinator().coordinate(readingItemAt: src, options: [], error: &coordErr) { url in
+                        do { try FileManager.default.copyItem(at: url, to: dst) } catch { failure = error.localizedDescription }
+                    }
+                    if let e = coordErr { failure = e.localizedDescription }
+                    let size = ((try? FileManager.default.attributesOfItem(atPath: dst.path)[.size]) as? NSNumber)?.intValue ?? 0
+                    let fail = failure
+                    DispatchQueue.main.async {
+                        wait.dismiss(animated: true) {
+                            if let f = fail { call.reject("Не удалось взять файл: \(f)"); return }
+                            call.resolve(["picked": true, "path": dst.path, "name": src.lastPathComponent, "size": size])
+                        }
+                    }
+                }
             }
             self.pickDelegate = d
             picker.delegate = d
+            picker.presentationController?.delegate = d
             host.present(picker, animated: true)
+        }
+    }
+
+    /// Файл, присланный в приложение из другого: «Поделиться → Fixpoint» в Telegram, Google Диске, «Файлах», почте, AirDrop.
+    /// Типы .ply/.spz/.splat/.ksplat объявлены в Info.plist (CI). iOS открывает приложение с URL файла → Capacitor шлёт
+    /// уведомление capacitorOpenURL; при холодном старте оно могло прийти раньше загрузки плагина — тогда берём lastURL.
+    /// Файл копируется в Documents/import, JS получает его через takeIncoming() (при старте и по событию окна fixpointIncoming).
+    private var incoming: [String: Any]?
+    private static let modelExts: Set<String> = ["ply", "spz", "splat", "ksplat"]
+    override public func load() {
+        NotificationCenter.default.addObserver(self, selector: #selector(onOpenURL(_:)), name: Notification.Name.capacitorOpenURL, object: nil)
+        if let url = ApplicationDelegateProxy.shared.lastURL { receive(url) }
+    }
+    @objc private func onOpenURL(_ note: Notification) {
+        guard let info = note.object as? [String: Any], let url = info["url"] as? URL else { return }
+        receive(url)
+    }
+    private func receive(_ src: URL) {
+        guard src.isFileURL, Self.modelExts.contains(src.pathExtension.lowercased()) else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let scoped = src.startAccessingSecurityScopedResource()
+            defer { if scoped { src.stopAccessingSecurityScopedResource() } }
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let dir = docs.appendingPathComponent("import", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let dst = dir.appendingPathComponent(UUID().uuidString + "-" + src.lastPathComponent)
+            var ok = false
+            var coordErr: NSError?
+            NSFileCoordinator().coordinate(readingItemAt: src, options: [], error: &coordErr) { url in
+                ok = (try? FileManager.default.copyItem(at: url, to: dst)) != nil
+            }
+            // копия, которую iOS положила в Documents/Inbox, больше не нужна
+            if src.path.hasPrefix(docs.appendingPathComponent("Inbox").path) { try? FileManager.default.removeItem(at: src) }
+            guard ok else { return }
+            let size = ((try? FileManager.default.attributesOfItem(atPath: dst.path)[.size]) as? NSNumber)?.intValue ?? 0
+            let item: [String: Any] = ["path": dst.path, "name": src.lastPathComponent, "size": size]
+            DispatchQueue.main.async {
+                self.incoming = item
+                self.bridge?.triggerWindowJSEvent(eventName: "fixpointIncoming")
+            }
+        }
+    }
+    @objc func takeIncoming(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let item = self.incoming
+            self.incoming = nil
+            call.resolve(item ?? [:])
         }
     }
 
@@ -388,11 +456,14 @@ final class ExportPickerDelegate: NSObject, UIDocumentPickerDelegate {
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(false) }
 }
 
-final class PickFileDelegate: NSObject, UIDocumentPickerDelegate {
-    let done: (URL?) -> Void
+final class PickFileDelegate: NSObject, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
+    private var done: ((URL?) -> Void)?
     init(_ done: @escaping (URL?) -> Void) { self.done = done }
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { done(urls.first) }
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(nil) }
+    private func finish(_ url: URL?) { let d = done; done = nil; d?(url) }   // ответ ровно один раз
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish(urls.first) }
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish(nil) }
+    // окно смахнули вниз — тоже отмена, иначе JS ждал бы ответа вечно
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { finish(nil) }
 }
 
 final class ContactPickerDelegate: NSObject, CNContactPickerDelegate {

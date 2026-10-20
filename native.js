@@ -12,7 +12,7 @@ const Native = (() => {
     if (typeof cap.nativePromise === 'function') {
       via = 'nativePromise';
       const call = m => (opts = {}) => cap.nativePromise('RoomPlan', m, opts);
-      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo'), quickLook: call('quickLook'), shareFile: call('shareFile'), fileInfo: call('fileInfo'), deleteFile: call('deleteFile'), htmlPdf: call('htmlPdf'), saveImage: call('saveImage'), openSettings: call('openSettings'), saveFile: call('saveFile'), saveFileAs: call('saveFileAs'), pickFile: call('pickFile'), pickContact: call('pickContact'), searchContacts: call('searchContacts') };
+      RP = { isSupported: call('isSupported'), scan: call('scan'), deviceInfo: call('deviceInfo'), quickLook: call('quickLook'), shareFile: call('shareFile'), fileInfo: call('fileInfo'), deleteFile: call('deleteFile'), htmlPdf: call('htmlPdf'), saveImage: call('saveImage'), openSettings: call('openSettings'), saveFile: call('saveFile'), saveFileAs: call('saveFileAs'), pickFile: call('pickFile'), takeIncoming: call('takeIncoming'), pickContact: call('pickContact'), searchContacts: call('searchContacts') };
     } else if (cap.Plugins && cap.Plugins.RoomPlan) {
       via = 'Plugins.RoomPlan';
       RP = cap.Plugins.RoomPlan;
