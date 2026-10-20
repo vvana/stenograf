@@ -693,7 +693,7 @@ async function lidarApartment(pid, rooms, stageId, opts = {}) {
   const { results, wallMap, transform } = await applyStructure(pid, rooms, scan);
   if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
   await saveProjectUsdz(pid, scan);
-  if (stageId) results.hd = await saveStageHD(stageId, scan, transform, 'Вся квартира');
+  if (stageId) { results.hd = await saveStageHD(stageId, scan, transform, 'Вся квартира', '*'); await saveStageMesh(stageId, scan, transform, 'Вся квартира', '*'); }
   let mirrors = 0;
   for (const r of results) mirrors += await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
   let photos = 0;
@@ -742,7 +742,20 @@ async function lidarGhost(photo, wallSize) {
 
 // HD-обход: пакет кадров лежит файлом в Documents (сотни МБ — через мост не гоняем), у этапа только путь; старый пакет этапа удаляем.
 // transform — мир AR-сессии → схема ({ang, ox, oy}), чтобы обученная модель встала на план.
-async function saveStageHD(stageId, scan, transform, place = '') {
+// Окрашенная сетка лидара из HD-обхода (то, что раньше давал «Финальный скан»): у этапа по одной на комнату ('*' — квартира).
+async function saveStageMesh(stageId, scan, transform, place = '', roomId = null) {
+  if (!scan.mesh) return false;
+  const st = await dbGet('stages', stageId);
+  if (!st) return false;
+  const blob = await (await fetch('data:application/octet-stream;base64,' + scan.mesh)).blob();
+  const list = (st.meshScans || []).filter(m => m.roomId !== roomId);
+  list.push({ id: uid(), roomId, place, blob, transform: transform || null, vertices: scan.meshVertices || 0, faces: scan.meshFaces || 0, created: Date.now() });
+  st.meshScans = list;
+  await dbPut('stages', st);
+  return true;
+}
+
+async function saveStageHD(stageId, scan, transform, place = '', roomId = null) {   // roomId: id комнаты или '*' — вся квартира
   if (scan.hdError) uiAlert('HD-пакет не собрался: ' + scan.hdError);
   if (!scan.hdZip) return false;
   const st = await dbGet('stages', stageId);
@@ -750,7 +763,7 @@ async function saveStageHD(stageId, scan, transform, place = '') {
   // у этапа — список пакетов, по одному на каждый HD-обход (комната или вся квартира); прежние НЕ удаляются
   // (раньше пакет перезаписывался и старый файл стирался — пользователь снял 3 комнаты подряд и потерял 2 пакета, 2026-10-19)
   const list = stageHDCaps(st);
-  list.push({ id: uid(), path: scan.hdZip, frames: scan.hdFrames || 0, bytes: scan.hdBytes || 0, created: Date.now(), place, transform: transform || null });
+  list.push({ id: uid(), path: scan.hdZip, frames: scan.hdFrames || 0, bytes: scan.hdBytes || 0, created: Date.now(), place, roomId, transform: transform || null });
   st.hdCaptures = list;
   delete st.hdCapture; delete st.hdTransform;
   await dbPut('stages', st);
@@ -762,6 +775,14 @@ function stageHDCaps(st) {
   if (Array.isArray(st.hdCaptures)) return st.hdCaptures.slice();
   return st.hdCapture ? [{ id: 'legacy', ...st.hdCapture, place: st.hdCapture.place || '', transform: st.hdTransform || null }] : [];
 }
+// HD-модели этапа (с 2026-10-20 — по одной на комнату: roomId = id комнаты или '*' — вся квартира).
+// Старая запись st.hdScan (одна модель на этап) читается как модель без комнаты (roomId null).
+function stageHDModels(st) {
+  if (!st) return [];
+  const list = Array.isArray(st.hdModels) ? st.hdModels.slice() : [];
+  if (st.hdScan && st.hdScan.blob) list.push({ id: 'legacy', roomId: null, ...st.hdScan });
+  return list.filter(m => m && m.blob);
+}
 
 async function lidarWalk(pid, room, stageId, opts = {}) {
   let scan;
@@ -772,7 +793,8 @@ async function lidarWalk(pid, room, stageId, opts = {}) {
   const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap, toPlan ? { toPlan, turn, floorY: scan.floorY } : null);
   r.planes = await savePlanes(pid, stageId, scan.planes, () => toPlan ? { room, toPlan } : null);
   const o = toPlan && toPlan([0, 0]);
-  r.hd = await saveStageHD(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null, room.name || '');
+  r.hd = await saveStageHD(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null, room.name || '', room.id);
+  await saveStageMesh(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null, room.name || '', room.id);
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;
   const extra = [['f', 'пол'], ['c', 'потолок']].filter(([sf]) => (scan.planes || []).some(o => o.surface === sf)).map(([, t]) => t);
   toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${r.hd ? ` · HD-кадров: ${scan.hdFrames}` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);

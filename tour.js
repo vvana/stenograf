@@ -1,7 +1,7 @@
 /* Fixpoint — 3D-тур: «кукольный домик» из схемы и фото, вид изнутри */
 'use strict';
 
-const tourState = { mode: 'house', stage: 'all', roomId: null, photos: false };
+const tourState = { mode: 'house', stage: 'all', roomId: null, photos: false, hdModel: null };   // hdModel — показать одну модель (id), null — все модели этапа
 const FLOOR_COLORS = [0xe3cfae, 0xd8d6d0, 0xead9bd, 0xcfc6b6, 0xe6dfd2, 0xdcc7a4]; // светлое дерево и светло-серый — спокойные полы, как в планировщиках
 const WALL_T = 0.12; // толщина стен на «домике», м
 const TEX_W = 768;
@@ -9,6 +9,40 @@ const TEX_W = 768;
 /* ---------- стиль «визуализация планировки» (образцы пользователя 2026-10-14):
    белые стены с белым срезом, светлый дуб на полу, плитка в санузлах, мягкие тени, мебель из простых форм ---------- */
 // паркетная доска / плитка на canvas: текстура на квадрат 2 × 2 м, повторяется по полу
+// Полотно двери (канва 256×600, растягивается на проём): светло-серое, с наличником, три филёнки с двойным
+// багетом (свет сверху-слева, тень снизу-справа) и хромированная ручка слева. Кешируется — одна на сцену.
+let doorTexCache = null;
+function doorTexture(THREE) {
+  if (doorTexCache) return doorTexCache;
+  const W = 256, H = 600, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#a3a8b0'; g.fillRect(0, 0, W, H);                  // наличник
+  g.fillStyle = '#b9bdc4'; g.fillRect(10, 8, W - 20, H - 8);         // полотно
+  const bevel = (x, y, w, h, d, light, shade) => {                   // рамка багета: верх/лево светлее, низ/право темнее
+    g.fillStyle = light; g.fillRect(x, y, w, d); g.fillRect(x, y, d, h);
+    g.fillStyle = shade; g.fillRect(x, y + h - d, w, d); g.fillRect(x + w - d, y, d, h);
+  };
+  const panel = (y, h) => {
+    const x = 42, w = W - 84;
+    g.fillStyle = '#b4b8bf'; g.fillRect(x, y, w, h);
+    bevel(x, y, w, h, 3, '#cfd2d7', '#979ca4');                       // внешний багет
+    g.fillStyle = '#bcc0c6'; g.fillRect(x + 12, y + 12, w - 24, h - 24);
+    bevel(x + 12, y + 12, w - 24, h - 24, 2, '#999ea6', '#d3d6da');   // внутренний — утоплен (свет и тень наоборот)
+  };
+  panel(36, 236); panel(318, 66); panel(430, 140);
+  // ручка: розетка + нажимная ручка
+  g.fillStyle = '#e9ebee'; g.beginPath(); g.arc(28, 300, 9, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = '#7d828a'; g.lineWidth = 1.5; g.stroke();
+  g.fillStyle = '#dfe2e6'; g.fillRect(28, 296, 40, 8);
+  g.strokeRect(28, 296, 40, 8);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  doorTexCache = t;
+  return t;
+}
+
 function floorTexture(THREE, kind) {
   const c = document.createElement('canvas'); c.width = c.height = 512;
   const g = c.getContext('2d');
@@ -240,7 +274,11 @@ function buildTourScene(THREE, rooms) {
   // верх стены — белый срез, как на визуализациях планировок (раньше был тёмный «разрез» как на чертеже)
   const wallCap = new THREE.MeshBasicMaterial({ color: 0xf6f5f2 });
   const wallCapTop = new THREE.MeshBasicMaterial({ color: 0xf6f5f2, side: THREE.DoubleSide });
-  const doorMat = new THREE.MeshLambertMaterial({ color: 0xdcc3a0 });
+  // дверь — серое филёнчатое полотно по образцу пользователя (2026-10-20): три филёнки, наличник, хромированная ручка
+  const doorTex = doorTexture(THREE);
+  const doorFace = new THREE.MeshLambertMaterial({ map: doorTex, emissive: 0x4a4a4a, emissiveMap: doorTex });   // как у стен: в тени не темнеет до графита
+  const doorEdge = new THREE.MeshLambertMaterial({ color: 0xa9aeb6, emissive: 0x3a3a3a });
+  const doorMat = [doorEdge, doorEdge, doorEdge, doorEdge, doorFace, doorFace];   // BoxGeometry: ±x, ±y, +z, −z — полотно с обеих сторон
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xe4f1f8, transparent: true, opacity: 0.6 });
   const plainFloors = [], solidWalls = [];
   const greyMat = new THREE.MeshBasicMaterial({ color: dark ? 0x3a3d43 : 0xcfc9bf, side: THREE.FrontSide });
@@ -467,7 +505,7 @@ function buildTourScene(THREE, rooms) {
         } else if (o.kind === 'window') {
           child = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0x9fc9ea, transparent: true, opacity: 0.75 }));
         } else {
-          child = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: dark ? 0x5a4636 : 0x7a5a42 }));
+          child = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: doorTexture(THREE) }));
         }
         child.position.set(lx, ly, 0.012);
         mesh.add(child);
@@ -510,7 +548,9 @@ async function viewTour(pid, roomId = null) {
     tourState.stage = (withPh[withPh.length - 1] || stages[stages.length - 1] || { id: 'all' }).id;
   }
   // HD-модель — у этапа: выбранный этап, если у него она есть, иначе последний этап с моделью
-  const hdStage = () => { const ok = stages.filter(s => s.hdScan && s.hdScan.blob); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
+  // этап с сетками лидара из HD-обхода: выбранный, иначе последний такой
+  const meshStage = () => { const ok = stages.filter(s => (s.meshScans || []).some(m => m.blob)); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
+  const hdStage = () => { const ok = stages.filter(s => stageHDModels(s).length); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
   if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
@@ -534,7 +574,7 @@ async function viewTour(pid, roomId = null) {
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}<span>Объект</span></button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('person')}<span>Внутри</span></button>
           ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}<span>HD</span></button>` : ''}
-          ${project.finalScan && project.finalScan.blob ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}<span>Финал</span></button>` : ''}
+          ${meshStage() || (project.finalScan && project.finalScan.blob) ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}<span>Финал</span></button>` : ''}
           ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
         </div>
         <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
@@ -583,56 +623,79 @@ async function viewTour(pid, roomId = null) {
     updateHint();
   }
 
-  /* ---------- финальный скан (окрашенная сетка) ---------- */
-  let finalMesh = null;
+  /* ---------- финальный скан (окрашенная сетка лидара): сетки HD-обходов этапа по комнатам или старый project.finalScan ---------- */
+  let finalMesh = null, finalOf = null, finalVerts = 0;
   async function loadFinal() {
-    if (finalMesh || !(project.finalScan && project.finalScan.blob) || !window.THREE_PLYLoader) return;
-    try {
-      const buf = await project.finalScan.blob.arrayBuffer();
-      const geo = new window.THREE_PLYLoader().parse(buf);
-      geo.computeVertexNormals();
-      const mat = new THREE.MeshLambertMaterial({ vertexColors: geo.hasAttribute('color'), side: THREE.DoubleSide });
-      finalMesh = new THREE.Mesh(geo, mat);
-      // из координат ARKit (X, Y вверх, Z) в план: тот же поворот+сдвиг, что применялся к комнатам
-      const tr = project.finalScan.transform || { ang: 0, ox: 0, oy: 0 };
-      // план: x = X·cos − Z·sin + ox, z = X·sin + Z·cos + oy ; высота Y остаётся
-      finalMesh.rotation.y = -tr.ang;
-      finalMesh.position.set(tr.ox, 0, tr.oy);
-      finalMesh.visible = false;
-      scene.add(finalMesh);
-    } catch (err) { console.error(err); say('Не удалось открыть финальный скан'); }
+    if (!window.THREE_PLYLoader) return;
+    const ms = meshStage();
+    const items = ms ? ms.meshScans.filter(m => m.blob) : (project.finalScan && project.finalScan.blob ? [project.finalScan] : []);
+    const key = ms ? ms.id + ':' + items.map(m => m.id).join(',') : 'project';
+    if (!items.length || (finalMesh && finalOf === key)) return;
+    if (finalMesh) { scene.remove(finalMesh); finalMesh.traverse(o => { if (o.geometry) o.geometry.dispose(); }); }
+    finalOf = key; finalVerts = 0;
+    const group = new THREE.Group();
+    for (const it of items) {
+      try {
+        const geo = new window.THREE_PLYLoader().parse(await it.blob.arrayBuffer());
+        geo.computeVertexNormals();
+        const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: geo.hasAttribute('color'), side: THREE.DoubleSide }));
+        // из координат ARKit (X, Y вверх, Z) в план: тот же поворот+сдвиг, что применялся к комнатам
+        const tr = it.transform || { ang: 0, ox: 0, oy: 0 };
+        mesh.rotation.y = -tr.ang;
+        mesh.position.set(tr.ox, 0, tr.oy);
+        group.add(mesh);
+        finalVerts += it.vertices || 0;
+      } catch (err) { console.error(err); say('Не удалось открыть 3D-сетку' + (it.place ? ' «' + it.place + '»' : '')); }
+    }
+    group.visible = tourState.mode === 'final';
+    scene.add(group);
+    finalMesh = group;
   }
 
   /* ---------- HD-скан: Gaussian splatting, обученный на компьютере по HD-пакету ---------- */
-  let hdViewer = null, hdCenter = null, hdLoading = null, hdOf = null;
+  // модели этапа по комнатам (с 2026-10-20): каждая — свой DropInViewer со своим трансформом пакета
+  let hdViewers = [], hdCenter = null, hdLoading = null, hdOf = null;
+  let hdViewer = null;   // первый из загруженных — признак «HD уже на сцене» для остального кода
   function loadHD() {
     const hs = hdStage();
     if (hdLoading || !hs) return hdLoading || Promise.resolve();
-    if (hdViewer && hdOf === hs.id) return Promise.resolve();
-    if (hdViewer) { scene.remove(hdViewer); hdViewer.dispose().catch(() => {}); hdViewer = null; hdCenter = null; }   // выбран другой этап
-    const scan = hs.hdScan;
-    hdOf = hs.id;
+    const all = stageHDModels(hs);
+    const list = tourState.hdModel ? all.filter(m => m.id === tourState.hdModel) : all;
+    const pick = list.length ? list : all;
+    const key = hs.id + ':' + pick.map(m => m.id).join(',');
+    if (hdViewer && hdOf === key) return Promise.resolve();
+    for (const v of hdViewers) { scene.remove(v); v.dispose().catch(() => {}); }   // выбран другой этап или другая модель
+    hdViewers = []; hdViewer = null; hdCenter = null;
+    hdOf = key;
     hdLoading = (async () => {
-      say('Загружаю HD-модель…');
+      const xs = [], ys = [], zs = [], p = new THREE.Vector3();
+      let failed = 0;
       try {
         const GS = await import('./vendor/gaussian-splats-3d.module.js');
-        const fmt = { ply: GS.SceneFormat.Ply, spz: GS.SceneFormat.Spz, splat: GS.SceneFormat.Splat, ksplat: GS.SceneFormat.KSplat }[scan.format] ?? GS.SceneFormat.Ply;
-        const v = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false, sceneRevealMode: GS.SceneRevealMode.Instant });
-        const url = URL.createObjectURL(scan.blob);
-        // пакет снят в координатах AR-сессии обхода → тот же поворот и сдвиг, которым обход лёг на схему
-        const tr = scan.transform || hs.hdTransform || (stageHDCaps(hs)[0] || {}).transform || { ang: 0, ox: 0, oy: 0 };   // трансформ пакета, из которого обучена модель
-        v.rotation.y = -tr.ang; v.position.set(tr.ox, 0, tr.oy);
-        if (scan.flip) v.rotation.x = Math.PI;   // модель из программ с осью Y вниз
-        try { await v.addSplatScene(url, { format: fmt, showLoadingUI: false, progressiveLoad: false, splatAlphaRemovalThreshold: 5 }); }
-        finally { URL.revokeObjectURL(url); }
-        scene.add(v); v.updateMatrixWorld(true);
-        // центр модели по выборке сплатов — вокруг него крутится камера (если модель не совпала с планом, всё равно в кадре)
-        const sb = v.getSplatScene(0).splatBuffer, n = sb.getSplatCount(), step = Math.max(1, Math.floor(n / 3000));
-        const xs = [], ys = [], zs = [], p = new THREE.Vector3();
-        for (let i = 0; i < n; i += step) { sb.getSplatCenter(i, p); p.applyMatrix4(v.matrixWorld); xs.push(p.x); ys.push(p.y); zs.push(p.z); }
+        for (let k = 0; k < pick.length; k++) {
+          const scan = pick[k];
+          say(pick.length > 1 ? `Загружаю HD-модели… ${k + 1} из ${pick.length}` : 'Загружаю HD-модель…');
+          try {
+            const fmt = { ply: GS.SceneFormat.Ply, spz: GS.SceneFormat.Spz, splat: GS.SceneFormat.Splat, ksplat: GS.SceneFormat.KSplat }[scan.format] ?? GS.SceneFormat.Ply;
+            const v = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false, sceneRevealMode: GS.SceneRevealMode.Instant });
+            const url = URL.createObjectURL(scan.blob);
+            // пакет снят в координатах AR-сессии обхода → тот же поворот и сдвиг, которым обход лёг на схему
+            const tr = scan.transform || (scan.id === 'legacy' ? hs.hdTransform || (stageHDCaps(hs)[0] || {}).transform : null) || { ang: 0, ox: 0, oy: 0 };
+            v.rotation.y = -tr.ang; v.position.set(tr.ox, 0, tr.oy);
+            if (scan.flip) v.rotation.x = Math.PI;   // модель из программ с осью Y вниз
+            try { await v.addSplatScene(url, { format: fmt, showLoadingUI: false, progressiveLoad: false, splatAlphaRemovalThreshold: 5 }); }
+            finally { URL.revokeObjectURL(url); }
+            scene.add(v); v.updateMatrixWorld(true);
+            hdViewers.push(v);
+            // центр по выборке сплатов всех моделей — вокруг него крутится камера
+            const sb = v.getSplatScene(0).splatBuffer, n = sb.getSplatCount(), step = Math.max(1, Math.floor(n / 3000));
+            for (let i = 0; i < n; i += step) { sb.getSplatCenter(i, p); p.applyMatrix4(v.matrixWorld); xs.push(p.x); ys.push(p.y); zs.push(p.z); }
+          } catch (err) { console.error(err); failed++; }
+        }
         const med = a => { a.sort((x, y) => x - y); return a[Math.floor(a.length / 2)] || 0; };
-        hdCenter = new THREE.Vector3(med(xs), med(ys), med(zs));
-        hdViewer = v; say('');
+        if (xs.length) hdCenter = new THREE.Vector3(med(xs), med(ys), med(zs));
+        hdViewer = hdViewers[0] || null;
+        say(failed ? `Не открылось моделей: ${failed} из ${pick.length} (мало памяти?)` : '');
       } catch (err) { console.error(err); say('Не удалось открыть HD-модель: ' + err.message); }
       hdLoading = null;
     })();
@@ -797,7 +860,7 @@ async function viewTour(pid, roomId = null) {
     if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем или двумя, щипок — масштаб. Тап по плану — встать в эту точку внутри.';
     else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Ведите точку на плане — чтобы перейти.`;
     if (tourState.mode === 'hd') hint.textContent = `HD-скан${hdStage() ? ': ' + hdStage().name : ''}. Крутите пальцем, щипок — масштаб.`;
-    if (tourState.mode === 'final') hint.textContent = `Финальный скан: ${project.finalScan ? (project.finalScan.vertices || 0) + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
+    if (tourState.mode === 'final') hint.textContent = `3D-сетка лидара${meshStage() ? ': ' + meshStage().name : ''}${finalVerts ? ' · ' + finalVerts + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
     // стеклянный переключатель режимов: светлая «плашка» переезжает под выбранный режим
     const th = $('#seg-thumb'), act = app.querySelector('[data-mode].active');
@@ -811,7 +874,7 @@ async function viewTour(pid, roomId = null) {
     for (const f of plainFloors) f.visible = !isFinal;
     for (const w of solidWalls) w.visible = !isFinal;
     if (finalMesh) finalMesh.visible = tourState.mode === 'final';
-    if (hdViewer) hdViewer.visible = isHD;
+    for (const v of hdViewers) v.visible = isHD;
   }
   function setMode(m) {
     tourState.mode = m;
@@ -890,7 +953,7 @@ async function viewTour(pid, roomId = null) {
       const { GLTFExporter } = await import('./vendor/GLTFExporter.js');
       await applyStage();
       // свет, тень-подложка, финальный и HD-скан, зеркала-отражатели (свой шейдер) в файл не идут
-      scene.traverse(o => { if (o.isLight || o === ground || o === finalMesh || o === hdViewer || mirrors.includes(o)) setVis(o, false); });
+      scene.traverse(o => { if (o.isLight || o === ground || o === finalMesh || hdViewers.includes(o) || mirrors.includes(o)) setVis(o, false); });
       for (const m of mirrors) { // вместо отражателя — простая серо-голубая плоскость
         const p = new THREE.Mesh(m.geometry, new THREE.MeshBasicMaterial({ color: 0xb8c4c8 }));
         p.position.copy(m.position); p.quaternion.copy(m.quaternion); p.name = 'Зеркало';
@@ -941,9 +1004,10 @@ async function viewTour(pid, roomId = null) {
   window.__tourScene = scene;
   viewCleanup = () => {
     alive = false; ro.disconnect(); delete window.__tourDebug;
+    tourState.hdModel = null;   // «одна модель» — только для этого захода из «HD-скана»
     texCache.forEach(t => t.dispose());
     mirrors.forEach(m => m.dispose && m.dispose());
-    if (hdViewer) { scene.remove(hdViewer); hdViewer.dispose().catch(() => {}); }
+    for (const v of hdViewers) { scene.remove(v); v.dispose().catch(() => {}); }
     renderer.dispose();
   };
 }

@@ -2244,9 +2244,41 @@ async function measureApartment(pid) {
 /* ---------- HD-скан: пакет для компьютера и загрузка обученной модели ---------- */
 const fmtMB = b => (b / 1048576).toFixed(b > 104857600 ? 0 : 1).replace('.', ',') + ' МБ';
 const modelFormat = name => { const e = (String(name).split('.').pop() || '').toLowerCase(); return ['ply', 'spz', 'splat', 'ksplat'].includes(e) ? e : null; };
-// записать обученную модель в этап; from — HD-пакет, из которого она обучена (по нему модель встаёт на схему)
+// Из какого HD-пакета обучена модель: сначала по имени (Colab/Brush называют модель как пакет: …-1740.ply ↔ …-1740.zip),
+// иначе спросить; «Пакета нет в списке» → модель без привязки к схеме (пакет удалён/потерян). cands — [{c, html}].
+// Возвращает {c} (c может быть null) или null — отмена.
+async function pickModelCap(fileName, cands, note) {
+  const base = n => String(n || '').split('/').pop().replace(/\.[^.]+$/, '').toLowerCase();
+  const hit = cands.filter(x => base(x.c.path) === base(fileName));
+  if (hit.length === 1) return { c: hit[0].c, auto: true };
+  const v = await pickSheet('Из какого пакета модель?', note,
+    [...cands.map((x, i) => ({ html: x.html, value: String(i) })), { html: 'Пакета нет в списке', value: 'none' }]);
+  if (v == null) return null;
+  return { c: v === 'none' ? null : cands[+v].c };
+}
+
+// Записать обученную модель: одна модель на этап и комнату (просьба пользователя 2026-10-20 — раньше на этап была одна модель,
+// вторая затирала первую). from — HD-пакет, из которого она обучена: по его трансформу модель встаёт на схему, по roomId — к комнате.
+// У пакета без комнаты (снятого до 2026-10-20) комнату узнаём по названию или спрашиваем. Возвращает true, если записано.
 async function attachHDModel(st, f, from) {
-  st.hdScan = { blob: f, name: f.name, size: f.size, format: modelFormat(f.name) || 'ply', created: Date.now(), flip: false, transform: from ? from.transform : null, place: from ? from.place : '' };
+  const rooms = await dbAll('rooms', 'projectId', st.projectId);
+  let roomId = from && from.roomId || null;
+  if (!roomId && from && from.place) roomId = from.place === 'Вся квартира' ? '*' : (rooms.find(r => r.name === from.place) || {}).id || null;
+  if (!roomId) {
+    roomId = rooms.length ? await pickSheet('Какая комната на модели?', 'Модель «' + f.name + '». У каждой комнаты этапа — своя модель.',
+      [...rooms.map(r => ({ html: esc(r.name), value: r.id })), { html: 'Вся квартира', value: '*' }],
+      `<div class="walk-mini">${surfMiniSvg(rooms, null)}</div>`, true) : '*';
+    if (!roomId) return false;
+  }
+  const roomName = roomId === '*' ? 'Вся квартира' : (rooms.find(r => r.id === roomId) || {}).name || 'Комната';
+  // старая модель этапа (hdScan, без комнаты) переезжает в список как «Комната не указана»
+  const list = stageHDModels(st).map(m => m.id === 'legacy' ? { ...m, id: uid() } : m);
+  const old = list.find(m => m.roomId === roomId);
+  if (old && !await uiConfirm(`У комнаты «${roomName}» на этом этапе уже есть модель «${old.name}». Заменить?`)) return false;
+  const next = list.filter(m => m !== old);
+  next.push({ id: uid(), roomId, place: roomName, capId: from ? from.id : null, blob: f, name: f.name, size: f.size, format: modelFormat(f.name) || 'ply',
+    created: Date.now(), flip: false, transform: from ? from.transform : null });
+  st.hdModels = next; delete st.hdScan;
   try { await dbPut('stages', st); return true; } catch (err) { uiAlert('Не удалось сохранить модель (мало места?): ' + err.message); return false; }
 }
 
@@ -2267,14 +2299,20 @@ async function takeIncomingModel() {
       const stages = (await dbAll('stages')).filter(s => s.projectId === p.id).sort((a, b) => a.ord - b.ord);
       for (const s of stages) for (const c of stageHDCaps(s)) cands.push({ p, s, c });
     }
-    if (!cands.length) { uiAlert('Модель «' + r.name + '» получена, но HD-пакетов в приложении нет — не к чему привязать. Сначала сделайте HD-обход этапа.'); return; }
-    let pick = cands[cands.length - 1];
-    if (cands.length > 1) {
-      cands.sort((a, b) => b.c.created - a.c.created);
-      const i = await pickSheet('К какому пакету модель?', 'Модель «' + r.name + '». Выберите пакет, из которого она обучена, — так она встанет на своё место в 3D.',
-        cands.map((x, i) => ({ html: `${esc(x.p.name)} · ${esc(x.s.name)} <small class="mut">· ${esc(x.c.place || 'Пакет')} · ${fmtDate(x.c.created)}</small>`, value: String(i) })));
-      if (i == null) return;
-      pick = cands[+i];
+    cands.sort((a, b) => b.c.created - a.c.created);
+    const got = !cands.length ? { c: null } : await pickModelCap(r.name, cands.map(x => ({ c: x.c, html: `${esc(x.p.name)} · ${esc(x.s.name)} <small class="mut">· ${esc(x.c.place || 'Пакет')} · ${fmtDate(x.c.created)}</small>` })),
+      'Модель «' + r.name + '». Выберите пакет, из которого она обучена, — так она встанет на своё место в 3D.');
+    if (!got) return;
+    let pick = got.c ? cands.find(x => x.c === got.c) : null;
+    if (!pick) {
+      // пакета нет — выбрать объект и этап (последние сверху)
+      const pairs = [];
+      for (const p of projects) for (const s of (await dbAll('stages')).filter(s => s.projectId === p.id).sort((a, b) => a.ord - b.ord)) pairs.push({ p, s, c: null });
+      if (!pairs.length) return;
+      const k = pairs.length === 1 ? '0' : await pickSheet('К какому этапу модель?', 'Модель «' + r.name + '».',
+        pairs.map((x, i) => ({ html: `${esc(x.p.name)} · ${esc(x.s.name)}`, value: String(i) })));
+      if (k == null) return;
+      pick = pairs[+k];
     }
     toast('Загружаю модель…');
     const blob = await (await fetch(window.Capacitor.convertFileSrc('file://' + r.path))).blob();
@@ -2296,22 +2334,35 @@ async function viewHD(pid, stageId = null) {
   const { project, stages } = await loadProjectData(pid);
   if (!project) return nav('');
   // HD-скан — у этапа: показываем выбранный, иначе последний этап, где он есть
-  const withHD = stages.filter(s => stageHDCaps(s).length || s.hdScan);
+  const withHD = stages.filter(s => stageHDCaps(s).length || stageHDModels(s).length);
   const st = stages.find(s => s.id === stageId) || withHD[withHD.length - 1] || stages[0];
   if (!st) { app.innerHTML = `${header('HD-скан', `#/p/${pid}/more`)}<div class="pad"><p class="mut">Сначала добавьте этап — HD-скан снимается обходом этапа.</p></div>${bottomNav(pid, 'more')}`; return; }
-  const caps = stageHDCaps(st), hd = st.hdScan;
+  const caps = stageHDCaps(st), models = stageHDModels(st);
+  const rooms = await dbAll('rooms', 'projectId', pid);
+  const roomTitle = id => id === '*' ? 'Вся квартира' : id ? ((rooms.find(r => r.id === id) || {}).name || 'Комната удалена') : 'Комната не указана';
+  // модель пакета: по capId, иначе по комнате
+  const modelOf = c => models.find(m => m.capId === c.id) || (c.roomId ? models.find(m => m.roomId === c.roomId) : null);
   // какие пакеты ещё лежат на телефоне
   const have = {};
   for (const c of caps) { have[c.id] = false; if (Native.RP && Native.RP.fileInfo) { try { have[c.id] = !!(await Native.RP.fileInfo({ path: c.path })).exists; } catch {} } }
   const capRow = c => `<div class="hd-cap">
-      <div class="hd-cap-info"><b class="hd-cap-name">${esc(c.place || 'Пакет')}</b><span class="mut small">${fmtDate(c.created)} · ${c.frames} кадров · ${fmtMB(c.bytes)}${have[c.id] ? '' : ' · удалён с телефона'}</span></div>
+      <div class="hd-cap-info"><b class="hd-cap-name">${esc(c.place || 'Пакет')}</b><span class="mut small">${fmtDate(c.created)} · ${c.frames} кадров · ${fmtMB(c.bytes)}${have[c.id] ? '' : ' · удалён с телефона'}</span>
+        ${modelOf(c) ? `<span class="small hd-has">✓ модель загружена</span>` : ''}</div>
       ${have[c.id] ? `<button class="iconbtn" data-cap-share="${c.id}" title="Отправить на компьютер" aria-label="Отправить">${I('share')}</button>` : ''}
       <button class="iconbtn danger" data-cap-del="${c.id}" title="${have[c.id] ? 'Удалить пакет с телефона' : 'Убрать из списка'}" aria-label="Удалить">${I('trash')}</button>
+    </div>`;
+  const modelRow = m => `<div class="hd-model">
+      <div class="hd-model-head">
+        <div class="hd-cap-info"><b class="hd-cap-name">${esc(roomTitle(m.roomId))}</b><span class="mut small">${esc(m.name || 'модель')} · ${fmtMB(m.size || 0)} · ${fmtDate(m.created)}${m.transform ? '' : ' · без привязки к схеме'}</span></div>
+        <button class="iconbtn" data-model-view="${m.id}" title="Смотреть в 3D" aria-label="Смотреть в 3D">${I('tour')}</button>
+        <button class="iconbtn danger" data-model-del="${m.id}" title="Удалить модель" aria-label="Удалить модель">${I('trash')}</button>
+      </div>
+      <label class="check-row small"><input type="checkbox" data-model-flip="${m.id}" ${m.flip ? 'checked' : ''}> вверх ногами — перевернуть</label>
     </div>`;
   app.innerHTML = `
     ${header('HD-скан', `#/p/${pid}/more`)}
     <div class="pad"><div class="cards">
-      <select class="inp" id="hd-stage">${stages.map(s => { const n = stageHDCaps(s).length; return `<option value="${s.id}" ${s.id === st.id ? 'selected' : ''}>${esc(s.name)}${s.hdScan ? ' · модель' : n ? ` · пакетов: ${n}` : ''}</option>`; }).join('')}</select>
+      <select class="inp" id="hd-stage">${stages.map(s => { const n = stageHDCaps(s).length, k = stageHDModels(s).length; return `<option value="${s.id}" ${s.id === st.id ? 'selected' : ''}>${esc(s.name)}${n ? ` · пакетов: ${n}` : ''}${k ? ` · моделей: ${k}` : ''}</option>`; }).join('')}</select>
       <div class="card">
         <div class="team-head"><b>1. Пакеты для компьютера</b>
           <button type="button" class="hint-i hd-train-i" id="hd-send-i" title="Как перенести на компьютер" aria-label="Как перенести на компьютер">${ICONS.info}</button></div>
@@ -2331,14 +2382,12 @@ async function viewHD(pid, stageId = null) {
         </div>
       </div>
       <div class="card">
-        <b>3. Загрузить результат</b>
-        ${hd ? `<p class="mut small">${esc(hd.name || 'модель')} · ${fmtMB(hd.size || 0)} · ${fmtDate(hd.created)}${hd.place ? ` · из пакета «${esc(hd.place)}»` : ''}</p>
-          <button class="btn primary wide" id="hd-view">${I('tour')}Смотреть в 3D</button>
-          <label class="check-row"><input type="checkbox" id="hd-flip" ${hd.flip ? 'checked' : ''}> Модель вверх ногами — перевернуть</label>
-          <button class="btn ghost wide" id="hd-del">${I('trash')}Удалить HD-модель</button>` : ''}
-        <button class="btn wide" id="hd-load">${I('download')}${hd ? 'Заменить' : 'Загрузить'} модель (.ply / .spz)</button>
+        <b>3. Модели по комнатам</b>
+        ${models.length ? models.map(modelRow).join('') : `<p class="mut small">Моделей пока нет. У каждой комнаты этапа — своя модель.</p>`}
+        ${models.length > 1 ? `<button class="btn primary wide" id="hd-view">${I('tour')}Смотреть все в 3D</button>` : ''}
+        <button class="btn wide" id="hd-load">${I('download')}Загрузить модель (.ply / .spz)</button>
         <input type="file" id="hd-file" accept=".ply,.spz,.splat,.ksplat" class="hidden-input">
-        <p class="mut small">${Native.isNative ? 'Файл можно выбрать прямо с Google Диска или iCloud. ' : ''}Модель хранится только на этом телефоне и в резервную копию не попадает — слишком большая.</p>
+        <p class="mut small">${Native.isNative ? 'Файл можно выбрать прямо с Google Диска или iCloud, или прислать в Fixpoint из Telegram и других приложений («Поделиться»). ' : ''}Модели хранятся только на этом телефоне и в резервную копию не попадают — слишком большие.</p>
       </div>
     </div></div>
     ${bottomNav(pid, 'more')}`;
@@ -2347,15 +2396,32 @@ async function viewHD(pid, stageId = null) {
   on('#hd-send-i', () => { $('#hd-send').classList.toggle('hidden'); $('#hd-send-i').classList.toggle('on'); });
   on('#hd-train-i', () => { $('#hd-train').classList.toggle('hidden'); $('#hd-train-i').classList.toggle('on'); });
   const saveCaps = async list => { st.hdCaptures = list; delete st.hdCapture; delete st.hdTransform; await dbPut('stages', st); };
+  // правка списка моделей; старая модель этапа (hdScan) при первой правке переезжает в список
+  const saveModels = async list => { st.hdModels = list.map(m => m.id === 'legacy' ? { ...m, id: uid() } : m); delete st.hdScan; await dbPut('stages', st); };
   app.querySelectorAll('[data-cap-share]').forEach(b => b.onclick = async () => {
     const c = caps.find(x => x.id === b.dataset.capShare);
     try { await Native.RP.shareFile({ path: c.path }); } catch (err) { uiAlert('Не удалось отправить: ' + err.message); }
   });
   app.querySelectorAll('[data-cap-del]').forEach(b => b.onclick = async () => {
     const c = caps.find(x => x.id === b.dataset.capDel);
-    if (have[c.id] && !await uiConfirm(`Удалить пакет «${c.place || 'Пакет'}» с телефона? Если модель по нему ещё не обучена и копии на компьютере нет, этот HD-скан придётся снимать заново.`)) return;
+    // подтверждение всегда — защита от случайного нажатия (просьба пользователя 2026-10-20)
+    if (!await uiConfirm(have[c.id]
+      ? `Удалить пакет «${c.place || 'Пакет'}» с телефона? Если модель по нему ещё не обучена и копии на компьютере нет, этот HD-скан придётся снимать заново.`
+      : `Убрать пакет «${c.place || 'Пакет'}» из списка? Файла на телефоне уже нет — это только запись о нём.`)) return;
     if (have[c.id]) { try { await Native.RP.deleteFile({ path: c.path }); } catch {} }
     await saveCaps(caps.filter(x => x.id !== c.id)); render();
+  });
+  app.querySelectorAll('[data-model-view]').forEach(b => b.onclick = () => { tourState.mode = 'hd'; tourState.stage = st.id; tourState.hdModel = b.dataset.modelView; nav(`#/p/${pid}/tour`); });
+  app.querySelectorAll('[data-model-del]').forEach(b => b.onclick = async () => {
+    const m = models.find(x => x.id === b.dataset.modelDel);
+    if (!await uiConfirm(`Удалить модель комнаты «${roomTitle(m.roomId)}» с телефона?`)) return;
+    await saveModels(models.filter(x => x !== m));
+    if (tourState.hdModel === m.id) tourState.hdModel = null;
+    render();
+  });
+  app.querySelectorAll('[data-model-flip]').forEach(cb => cb.onchange = async () => {
+    const list = models.map(m => m.id === cb.dataset.modelFlip ? { ...m, flip: cb.checked } : m);
+    await saveModels(list); render();
   });
   // на телефоне — системное окно «Файлы» (видно Google Диск, iCloud и т. д.; .ply не серые); старая сборка / браузер — <input type=file>
   on('#hd-load', async () => {
@@ -2374,21 +2440,18 @@ async function viewHD(pid, stageId = null) {
   $('#hd-file').onchange = e => { const f = e.target.files && e.target.files[0]; if (f) useModelFile(f); };
   const useModelFile = async f => {
     if (!modelFormat(f.name)) { uiAlert('Нужен файл .ply, .spz, .splat или .ksplat'); return; }
-    // модель встаёт на схему по пакету, из которого обучена: пакетов несколько — спросить, какой
-    let from = caps[caps.length - 1] || null;
-    if (caps.length > 1) {
-      const id = await pickSheet('Из какого пакета модель?', 'Чтобы модель встала в 3D на место своей комнаты.',
-        caps.map(c => ({ html: `${esc(c.place || 'Пакет')} <small class="mut">· ${fmtDate(c.created)} · ${fmtMB(c.bytes)}</small>`, value: c.id })));
-      if (!id) return;
-      from = caps.find(c => c.id === id);
+    // модель встаёт на схему по пакету, из которого обучена (по имени файла или выбором)
+    let from = null;
+    if (caps.length) {
+      const r = await pickModelCap(f.name, caps.map(c => ({ c, html: `${esc(c.place || 'Пакет')} <small class="mut">· ${fmtDate(c.created)} · ${fmtMB(c.bytes)}${modelOf(c) ? ' · модель есть' : ''}</small>` })),
+        'Модель «' + f.name + '». По пакету она встанет в 3D на место своей комнаты.');
+      if (!r) return;
+      from = r.c;
     }
     if (await attachHDModel(st, f, from)) { toast('HD-модель загружена'); render(); }
   };
   $('#hd-stage').onchange = e => nav(`#/p/${pid}/hd/${e.target.value}`);
-  on('#hd-view', () => { tourState.mode = 'hd'; tourState.stage = st.id; nav(`#/p/${pid}/tour`); });
-  const flip = $('#hd-flip');
-  if (flip) flip.onchange = async () => { st.hdScan.flip = flip.checked; await dbPut('stages', st); };
-  on('#hd-del', async () => { if (!await uiConfirm('Удалить HD-модель с телефона?')) return; delete st.hdScan; await dbPut('stages', st); if (tourState.mode === 'hd') tourState.mode = 'house'; render(); });
+  on('#hd-view', () => { tourState.mode = 'hd'; tourState.stage = st.id; tourState.hdModel = null; nav(`#/p/${pid}/tour`); });
 }
 
 /* ---------- этапы по помещениям ---------- */
@@ -2631,13 +2694,14 @@ async function viewStageAlbum(pid, stageId) {
       ${rooms.filter(r => groups.some(g => g.room === r)).map(r => {
         // фото этапа — по комнатам раскрывающимися списками (просьба пользователя 2026-10-19), внутри — по стенам, потолку, полу
         const gs = groups.filter(g => g.room === r), n = gs.reduce((k, g) => k + g.list.length, 0);
-        return `<details class="card album-room" data-aroom="${r.id}" ${albumOpen.has(stage.id + ':' + r.id) ? 'open' : ''}>
+        // свайп влево — «Удалить»: все фото этой комнаты на этом этапе (как у этапов и объектов, 3 с на отмену; просьба пользователя 2026-10-20)
+        return `<div class="swipe album-swipe" data-id="${r.id}">${swipeButtons(false)}<details class="card album-room swipe-body" data-aroom="${r.id}" ${albumOpen.has(stage.id + ':' + r.id) ? 'open' : ''}>
           <summary><b>${esc(r.name)}</b><span class="mut small">${n} фото</span><svg class="album-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></summary>
           ${gs.map(g => `<div class="album-group">
             <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side).replace(r.name + ' — ', ''))} <span class="mut small">· ${g.list.length}</span> ›</div>
             ${thumbs(g.list)}
           </div>`).join('')}
-        </details>`;
+        </details></div>`;
       }).join('')}
       ${orphans.length ? `<div class="album-group"><div class="album-title">Без привязки к стене <span class="mut small">· ${orphans.length}</span></div>${thumbs(orphans)}</div>` : ''}
     </div>
@@ -2675,6 +2739,16 @@ async function viewStageAlbum(pid, stageId) {
   markQuick();
   $('#album-close').onclick = () => nav(`#/p/${pid}/stages`);
   app.querySelectorAll('.album-room').forEach(d => d.ontoggle = () => { const k = stage.id + ':' + d.dataset.aroom; d.open ? albumOpen.add(k) : albumOpen.delete(k); });
+  const swipeHost = app.querySelector('.album-swipe')?.parentElement;
+  if (swipeHost) attachSwipe(swipeHost, async roomId => {
+    const r = rooms.find(x => x.id === roomId);
+    const ph = groups.filter(g => g.room === r).flatMap(g => g.list);
+    if (!ph.length) return false;
+    for (const x of ph) await dbDel('photos', x.id);
+    render();
+    undoBar(`${r.name}: удалено фото — ${ph.length}`, async () => { for (const x of ph) await dbPut('photos', x); render(); });
+    return true;
+  });
   $('#album-status').onclick = async () => {
     stage.status = ((stage.status || 0) + 1) % 3;
     await dbPut('stages', stage); render();
@@ -3130,7 +3204,7 @@ async function viewMore(pid) {
       <div class="cards">
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
         <button class="btn wide accent-border" data-nav="#/p/${pid}/team">${I('user')}Команда и задания${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
-        ${stages.some(s => stageHDCaps(s).length || s.hdScan) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
+        ${stages.some(s => stageHDCaps(s).length || stageHDModels(s).length) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
@@ -3408,7 +3482,7 @@ async function buildExport(kind, projects, rooms, stages, photos) {
     const { usdz, ...rest } = r;
     roomsOut.push(usdz ? { ...rest, usdzData: await blobToDataURL(usdz) } : rest);
   }
-  const payload = { app: 'fixpoint', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages: stages.map(({ hdScan, hdCapture, hdCaptures, hdTransform, ...s }) => s), photos: photosOut };
+  const payload = { app: 'fixpoint', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages: stages.map(({ hdScan, hdModels, meshScans, hdCapture, hdCaptures, hdTransform, ...s }) => s), photos: photosOut };
   return new Blob([JSON.stringify(payload)], { type: 'application/json' });
 }
 
@@ -3515,7 +3589,7 @@ async function importData(data) {
       }
       for (const s of data.stages || []) {
         const local = await dbGet('stages', s.id);
-        if (local) for (const k of ['hdScan', 'hdCapture', 'hdCaptures', 'hdTransform']) if (local[k] && !s[k]) s[k] = local[k]; // HD-скан в файле не ездит — свой не теряем
+        if (local) for (const k of ['hdScan', 'hdModels', 'meshScans', 'hdCapture', 'hdCaptures', 'hdTransform']) if (local[k] && !s[k]) s[k] = local[k]; // HD-скан в файле не ездит — свой не теряем
         if (authoritative || !local) await dbPut('stages', s);
       }
       for (const ph of data.photos || []) {

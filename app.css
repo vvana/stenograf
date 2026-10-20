@@ -1392,6 +1392,12 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .hd-cap-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .hd-cap-name::before { content: '•'; margin-right: 8px; color: var(--mut); }   /* точка, как в перечне */
 .hd-cap-info .small { padding-left: 16px; }
+.hd-has { display: inline-flex; align-items: center; gap: 4px; padding-left: 16px; color: #2e8b57; }
+.hd-has .ic { width: 14px; height: 14px; }
+.hd-model { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.hd-model:last-of-type { border-bottom: 0; }
+.hd-model-head { display: flex; align-items: center; gap: 8px; }
+.hd-model .check-row { padding-left: 16px; margin-top: 2px; }
 
 /* «HD-скан»: «i» у «Обучение на компьютере» */
 .hd-train-i { border: 0; background: none; padding: 2px; cursor: pointer; color: var(--mut); display: inline-flex; }
@@ -1401,6 +1407,9 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 
 /* альбом этапа: мини-схема «Где нужен этап» */
 .where-mini { height: 140px; margin: 8px 0 4px; }
+.album-swipe > .album-room { margin: 0; }
+.album-swipe :is(.swipe-del) { top: 3px; bottom: auto; height: 47px; flex-direction: row; gap: 5px; }   /* строка комнаты ниже строки этапа — кнопка по высоте закрытой строки */
+.album-swipe .swipe-del svg { width: 20px; height: 20px; }
 /* отмечено несколько соседних комнат — их оранжевые контуры складывались в толстые линии; рамка той же толщины, что у остальных,
    заливка и подпись — как у выбранной комнаты в окне запуска обхода */
 .where-mini .sm-room.on path { stroke-width: var(--sw); }

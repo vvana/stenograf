@@ -72,6 +72,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var coverage: CoverageModel?
     private var coverageOverlay: CoverageOverlayView?
     private var coverageMap: CoverageMapView?
+    // облако точек лидара поверх камеры (кнопка слева вверху, просьба пользователя 2026-10-20 — видеть, что «видит» лидар)
+    private var cloudView: PointCloudView?
+    private var cloudButton: UIButton?
+    private var cloudLink: CADisplayLink?
     private var coverageLink: CADisplayLink?
     private var currentSurfaces: [CovSurface] = []
     private var doneSurfaces: [CovSurface] = []      // комнаты, уже завершённые кнопкой «Следующая комната»
@@ -163,9 +167,61 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         ])
 
         if mode == "ghost" { setupGhost(bar: bar) }
-        if mode != "ghost" { setupCompass() }
+        if mode != "ghost" { setupCompass(); setupCloudToggle() }
         if hd { hdCapture = HDCapture() }
         if mode == "final" || wantSurfaces { setupCoverage() }
+    }
+
+    // MARK: облако точек лидара
+
+    private func setupCloudToggle() {
+        let b = UIButton(type: .system)
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.setImage(UIImage(systemName: "circle.dotted", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)), for: .normal)
+        b.tintColor = .white
+        b.layer.cornerRadius = 22
+        b.layer.cornerCurve = .continuous
+        b.layer.borderWidth = 1
+        b.layer.borderColor = UIColor(white: 1, alpha: 0.38).cgColor
+        b.accessibilityLabel = "Облако точек лидара"
+        b.addTarget(self, action: #selector(cloudTapped), for: .touchUpInside)
+        view.addSubview(b)
+        NSLayoutConstraint.activate([
+            b.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            b.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
+            b.widthAnchor.constraint(equalToConstant: 44), b.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        cloudButton = b
+        setCloud(UserDefaults.standard.bool(forKey: "fixpoint.showCloud"))
+    }
+
+    @objc private func cloudTapped() {
+        let on = cloudView == nil
+        UserDefaults.standard.set(on, forKey: "fixpoint.showCloud")
+        setCloud(on)
+    }
+
+    private func setCloud(_ on: Bool) {
+        cloudButton?.backgroundColor = on ? UIColor(red: 0.85, green: 0.37, blue: 0.09, alpha: 0.85) : UIColor(white: 0, alpha: 0.35)
+        if on, cloudView == nil {
+            let cv = PointCloudView(frame: view.bounds)
+            cv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            view.insertSubview(cv, aboveSubview: captureView)
+            cloudView = cv
+            let link = CADisplayLink(target: self, selector: #selector(cloudTick))
+            link.preferredFramesPerSecond = 6
+            link.add(to: .main, forMode: .common)
+            cloudLink = link
+        } else if !on {
+            cloudLink?.invalidate(); cloudLink = nil
+            cloudView?.removeFromSuperview(); cloudView = nil
+        }
+    }
+
+    @objc private func cloudTick() {
+        guard let cv = cloudView, let frame = sharedSession?.currentFrame else { return }
+        let anchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
+        cv.update(frame: frame, anchors: anchors)
     }
 
     // MARK: покрытие
@@ -258,10 +314,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             let what = (overlayParams?["surface"] as? String) == "f" ? "пол" : "потолок"
             return "Скан: \(what). Сначала обведите камерой стены комнаты, потом медленно ведите телефоном по поверхности — снятое подсвечивается зелёным. В конце «Готово»"
         case "walk": return hd
-            ? "HD-обход: ведите телефон вдоль стен, к полу и потолку, и замирайте на секунду — HD-кадр снимается, когда телефон неподвижен. Снятое подсвечивается зелёным"
+            ? "HD-обход: идите медленно двумя кругами — телефон на уровне груди, потом над головой; захватывайте пол и потолок. HD-кадр снимается, когда телефон неподвижен и картинка резкая. Снятое подсвечивается зелёным"
             : "Обход этапа: медленно ведите телефон вдоль стен и наклоняйте к полу и потолку — кадры снимутся сами. Снятое подсвечивается зелёным"
         case "multi": return hd
-            ? "HD-обход квартиры: идите вдоль стен, замирая на секунду — HD-кадр снимается, когда телефон неподвижен. Всё зелёное — «Следующая комната»"
+            ? "HD-обход квартиры: в каждой комнате медленно два круга — на уровне груди и над головой, с полом и потолком; HD-кадр снимается, когда телефон неподвижен. Всё зелёное — «Следующая комната»"
             : wantFrames
             ? "Обход квартиры: пройдите вдоль стен, наклоняя телефон к полу и потолку. Всё зелёное — «Следующая комната»"
             : "Обмер квартиры: обойдите комнату, нажмите «Следующая комната», перейдите в другую. В конце — флаг 🏁"
@@ -331,6 +387,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         var config = RoomCaptureSession.Configuration()
         config.isCoachingEnabled = mode != "ghost"
         captureView.captureSession.run(configuration: config)
+        if hd {
+            // экспозиция и баланс белого: дать автомату 2 с подстроиться под комнату и зафиксировать до конца комнаты
+            HDCapture.setCameraLocked(false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in if self?.finished == false { HDCapture.setCameraLocked(true) } }
+        }
         if pollTimer == nil {
             pollTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in self?.poll() }
         }
@@ -339,8 +400,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         UIApplication.shared.isIdleTimerDisabled = false   // вернуть обычное автогашение экрана
+        if hd { HDCapture.setCameraLocked(false) }
         locMgr.stopUpdatingHeading(); locMgr.stopUpdatingLocation()
         stopCoverage()   // CADisplayLink держит контроллер — отпускаем при любом закрытии экрана
+        cloudLink?.invalidate(); cloudLink = nil
     }
 
     override var prefersStatusBarHidden: Bool { true }
@@ -706,10 +769,20 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         sharedSession?.pause()
         let base = dict
         let hdc = hdCapture
+        let anchors = meshAnchors
+        let keys = keyFrames
         Task { @MainActor in
             var out = base
             await self.addSurfaces(to: &out, rooms: [room])
-            if let hc = hdc { await self.packHD(hc, into: &out, pointsPLY: nil) }
+            if let hc = hdc {
+                // как в финальном скане: окрашенная сетка лидара (смотреть в 3D) и она же — облако точек для старта обучения
+                self.statusLabel.text = "Собираю 3D-сетку лидара…"
+                let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
+                let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in buildColoredMesh(meshInput) }.value
+                for (k, v) in mesh { out[k] = v }
+                let ply = (out["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
+                await self.packHD(hc, into: &out, pointsPLY: ply)
+            }
             self.dismiss(animated: true) { self.completion(.success(out)) }
         }
     }
@@ -718,8 +791,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let rooms = capturedRooms
         let anchors = meshAnchors
         let keys = keyFrames
-        let wantMesh = mode == "final"
         let hdc = hdCapture
+        let wantMesh = mode == "final" || hdc != nil   // HD-обход квартиры — тоже с сеткой и облаком точек
         statusLabel.text = wantMesh ? "Собираю квартиру и 3D-модель…" : "Собираю план квартиры…"
         Task { @MainActor in
             var finalRooms = rooms
@@ -754,7 +827,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         }
     }
 
-    /// HD-пакет (кадры + позы) → ZIP в Documents; в результат — путь, число кадров и размер. Облако точек есть только у финального скана.
+    /// HD-пакет (кадры + позы + облако точек лидара points.ply) → ZIP в Documents; в результат — путь, число кадров и размер.
     private func packHD(_ hc: HDCapture, into dict: inout [String: Any], pointsPLY: Data?) async {
         guard hc.count > 0 else { hc.discard(); return }
         statusLabel.text = "Упаковываю HD-кадры для компьютера…"
@@ -964,7 +1037,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if reviewRoom != nil { return }           // идёт проверка комнаты — ничего не снимаем
         if mode == "ghost" { pollGhost(frame: frame); return }
         sampleNorth(frame: frame)
-        if mode == "final" { pollKeyFrame(frame: frame) }
+        // ключевые кадры для окрашенной сетки лидара: финальный скан и HD-обход этапа (HD заменил финальный скан 2026-10-12,
+        // но сетка и облако точек при этом потерялись — вернули 2026-10-20: «функционал не надо было менять»)
+        if mode == "final" || hd { pollKeyFrame(frame: frame) }
         if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext), mode == "final" {
             // в обходе этапа счётчик HD — в строке «Снято кадров», а зелёная подсветка — только по кадрам стен/пола/потолка
             statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)"
@@ -1307,12 +1382,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let ci = CIImage(cvPixelBuffer: frame.capturedImage)
         guard let cg = ciContext.createCGImage(ci, from: ci.extent),
               let rgba = rgbaBytes(of: cg, width: targetW, height: targetH) else { return }
-        coverage?.add(view)
+        if mode == "final" { coverage?.add(view) }
         keyFrames.append(KeyFrame(transformInv: T.inverse,
                                   fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
                                   w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd))
         lastKeyPos = pos; lastKeyFwd = fwd
-        statusLabel.text = "Кадров: \(keyFrames.count) из \(Self.maxKeyFrames) · комнат: \(capturedRooms.count + 1)"
+        if mode == "final" { statusLabel.text = "Кадров: \(keyFrames.count) из \(Self.maxKeyFrames) · комнат: \(capturedRooms.count + 1)" }
     }
 
     private func jpegData(from pixelBuffer: CVPixelBuffer) -> Data? {
@@ -1422,6 +1497,72 @@ let keyFrames = input.keyFrames
 /// Стеклянная кнопка поверх камеры: размытие фона (системный материал), светлый ободок, белый значок.
 /// Круглая со значком SF Symbols или капсула с текстом; `tint` — цветное стекло для главного действия.
 /// Нажатие — пружинное сжатие; выключенная — полупрозрачная.
+/// Точки сетки лидара (вершины ARMeshAnchor), спроецированные на экран; цвет — по расстоянию (близко — голубой, далеко — фиолетовый).
+/// Не больше ~6000 точек за кадр; если сетки нет — надпись: значит, и облака точек в HD-пакете не будет.
+final class PointCloudView: UIView {
+    private var pts: [CGPoint] = []
+    private var dist: [Float] = []
+    private let note = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        isOpaque = false
+        note.textColor = .white
+        note.font = .systemFont(ofSize: 13, weight: .semibold)
+        note.backgroundColor = UIColor(white: 0, alpha: 0.5)
+        note.layer.cornerRadius = 8
+        note.clipsToBounds = true
+        note.textAlignment = .center
+        note.isHidden = true
+        addSubview(note)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func update(frame: ARFrame, anchors: [ARMeshAnchor]) {
+        let size = bounds.size
+        let total = anchors.reduce(0) { $0 + $1.geometry.vertices.count }
+        let step = max(1, total / 6000)
+        let view = frame.camera.transform.inverse
+        var p: [CGPoint] = []; var d: [Float] = []
+        p.reserveCapacity(min(total, 6500)); d.reserveCapacity(min(total, 6500))
+        for a in anchors {
+            let src = a.geometry.vertices
+            let base = src.buffer.contents().advanced(by: src.offset)
+            var i = 0
+            while i < src.count {
+                let v = base.advanced(by: i * src.stride).assumingMemoryBound(to: (Float, Float, Float).self).pointee
+                let w = a.transform * simd_float4(v.0, v.1, v.2, 1)
+                let c = view * w
+                let z = -c.z
+                if z > 0.15 && z < 8 {
+                    let s = frame.camera.projectPoint(simd_float3(w.x, w.y, w.z), orientation: .portrait, viewportSize: size)
+                    if s.x >= 0 && s.y >= 0 && s.x <= size.width && s.y <= size.height { p.append(s); d.append(z) }
+                }
+                i += step
+            }
+        }
+        pts = p; dist = d
+        if total == 0 {
+            note.text = "  Лидар пока не отдал сетку — точек нет  "
+            note.isHidden = false
+        } else { note.isHidden = true }
+        note.sizeToFit()
+        note.frame = CGRect(x: (size.width - note.bounds.width) / 2, y: size.height * 0.45, width: note.bounds.width, height: 30)
+        setNeedsDisplay()
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        for (i, q) in pts.enumerated() {
+            let t = CGFloat(min(1, max(0, (dist[i] - 0.5) / 4.5)))   // 0,5 м → 0, 5 м → 1
+            ctx.setFillColor(UIColor(red: 0.2 + 0.5 * t, green: 0.9 - 0.7 * t, blue: 1.0, alpha: 0.9).cgColor)
+            ctx.fill(CGRect(x: q.x - 1.5, y: q.y - 1.5, width: 3, height: 3))
+        }
+    }
+}
+
 final class GlassButton: UIButton {
     static let side: CGFloat = 62
     private let glass = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
