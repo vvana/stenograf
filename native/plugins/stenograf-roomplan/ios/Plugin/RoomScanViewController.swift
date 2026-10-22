@@ -81,6 +81,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private let crosshair = UILabel()
     private var lastAimOK = Date.distantPast
     private var hiResCount = 0
+    private var hiResBusy = false   // снимок 12 Мп в работе — следующий не запрашивать (ARKit делает их по одному)
     // кольцо вокруг перекрестия: заполняется, пока телефон неподвижен; кадр снят — вспышка (просьба пользователя 2026-10-22,
     // вместо текста «Замрите на секунду»)
     private let stillRing = StillRingView(frame: CGRect(x: 0, y: 0, width: 64, height: 64))
@@ -134,6 +135,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             let cfg = ARWorldTrackingConfiguration()
             if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) { cfg.sceneReconstruction = .mesh }
             if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) { cfg.frameSemantics.insert(.sceneDepth) }
+            // HD: формат видео, с которым ARKit умеет делать полноразмерные снимки (12 Мп) — captureHighResolutionFrame
+            if hd, let f = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing { cfg.videoFormat = f }
             s.run(cfg)
             ownSession = true
             captureView = RoomCaptureView(frame: view.bounds, arSession: s)
@@ -1217,6 +1220,17 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if mode == "final" || hd { pollKeyFrame(frame: frame) }
         if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
             stillRing.flash()
+            // 2026-10-22: HD-кадр — полноразмерный снимок 12 Мп вместо видеокадра 1920×1440 (резче текстура модели)
+            if !hiResBusy, let sess = sharedSession {
+                hiResBusy = true
+                let idx = hc.count - 1, ctx = ciContext
+                sess.captureHighResolutionFrame { [weak self, weak hc] hf, _ in
+                    DispatchQueue.main.async {
+                        self?.hiResBusy = false
+                        if let hf = hf { hc?.attachHiRes(index: idx, frame: hf, ciContext: ctx) }
+                    }
+                }
+            }
             // в обходе этапа счётчик HD — в строке «Снято кадров»; HD-кадры идут и в подсветку (подробность съёмки)
             if mode == "final" { statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)" }
             if let e = hc.last {
@@ -1397,9 +1411,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         stillRing.flash()
         // HD: пробуем полноразмерный снимок 12 Мп (ARKit 6) вместо кадра видео 1920×1440 — получится ли внутри сессии RoomPlan,
         // проверяется на устройстве: счётчик «12 Мп» в строке статуса
-        if hd, let sess = sharedSession {
+        if hd, !hiResBusy, let sess = sharedSession {
             let wid = wall.identifier, pos = camPos
+            hiResBusy = true
             sess.captureHighResolutionFrame { [weak self] hf, _ in
+                DispatchQueue.main.async { self?.hiResBusy = false }
                 guard let self = self, let hf = hf, let j = self.jpegData(from: hf.capturedImage) else { return }
                 DispatchQueue.main.async {
                     guard var l = self.frames[wid], let i = l.firstIndex(where: { simd_length($0.camPos - pos) < 0.001 }) else { return }
@@ -1410,7 +1426,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
         }
         let n = frames.values.reduce(0) { $0 + $1.count }
-        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" } ?? "") + (hiResCount > 0 ? " · 12 Мп: \(hiResCount)" : "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
+        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" + ($0.hiRes > 0 ? " (12 Мп: \($0.hiRes))" : "") } ?? "") + (hiResCount > 0 ? " · 12 Мп: \(hiResCount)" : "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
     }
 
     // MARK: AR-призрак
@@ -1785,11 +1801,12 @@ func depthWorldPoints(_ frame: ARFrame, step: Int) -> [simd_float3] {
     return out
 }
 
-/// Точки сетки лидара (вершины ARMeshAnchor), спроецированные на экран; цвет — по расстоянию (близко — голубой, далеко — фиолетовый).
+/// Сетка лидара (рёбра треугольников ARMeshAnchor) поверх камеры, а без сетки — точки глубины кадра; цвет — по расстоянию (близко — голубой, далеко — фиолетовый).
 /// Не больше ~6000 точек за кадр; если сетки нет — надпись: значит, и облака точек в HD-пакете не будет.
 final class PointCloudView: UIView {
     private var pts: [CGPoint] = []
     private var dist: [Float] = []
+    private var wire: CGPath?          // рёбра треугольников сетки лидара (как у Polycam), когда сетка есть
     private let note = UILabel()
 
     override init(frame: CGRect) {
@@ -1821,7 +1838,7 @@ final class PointCloudView: UIView {
                 let s = frame.camera.projectPoint(w, orientation: .portrait, viewportSize: size)
                 if s.x >= 0 && s.y >= 0 && s.x <= size.width && s.y <= size.height { p.append(s); d.append(z) }
             }
-            pts = p; dist = d
+            pts = p; dist = d; wire = nil
             note.text = "  " + (p.isEmpty ? "Лидар не отдаёт ни сетку, ни глубину" : "Точки из глубины кадра") + " · " + diag + "  "
             note.isHidden = false
             note.numberOfLines = 2
@@ -1831,33 +1848,61 @@ final class PointCloudView: UIView {
             setNeedsDisplay()
             return
         }
-        let step = max(1, total / 6000)
+        // сетка есть — рисуем её рёбрами (2026-10-22, по образцу Polycam): вершины ближних якорей проецируем на экран,
+        // у треугольников, все три вершины которых видны, — три ребра. Не больше ~25 тыс. треугольников за кадр.
         let view = frame.camera.transform.inverse
-        var p: [CGPoint] = []; var d: [Float] = []
-        p.reserveCapacity(min(total, 6500)); d.reserveCapacity(min(total, 6500))
-        for a in anchors {
-            let src = a.geometry.vertices
-            let base = src.buffer.contents().advanced(by: src.offset)
-            var i = 0
-            while i < src.count {
-                let v = base.advanced(by: i * src.stride).assumingMemoryBound(to: (Float, Float, Float).self).pointee
+        let camPos = simd_float3(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
+        let near = anchors.filter { simd_length(simd_float3($0.transform.columns.3.x, $0.transform.columns.3.y, $0.transform.columns.3.z) - camPos) < 7 }
+        let totalFaces = near.reduce(0) { $0 + $1.geometry.faces.count }
+        let fstep = max(1, totalFaces / 25000)
+        let path = CGMutablePath()
+        let pad: CGFloat = 40
+        for a in near {
+            let g = a.geometry
+            let vs = g.vertices
+            let vbase = vs.buffer.contents().advanced(by: vs.offset)
+            var scr = [CGPoint](repeating: CGPoint(x: CGFloat.nan, y: .nan), count: vs.count)
+            for i in 0..<vs.count {
+                let v = vbase.advanced(by: i * vs.stride).assumingMemoryBound(to: (Float, Float, Float).self).pointee
                 let w = a.transform * simd_float4(v.0, v.1, v.2, 1)
-                let c = view * w
-                let z = -c.z
-                if z > 0.15 && z < 8 {
-                    let s = frame.camera.projectPoint(simd_float3(w.x, w.y, w.z), orientation: .portrait, viewportSize: size)
-                    if s.x >= 0 && s.y >= 0 && s.x <= size.width && s.y <= size.height { p.append(s); d.append(z) }
+                let z = -(view * w).z
+                guard z > 0.15 && z < 6 else { continue }
+                let q = frame.camera.projectPoint(simd_float3(w.x, w.y, w.z), orientation: .portrait, viewportSize: size)
+                if q.x > -pad && q.y > -pad && q.x < size.width + pad && q.y < size.height + pad { scr[i] = q }
+            }
+            let fs = g.faces
+            guard fs.indexCountPerPrimitive == 3 else { continue }
+            let fbase = fs.buffer.contents()
+            var f = 0
+            while f < fs.count {
+                let o = f * 3 * fs.bytesPerIndex
+                let i0: Int, i1: Int, i2: Int
+                if fs.bytesPerIndex == 4 {
+                    let ip = fbase.advanced(by: o).assumingMemoryBound(to: UInt32.self); i0 = Int(ip[0]); i1 = Int(ip[1]); i2 = Int(ip[2])
+                } else {
+                    let ip = fbase.advanced(by: o).assumingMemoryBound(to: UInt16.self); i0 = Int(ip[0]); i1 = Int(ip[1]); i2 = Int(ip[2])
                 }
-                i += step
+                f += fstep
+                guard i0 < scr.count, i1 < scr.count, i2 < scr.count else { continue }
+                let p0 = scr[i0], p1 = scr[i1], p2 = scr[i2]
+                if p0.x.isNaN || p1.x.isNaN || p2.x.isNaN { continue }
+                path.move(to: p0); path.addLine(to: p1); path.addLine(to: p2); path.closeSubpath()
             }
         }
-        pts = p; dist = d
+        wire = path
+        pts = []; dist = []
         note.isHidden = true
         setNeedsDisplay()
     }
 
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        if let w = wire {
+            ctx.addPath(w)
+            ctx.setStrokeColor(UIColor(white: 1, alpha: 0.42).cgColor)
+            ctx.setLineWidth(0.6)
+            ctx.strokePath()
+        }
         for (i, q) in pts.enumerated() {
             let t = CGFloat(min(1, max(0, (dist[i] - 0.5) / 4.5)))   // 0,5 м → 0, 5 м → 1
             ctx.setFillColor(UIColor(red: 0.2 + 0.5 * t, green: 0.9 - 0.7 * t, blue: 1.0, alpha: 0.9).cgColor)

@@ -13,10 +13,12 @@ import UniformTypeIdentifiers
 final class HDCapture: @unchecked Sendable {   // изменяется только с main; finish — после остановки съёмки
     struct Entry {
         let file: String
-        let depth: String?                        // depth/frame_NNNNN.png — глубина лидара, мм (16 бит), 0 — нет данных
-        let c2w: simd_float4x4
-        let fx: Float, fy: Float, cx: Float, cy: Float
-        let w: Int, h: Int
+        var depth: String?                        // depth/frame_NNNNN.png — глубина лидара, мм (16 бит), 0 — нет данных
+        var c2w: simd_float4x4
+        var fx: Float, fy: Float, cx: Float, cy: Float
+        var w: Int, h: Int
+        var depthC2W: simd_float4x4? = nil        // поза кадра, с которого глубина, если снимок заменён на 12 Мп (у него своя поза)
+        var depthK: [Float]? = nil                // и интринсики того видеокадра: fx, fy, cx, cy, w, h (угол обзора снимка может отличаться)
     }
 
     let dir: URL
@@ -34,6 +36,8 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     private let maxVoxels = 600_000
     var cloudCount: Int { voxels.count }
     private(set) var depthFrames = 0
+    private(set) var hiRes = 0                    // кадров, заменённых полноразмерным снимком (12 Мп)
+    private var hiResSize = ""
     let maxFrames = 2000  // 2026-10-21: «максимально подробная съёмка» (было 1000, до того 300); ≈ 1,5–2 ГБ на квартиру
     var count: Int { entries.count }
     var last: Entry? { entries.last }
@@ -99,6 +103,35 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         return true
     }
 
+    /// Полноразмерный снимок (captureHighResolutionFrame) для уже взятого кадра: JPEG заменяет видеокадр 1920×1440,
+    /// поза и интринсики — его собственные; глубина остаётся от видеокадра (со своей позой) или берётся из снимка, если в нём есть.
+    func attachHiRes(index: Int, frame hf: ARFrame, ciContext: CIContext) {
+        guard index < entries.count else { return }
+        let e = entries[index], res = hf.camera.imageResolution
+        guard Int(res.width) > e.w else { return }          // не больше видеокадра — смысла нет
+        let K = hf.camera.intrinsics
+        var n = e
+        n.c2w = hf.camera.transform; n.fx = K.columns.0.x; n.fy = K.columns.1.y; n.cx = K.columns.2.x; n.cy = K.columns.2.y
+        n.w = Int(res.width); n.h = Int(res.height)
+        let ownDepth = Self.depthPNG(hf)
+        if ownDepth == nil, e.depth != nil { n.depthC2W = e.c2w; n.depthK = [e.fx, e.fy, e.cx, e.cy, Float(e.w), Float(e.h)] }
+        if ownDepth != nil && e.depth == nil { depthFrames += 1 }
+        if ownDepth != nil { n.depth = String(format: "depth/frame_%05ld.png", index + 1) }
+        entries[index] = n
+        hiRes += 1; hiResSize = "\(n.w)x\(n.h)"
+        pending += 1
+        let url = dir.appendingPathComponent(e.file), pb = hf.capturedImage, depthName = n.depth
+        queue.async { [weak self] in   // очередь последовательная: запись видеокадра этого же файла уже прошла
+            let cs = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+            if let data = ciContext.jpegRepresentation(of: CIImage(cvPixelBuffer: pb), colorSpace: cs,
+                                                       options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.92]) {
+                try? data.write(to: url)
+            }
+            if let d = ownDepth, let name = depthName, let self = self { try? d.write(to: self.dir.appendingPathComponent(name)) }
+            DispatchQueue.main.async { self?.pending -= 1 }
+        }
+    }
+
     /// Дописывает transforms.json, облако точек и инструкцию, упаковывает в ZIP. Возвращает путь к архиву.
     func finish(pointsPLY meshPLY: Data?) throws -> URL {
         queue.sync {}   // дождаться записи всех JPEG
@@ -112,11 +145,14 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
             var f: [String: Any] = ["file_path": e.file, "transform_matrix": rows,
                                     "fl_x": e.fx, "fl_y": e.fy, "cx": e.cx, "cy": e.cy, "w": e.w, "h": e.h]
             if let d = e.depth { f["depth_file_path"] = d }
+            if let dm = e.depthC2W { f["depth_transform_matrix"] = (0..<4).map { r in (0..<4).map { c in dm[c][r] } } }
+            if let k = e.depthK { f["depth_camera"] = ["fl_x": k[0], "fl_y": k[1], "cx": k[2], "cy": k[3], "w": Int(k[4]), "h": Int(k[5])] }
             frames.append(f)
         }
         var root: [String: Any] = ["camera_model": "OPENCV", "k1": 0, "k2": 0, "p1": 0, "p2": 0, "frames": frames,
                                    "fixpoint": ["coords": "ARKit world, Y up, meters", "frames": entries.count, "depthFrames": depthFrames,
                                                 "depthUnit": "mm (16-bit PNG, 0 = no data)", "blurRejected": blurRejected,
+                                                "hiRes": hiRes, "hiResSize": hiResSize,
                                                 "points": meshPLY != nil ? "lidar mesh" : (voxels.isEmpty ? "none" : "depth \(voxels.count)")]]
         if let f = entries.first { root["fl_x"] = f.fx; root["fl_y"] = f.fy; root["cx"] = f.cx; root["cy"] = f.cy; root["w"] = f.w; root["h"] = f.h }
         if let ply = pointsPLY {

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fixpoint — просмотр модели</title>
+<style>
+  :root { --bg: #e9ebee; --panel: rgba(255,255,255,.92); --text: #1d2125; --muted: #6b7178; --accent: #d95f18; --line: #d3d7dc; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .bar { position: fixed; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; pointer-events: none; }
+  .bar > * { pointer-events: auto; }
+  button, label.btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 10px; padding: 8px 14px; cursor: pointer; backdrop-filter: blur(8px); }
+  button.go, label.btn.go { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  #info { position: fixed; left: 12px; bottom: 12px; max-width: min(560px, calc(100% - 24px)); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 12.5px; color: var(--muted); backdrop-filter: blur(8px); }
+  #info b { color: var(--text); font-weight: 600; }
+  #drop { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); font-size: 16px; }
+  #drop.hot { background: rgba(217,95,24,.08); outline: 3px dashed var(--accent); outline-offset: -14px; }
+  #drop.hidden { display: none; }
+  #help { position: fixed; right: 12px; bottom: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 12.5px; color: var(--muted); max-width: 300px; }
+  @media (min-width: 641px) { #info { max-width: min(560px, calc(100% - 360px)); } }
+  @media (max-width: 640px) { #help { display: none; } }
+  input[type=file] { display: none; }
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<div id="drop">Перетащите сюда файл модели (.glb)<br>или нажмите «Открыть файл»</div>
+<div class="bar">
+  <label class="btn go">Открыть файл<input id="file" type="file" accept=".glb,.gltf,model/gltf-binary"></label>
+  <button id="reset" disabled>Вид целиком</button>
+  <button id="wire" aria-pressed="false" disabled>Сетка</button>
+</div>
+<div id="info">Файл не открыт. Модель показывается так, как записана в файле: материалы не подменяются.</div>
+<div id="help">Крутить — левая кнопка / палец · Сдвиг — правая кнопка / два пальца · Масштаб — колесо / щипок · <b>Двойной щелчок</b> по месту — подлететь к нему (так можно зайти внутрь комнаты)</div>
+
+<script type="text/plain" id="m-three">/*THREE*/</script>
+<script type="text/plain" id="m-bgu">/*BGU*/</script>
+<script type="text/plain" id="m-gltf">/*GLTF*/</script>
+<script type="text/plain" id="m-orbit">/*ORBIT*/</script>
+<script type="text/plain" id="m-app">
+import * as THREE from 'three';
+import { GLTFLoader } from 'gltf';
+import { OrbitControls } from 'orbit';
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// как в 3D приложения (tour.js): вывод в sRGB, без тон-маппинга
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xe9ebee);
+// обычный свет: влияет только на материалы, которым он нужен; «без освещения» и «светящиеся» он не меняет
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f96, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(3, 6, 2); scene.add(sun);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.02, 200);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.12; controls.screenSpacePanning = true;
+let model = null, wireGroup = null, home = null;
+
+function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+function frameAll() {
+  const box = new THREE.Box3().setFromObject(model), c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const r = Math.max(s.x, s.y, s.z) || 1;
+  camera.near = r / 2000; camera.far = r * 50; camera.updateProjectionMatrix();
+  camera.position.set(c.x + r * 0.55, c.y + r * 0.85, c.z + r * 0.75);
+  controls.target.copy(c); controls.update();
+  home = { p: camera.position.clone(), t: c.clone() };
+}
+
+function describe(name, size, json, root) {
+  let tris = 0; const kinds = new Set(), tex = new Set();
+  root.traverse(o => {
+    if (!o.isMesh) return;
+    const g = o.geometry; tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    for (const m of [].concat(o.material)) {
+      kinds.add(m.isMeshBasicMaterial ? 'без освещения' : (m.emissiveMap ? 'светящаяся текстура' : 'с освещением'));
+      for (const t of [m.map, m.emissiveMap]) if (t && t.image) tex.add(t.image.width + '×' + t.image.height);
+    }
+  });
+  const ext = (json && json.extensionsUsed) || [];
+  document.getElementById('info').innerHTML =
+    `<b>${name}</b> · ${(size / 1048576).toFixed(1)} МБ · ${Math.round(tris).toLocaleString('ru')} треугольников<br>` +
+    `Материалы: ${[...kinds].join(', ') || '—'} · текстуры: ${[...tex].join(', ') || 'нет'}` +
+    (ext.length ? ` · расширения: ${ext.join(', ')}` : '');
+}
+
+async function open(file) {
+  document.getElementById('info').textContent = 'Открываю ' + file.name + '…';
+  const buf = await file.arrayBuffer();
+  new GLTFLoader().parse(buf, '', gltf => {
+    if (model) { scene.remove(model); model.traverse(o => { if (o.isMesh) { o.geometry.dispose(); [].concat(o.material).forEach(m => { m.map && m.map.dispose(); m.emissiveMap && m.emissiveMap.dispose(); m.dispose(); }); } }); }
+    if (wireGroup) { scene.remove(wireGroup); wireGroup = null; }
+    model = gltf.scene; scene.add(model);
+    document.getElementById('drop').classList.add('hidden');
+    document.getElementById('reset').disabled = false; document.getElementById('wire').disabled = false;
+    document.getElementById('wire').setAttribute('aria-pressed', 'false');
+    frameAll(); describe(file.name, file.size, gltf.parser && gltf.parser.json, model);
+    document.title = file.name + ' — Fixpoint';
+  }, err => { document.getElementById('info').textContent = 'Не удалось открыть: ' + (err && err.message || err); });
+}
+
+document.getElementById('file').addEventListener('change', e => { const f = e.target.files[0]; if (f) open(f); e.target.value = ''; });
+const drop = document.getElementById('drop');
+addEventListener('dragover', e => { e.preventDefault(); drop.classList.remove('hidden'); drop.classList.add('hot'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) { drop.classList.remove('hot'); if (model) drop.classList.add('hidden'); } });
+addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('hot'); const f = e.dataTransfer.files[0]; if (f) open(f); else if (model) drop.classList.add('hidden'); });
+document.getElementById('reset').onclick = () => { if (home) { camera.position.copy(home.p); controls.target.copy(home.t); } };
+document.getElementById('wire').onclick = e => {
+  const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on));
+  if (on && !wireGroup) {
+    wireGroup = new THREE.Group(); const mat = new THREE.LineBasicMaterial({ color: 0x1d2125, transparent: true, opacity: 0.35 });
+    model.updateMatrixWorld(true);
+    model.traverse(o => { if (o.isMesh) { const l = new THREE.LineSegments(new THREE.WireframeGeometry(o.geometry), mat); l.matrixAutoUpdate = false; l.matrix.copy(o.matrixWorld); wireGroup.add(l); } });
+    scene.add(wireGroup);
+  }
+  if (wireGroup) wireGroup.visible = on;
+};
+// двойной щелчок — подлететь к точке: цель вращения = точка, камера на 40% ближе
+const ray = new THREE.Raycaster();
+canvas.addEventListener('dblclick', e => {
+  if (!model) return;
+  ray.setFromCamera(new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
+  const hit = ray.intersectObject(model, true)[0]; if (!hit) return;
+  const from = camera.position.clone(), to = hit.point.clone().add(from.clone().sub(hit.point).multiplyScalar(0.4));
+  const t0 = controls.target.clone(), start = performance.now();
+  (function step(now) { const k = Math.min(1, (now - start) / 450), s = k * k * (3 - 2 * k);
+    camera.position.lerpVectors(from, to, s); controls.target.lerpVectors(t0, hit.point, s); if (k < 1) requestAnimationFrame(step); })(start);
+});
+window.fixpointViewer = { open, scene, camera, renderer, controls };
+document.documentElement.dataset.ready = '1';
+</script>
+<script>
+// модули лежат в этом же файле: работает без интернета и без сервера (двойной щелчок по html)
+const url = id => URL.createObjectURL(new Blob([document.getElementById(id).textContent], { type: 'text/javascript' }));
+const map = document.createElement('script'); map.type = 'importmap';
+map.textContent = JSON.stringify({ imports: { three: url('m-three'), bgu: url('m-bgu'), gltf: url('m-gltf'), orbit: url('m-orbit') } });
+document.head.appendChild(map);
+const app = document.createElement('script'); app.type = 'module'; app.textContent = document.getElementById('m-app').textContent;
+document.body.appendChild(app);
+</script>
+</body></html>
