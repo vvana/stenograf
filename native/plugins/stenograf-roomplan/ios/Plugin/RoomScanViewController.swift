@@ -76,6 +76,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var cloudView: PointCloudView?
     private var cloudButton: UIButton?
     private var cloudLink: CADisplayLink?
+    // подсказка «чего не хватает для кадра стены» над кнопками и перекрестие в центре (кадр стены берётся по стене под центром экрана)
+    private let aimLabel = UILabel()
+    private let crosshair = UILabel()
+    private var lastAimOK = Date.distantPast
+    private var hiResCount = 0
     private var coverageLink: CADisplayLink?
     private var currentSurfaces: [CovSurface] = []
     private var doneSurfaces: [CovSurface] = []      // комнаты, уже завершённые кнопкой «Следующая комната»
@@ -92,7 +97,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let full: Bool
         let camPos: simd_float3
         let camDir: simd_float3  // направление взгляда камеры (мир)
-        let jpeg: Data
+        var jpeg: Data
         let corners: [[Float]]   // 4 × [u, v] в портретном кадре: TL, TR, BR, BL для зрителя
         let w: Float
         let h: Float
@@ -115,7 +120,21 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        captureView = RoomCaptureView(frame: view.bounds)
+        // Своя AR-сессия с сеткой лидара и глубиной кадра, отданная RoomPlan (официальный путь с iOS 17, WWDC23 «RoomPlan»:
+        // «любая своя ARSession с ARWorldTrackingConfiguration будет учтена внутри RoomCaptureSession»). Без этого RoomPlan
+        // запускал свою конфигурацию без сетки — облака точек и сетки «Финала» не было (проверка на устройстве 2026-10-21).
+        // boostSession() остаётся запасным вариантом, если RoomPlan всё же уберёт сетку из конфигурации.
+        if mode != "ghost" {
+            let s = ARSession()
+            let cfg = ARWorldTrackingConfiguration()
+            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) { cfg.sceneReconstruction = .mesh }
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) { cfg.frameSemantics.insert(.sceneDepth) }
+            s.run(cfg)
+            ownSession = true
+            captureView = RoomCaptureView(frame: view.bounds, arSession: s)
+        } else {
+            captureView = RoomCaptureView(frame: view.bounds)
+        }
         captureView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         captureView.delegate = self
         captureView.captureSession.delegate = self
@@ -168,11 +187,127 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
         if mode == "ghost" { setupGhost(bar: bar) }
         if mode != "ghost" { setupCompass(); setupCloudToggle() }
+        if wantFrames { setupAimHint(above: bar) }
         if hd { hdCapture = HDCapture() }
         if mode == "final" || wantSurfaces { setupCoverage() }
     }
 
+    // MARK: подсказка съёмки стен (2026-10-21: пользователь 20 с пытался снять кусок стены — не зеленел, и непонятно почему)
+
+    private func setupAimHint(above bar: UIView) {
+        aimLabel.textColor = .white
+        aimLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        aimLabel.textAlignment = .center
+        aimLabel.numberOfLines = 2
+        aimLabel.backgroundColor = UIColor(red: 0.85, green: 0.37, blue: 0.09, alpha: 0.88)
+        aimLabel.layer.cornerRadius = 10
+        aimLabel.clipsToBounds = true
+        aimLabel.isHidden = true
+        aimLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(aimLabel)
+        crosshair.text = "+"
+        crosshair.textColor = UIColor(white: 1, alpha: 0.85)
+        crosshair.font = .systemFont(ofSize: 34, weight: .light)
+        crosshair.layer.shadowColor = UIColor.black.cgColor
+        crosshair.layer.shadowOpacity = 0.6
+        crosshair.layer.shadowRadius = 2
+        crosshair.layer.shadowOffset = .zero
+        crosshair.translatesAutoresizingMaskIntoConstraints = false
+        crosshair.isUserInteractionEnabled = false
+        view.addSubview(crosshair)
+        NSLayoutConstraint.activate([
+            aimLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            aimLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40),
+            aimLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -14),
+            aimLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
+            crosshair.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            crosshair.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+
+    /// nil — всё в порядке (кадр снят или снимать нечего); иначе — что мешает. Показ с задержкой 1,2 с, чтобы не мигало на ходу.
+    private func setAim(_ text: String?) {
+        guard wantFrames else { return }
+        if text == nil { lastAimOK = Date(); aimLabel.isHidden = true; return }
+        if Date().timeIntervalSince(lastAimOK) < 1.2 { return }
+        aimLabel.text = "  " + text! + "  "
+        aimLabel.isHidden = reviewRoom != nil || finished
+    }
+
+    /// Почему центр экрана не попадает ни в одну стену (для подсказки).
+    private func aimProblem(in room: CapturedRoom, camera cam: ARCamera) -> String {
+        let T = cam.transform
+        let camPos = xyz(T.columns.3)
+        let fwd = simd_normalize(-xyz(T.columns.2))
+        var oblique = false, tooClose = false, tooFar = false
+        for wall in room.walls {
+            let t = wall.transform
+            let c = xyz(t.columns.3)
+            let n = simd_normalize(xyz(t.columns.2))
+            let denom: Float = simd_dot(fwd, n)
+            if abs(denom) < 0.05 { continue }
+            let dist: Float = simd_dot(c - camPos, n) / denom
+            if dist <= 0 { continue }
+            let rel: simd_float3 = camPos + fwd * dist - c
+            let lx = simd_dot(rel, simd_normalize(xyz(t.columns.0))), ly = simd_dot(rel, simd_normalize(xyz(t.columns.1)))
+            guard abs(lx) <= wall.dimensions.x / 2, abs(ly) <= wall.dimensions.y / 2 else { continue }
+            if abs(denom) < 0.35 { oblique = true } else if dist < 0.6 { tooClose = true } else if dist > 7 { tooFar = true }
+        }
+        if tooClose { return "Слишком близко — отойдите от стены (нужно от 0,6 м)" }
+        if oblique { return "Слишком сбоку — встаньте к стене прямее" }
+        if tooFar { return "Слишком далеко — подойдите ближе (до 7 м)" }
+        return "Наведите центр экрана (+) на неснятый кусок стены"
+    }
+
+    /// HD: что с клеткой стены под перекрестием — «подойдите ближе» (нет кадра с 1,5 м), «ещё с другой точки» (кадров < 2).
+    private func hdAim(frame: ARFrame) {
+        guard let room = latestRoom, let model = coverage, frame.camera.trackingState == .normal else { return }
+        // телефон в движении — подсказку «Замрите» уже поставил pollWallFrame
+        if let last = lastTransform, simd_length(xyz(frame.camera.transform.columns.3) - xyz(last.columns.3)) > 0.05 { return }
+        guard let (wall, _) = bestWall(in: room, camera: frame.camera) else { return }
+        let T = frame.camera.transform
+        let camPos = xyz(T.columns.3), fwd = simd_normalize(-xyz(T.columns.2))
+        let n = simd_normalize(xyz(wall.transform.columns.2)), c0 = xyz(wall.transform.columns.3)
+        let denom = simd_dot(fwd, n)
+        guard abs(denom) > 0.05 else { return }
+        let dist = simd_dot(c0 - camPos, n) / denom
+        let hit = camPos + fwd * dist
+        guard let surf = currentSurfaces.first(where: { $0.isWall && $0.key.contains(wall.identifier.uuidString) }), !surf.cells.isEmpty else { return }
+        var bi = 0; var bd = Float.greatestFiniteMagnitude
+        for (i, cell) in surf.cells.enumerated() { let d = simd_length(cell.center - hit); if d < bd { bd = d; bi = i } }
+        let (cnt, close) = model.raw(surf)
+        guard bi < cnt.count else { return }
+        if close[bi] > 0 && cnt[bi] >= model.need { setAim(nil); return }
+        if close[bi] == 0 && dist > 1.5 { setAim("Подойдите ближе — для деталей нужен кадр с 1,5 м и ближе"); return }
+        if close[bi] == 0 { setAim("Замрите на секунду — снимается кадр вблизи"); return }
+        setAim("Снимите это место ещё с другой точки — шаг в сторону")
+    }
+
     // MARK: облако точек лидара
+
+    private var boosted = false
+    private var ownSession = false   // сессия создана нами (с сеткой и глубиной) и отдана RoomPlan
+    /// Добавить к конфигурации RoomPlan сетку лидара и карту глубины кадра (если устройство умеет), не сбрасывая сессию.
+    private func boostSession() {
+        guard !finished, let s = sharedSession, let cfg = s.configuration as? ARWorldTrackingConfiguration else { return }
+        var changed = false
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) && cfg.sceneReconstruction != .mesh {
+            cfg.sceneReconstruction = .mesh; changed = true
+        }
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) && !cfg.frameSemantics.contains(.sceneDepth) {
+            cfg.frameSemantics.insert(.sceneDepth); changed = true
+        }
+        boosted = true
+        if changed { s.run(cfg, options: []) }
+    }
+
+    /// Что из лидара сейчас доступно — для надписи на облаке точек.
+    private func lidarDiag(_ frame: ARFrame, anchors: Int) -> String {
+        let cfg = sharedSession?.configuration as? ARWorldTrackingConfiguration
+        let rec = cfg.map { $0.sceneReconstruction == .mesh ? "вкл" : "выкл" } ?? "?"
+        let dep = (frame.sceneDepth ?? frame.smoothedSceneDepth) != nil ? "есть" : "нет"
+        return "сетка: \(anchors) · реконструкция: \(rec) · глубина кадра: \(dep) · сессия: \(ownSession ? "своя" : "RoomPlan")\(boosted ? " · дожимали" : "")"
+    }
 
     private func setupCloudToggle() {
         let b = UIButton(type: .system)
@@ -204,6 +339,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private func setCloud(_ on: Bool) {
         cloudButton?.backgroundColor = on ? UIColor(red: 0.85, green: 0.37, blue: 0.09, alpha: 0.85) : UIColor(white: 0, alpha: 0.35)
         if on, cloudView == nil {
+            if !boosted { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.boostSession() } }
             let cv = PointCloudView(frame: view.bounds)
             cv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             view.insertSubview(cv, aboveSubview: captureView)
@@ -221,13 +357,16 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     @objc private func cloudTick() {
         guard let cv = cloudView, let frame = sharedSession?.currentFrame else { return }
         let anchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
-        cv.update(frame: frame, anchors: anchors)
+        cv.update(frame: frame, anchors: anchors, diag: lidarDiag(frame, anchors: anchors.count))
     }
 
     // MARK: покрытие
 
     private func setupCoverage() {
-        let model = CoverageModel(need: hd && mode == "final" ? 2 : 1)   // обход этапа (и HD-обход): 1 кадр на клетку
+        // HD (2026-10-21, «максимально подробная съёмка»): клетки 20 см, на клетку 2 кадра, из них хотя бы один с 1,5 м и ближе;
+        // считаются и HD-кадры. Обычный обход — клетки 40 см, 1 кадр.
+        coverageCellSize = hd ? 0.2 : 0.4
+        let model = hd ? CoverageModel(need: 2, closeDist: 1.5) : CoverageModel(need: 1)
         coverage = model
         let ov = CoverageOverlayView(frame: view.bounds)
         ov.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -387,6 +526,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         var config = RoomCaptureSession.Configuration()
         config.isCoachingEnabled = mode != "ghost"
         captureView.captureSession.run(configuration: config)
+        // RoomPlan запускает свою конфигурацию без сетки (ARMeshAnchor) и, возможно, без sceneDepth — на устройстве
+        // кнопка облака показала «сетки нет» (2026-10-21). Через секунду после старта добавляем их к его же конфигурации
+        // (без сброса сессии). Нужно для HD-пакета (облако точек, глубина) и кнопки облака; обычный обмер не трогаем.
+        if hd || mode == "final" || cloudView != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.boostSession() }
+        }
         if hd {
             // экспозиция и баланс белого: дать автомату 2 с подстроиться под комнату и зафиксировать до конца комнаты
             HDCapture.setCameraLocked(false)
@@ -781,7 +926,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in buildColoredMesh(meshInput) }.value
                 for (k, v) in mesh { out[k] = v }
                 let ply = (out["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
-                await self.packHD(hc, into: &out, pointsPLY: ply)
+                await self.packHD(hc, into: &out, pointsPLY: (out["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
             }
             self.dismiss(animated: true) { self.completion(.success(out)) }
         }
@@ -820,7 +965,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
             if let hc = hdc {
                 let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
-                await self.packHD(hc, into: &dict, pointsPLY: ply)
+                await self.packHD(hc, into: &dict, pointsPLY: (dict["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
             }
             self.sharedSession?.pause()
             self.dismiss(animated: true) { self.completion(.success(dict)) }
@@ -1040,9 +1185,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         // ключевые кадры для окрашенной сетки лидара: финальный скан и HD-обход этапа (HD заменил финальный скан 2026-10-12,
         // но сетка и облако точек при этом потерялись — вернули 2026-10-20: «функционал не надо было менять»)
         if mode == "final" || hd { pollKeyFrame(frame: frame) }
-        if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext), mode == "final" {
-            // в обходе этапа счётчик HD — в строке «Снято кадров», а зелёная подсветка — только по кадрам стен/пола/потолка
-            statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)"
+        if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
+            // в обходе этапа счётчик HD — в строке «Снято кадров»; HD-кадры идут и в подсветку (подробность съёмки)
+            if mode == "final" { statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)" }
             if let e = hc.last {
                 let p = simd_float3(e.c2w.columns.3.x, e.c2w.columns.3.y, e.c2w.columns.3.z)
                 coverage?.add(CovView(inv: e.c2w.inverse, fx: e.fx, fy: e.fy, cx: e.cx, cy: e.cy, w: Float(e.w), h: Float(e.h), pos: p))
@@ -1051,6 +1196,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if coverage != nil { refreshCoverageMap() }
         if wantSurfaces { pollSurfaceFrame(frame: frame) }
         if wantFrames { pollWallFrame(frame: frame) }
+        if hd && wantFrames { hdAim(frame: frame) }
     }
 
     /// Кадр для пола/потолка: телефон неподвижен (не смазано) и смотрит в новую сторону (≥ 14°) или сдвинулся (≥ 0,5 м).
@@ -1153,19 +1299,21 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     }
 
     private func pollWallFrame(frame: ARFrame) {
-        guard let room = latestRoom, !room.walls.isEmpty else { return }
+        guard let room = latestRoom, !room.walls.isEmpty else { setAim("Стены ещё не распознаны — медленно обведите комнату камерой"); return }
         let cam = frame.camera
-        guard cam.trackingState == .normal else { return }
+        guard cam.trackingState == .normal else {
+            setAim("Телефон теряет положение — больше света или деталей в кадре, двигайтесь медленнее"); return
+        }
         let T = cam.transform
         if let last = lastTransform {
             let dp = simd_length(xyz(T.columns.3) - xyz(last.columns.3))
             let f1 = -xyz(T.columns.2), f0 = -xyz(last.columns.2)
             let dang = acos(max(-1, min(1, simd_dot(f1, f0))))
             lastTransform = T
-            if dp > 0.05 || dang > 0.05 { return }
+            if dp > 0.05 || dang > 0.05 { setAim("Замрите на секунду — кадр снимается, когда телефон неподвижен"); return }
         } else { lastTransform = T; return }
 
-        guard let (wall, score0) = bestWall(in: room, camera: cam) else { return }
+        guard let (wall, score0) = bestWall(in: room, camera: cam) else { setAim(aimProblem(in: room, camera: cam)); return }
         let camPos = xyz(T.columns.3)
         let corners3 = wallCorners(wall, viewer: camPos)
         let viewM = T.inverse
@@ -1187,19 +1335,50 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let full = allInside
         let score: Float = score0 + (full ? 0.3 : 0)
         let existing = frames[wall.identifier] ?? []
-        if existing.contains(where: { simd_length($0.camPos - camPos) < 0.7 && $0.score >= score }) { return }
-        guard let jpeg = jpegData(from: frame.capturedImage) else { return }
-        var list = existing.filter { simd_length($0.camPos - camPos) >= 0.7 || $0.score > score }
-        let camDir: simd_float3 = -xyz(T.columns.2)
-        list.append(WallFrame(score: score, full: full, camPos: camPos, camDir: camDir, jpeg: jpeg, corners: pts, w: wall.dimensions.x, h: wall.dimensions.y))
-        list.sort { $0.score > $1.score }
-        if list.count > 2 { list = Array(list.prefix(2)) }
-        frames[wall.identifier] = list
         let K0 = cam.intrinsics
-        coverage?.add(CovView(inv: viewM, fx: K0.columns.0.x, fy: K0.columns.1.y, cx: K0.columns.2.x, cy: K0.columns.2.y,
-                              w: Float(res.width), h: Float(res.height), pos: camPos, target: .wall(wall.identifier.uuidString)))
+        let covView = CovView(inv: viewM, fx: K0.columns.0.x, fy: K0.columns.1.y, cx: K0.columns.2.x, cy: K0.columns.2.y,
+                              w: Float(res.width), h: Float(res.height), pos: camPos, target: .wall(wall.identifier.uuidString))
+        // сколько ещё не снятых клеток этой стены попадёт в кадр: такой кадр берём всегда — раньше его отбрасывали,
+        // если с этого же места (< 0,7 м) уже был кадр «прямее», и недоснятый кусок не зеленел, сколько ни целься
+        let fresh = hd ? 0 : (coverage.map { $0.freshCells(covView, surfaces: currentSurfaces) } ?? 0)
+        if fresh == 0 && existing.contains(where: { simd_length($0.camPos - camPos) < 0.7 && $0.score >= score }) {
+            if !hd { setAim(nil) }; return   // это место стены уже снято
+        }
+        guard let jpeg = jpegData(from: frame.capturedImage) else { return }
+        let camDir: simd_float3 = -xyz(T.columns.2)
+        let new = WallFrame(score: score, full: full, camPos: camPos, camDir: camDir, jpeg: jpeg, corners: pts, w: wall.dimensions.x, h: wall.dimensions.y)
+        var list: [WallFrame]
+        if fresh > 0 {
+            // добирающий кадр: оставляем все прежние (они покрывают свои куски). Предела нет: такой кадр берётся,
+            // только если снимает ещё не снятое, и когда стена вся зелёная, кадры перестают добавляться сами
+            // (предел с отбором по ракурсу мог выбросить единственный кадр какого-то куска — зелёный, а фото нет)
+            list = existing + [new]
+            list.sort { $0.score > $1.score }
+        } else {
+            list = existing.filter { simd_length($0.camPos - camPos) >= 0.7 || $0.score > score }
+            list.append(new)
+            list.sort { $0.score > $1.score }
+            if list.count > 2 { list = Array(list.prefix(2)) }
+        }
+        frames[wall.identifier] = list
+        if !hd { setAim(nil) }
+        coverage?.add(covView)
+        // HD: пробуем полноразмерный снимок 12 Мп (ARKit 6) вместо кадра видео 1920×1440 — получится ли внутри сессии RoomPlan,
+        // проверяется на устройстве: счётчик «12 Мп» в строке статуса
+        if hd, let sess = sharedSession {
+            let wid = wall.identifier, pos = camPos
+            sess.captureHighResolutionFrame { [weak self] hf, _ in
+                guard let self = self, let hf = hf, let j = self.jpegData(from: hf.capturedImage) else { return }
+                DispatchQueue.main.async {
+                    guard var l = self.frames[wid], let i = l.firstIndex(where: { simd_length($0.camPos - pos) < 0.001 }) else { return }
+                    l[i].jpeg = j
+                    self.frames[wid] = l
+                    self.hiResCount += 1
+                }
+            }
+        }
         let n = frames.values.reduce(0) { $0 + $1.count }
-        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" } ?? "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
+        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" } ?? "") + (hiResCount > 0 ? " · 12 Мп: \(hiResCount)" : "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
     }
 
     // MARK: AR-призрак
@@ -1497,6 +1676,43 @@ let keyFrames = input.keyFrames
 /// Стеклянная кнопка поверх камеры: размытие фона (системный материал), светлый ободок, белый значок.
 /// Круглая со значком SF Symbols или капсула с текстом; `tint` — цветное стекло для главного действия.
 /// Нажатие — пружинное сжатие; выключенная — полупрозрачная.
+/// Точки мира из карты глубины кадра (лидар): каждый step-й пиксель, только средняя и высокая уверенность.
+/// Карта глубины в той же ориентации, что кадр камеры (датчик, альбомная), интринсики — от полного кадра.
+func depthWorldPoints(_ frame: ARFrame, step: Int) -> [simd_float3] {
+    guard let sd = frame.sceneDepth ?? frame.smoothedSceneDepth else { return [] }
+    let dm = sd.depthMap
+    CVPixelBufferLockBaseAddress(dm, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(dm, .readOnly) }
+    guard let db = CVPixelBufferGetBaseAddress(dm) else { return [] }
+    let w = CVPixelBufferGetWidth(dm), h = CVPixelBufferGetHeight(dm), bpr = CVPixelBufferGetBytesPerRow(dm)
+    var conf: UnsafeMutablePointer<UInt8>? = nil; var cbpr = 0
+    if let cm = sd.confidenceMap { CVPixelBufferLockBaseAddress(cm, .readOnly); conf = CVPixelBufferGetBaseAddress(cm)?.assumingMemoryBound(to: UInt8.self); cbpr = CVPixelBufferGetBytesPerRow(cm) }
+    defer { if let cm = sd.confidenceMap { CVPixelBufferUnlockBaseAddress(cm, .readOnly) } }
+    let K = frame.camera.intrinsics, res = frame.camera.imageResolution
+    let sx = Float(res.width) / Float(w), sy = Float(res.height) / Float(h)
+    let T = frame.camera.transform
+    var out: [simd_float3] = []
+    out.reserveCapacity((w / step) * (h / step))
+    var y = 0
+    while y < h {
+        let row = (db + y * bpr).assumingMemoryBound(to: Float32.self)
+        var x = 0
+        while x < w {
+            let d = row[x]
+            if d.isFinite && d > 0.1 && d < 8, conf.map({ $0[y * cbpr + x] >= UInt8(ARConfidenceLevel.medium.rawValue) }) ?? true {
+                let u = (Float(x) + 0.5) * sx, v = (Float(y) + 0.5) * sy
+                // камера ARKit: x вправо, y вверх, смотрит вдоль −z; у картинки y вниз
+                let pc = simd_float4((u - K.columns.2.x) / K.columns.0.x * d, -(v - K.columns.2.y) / K.columns.1.y * d, -d, 1)
+                let pw = T * pc
+                out.append(simd_float3(pw.x, pw.y, pw.z))
+            }
+            x += step
+        }
+        y += step
+    }
+    return out
+}
+
 /// Точки сетки лидара (вершины ARMeshAnchor), спроецированные на экран; цвет — по расстоянию (близко — голубой, далеко — фиолетовый).
 /// Не больше ~6000 точек за кадр; если сетки нет — надпись: значит, и облака точек в HD-пакете не будет.
 final class PointCloudView: UIView {
@@ -1520,9 +1736,29 @@ final class PointCloudView: UIView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func update(frame: ARFrame, anchors: [ARMeshAnchor]) {
+    func update(frame: ARFrame, anchors: [ARMeshAnchor], diag: String) {
         let size = bounds.size
         let total = anchors.reduce(0) { $0 + $1.geometry.vertices.count }
+        if total == 0 {
+            // сетки нет — точки из карты глубины этого кадра (то, что лидар видит прямо сейчас)
+            var p: [CGPoint] = []; var d: [Float] = []
+            for w in depthWorldPoints(frame, step: 4) {
+                let c = frame.camera.transform.inverse * simd_float4(w, 1)
+                let z = -c.z
+                guard z > 0.15 && z < 8 else { continue }
+                let s = frame.camera.projectPoint(w, orientation: .portrait, viewportSize: size)
+                if s.x >= 0 && s.y >= 0 && s.x <= size.width && s.y <= size.height { p.append(s); d.append(z) }
+            }
+            pts = p; dist = d
+            note.text = "  " + (p.isEmpty ? "Лидар не отдаёт ни сетку, ни глубину" : "Точки из глубины кадра") + " · " + diag + "  "
+            note.isHidden = false
+            note.numberOfLines = 2
+            note.font = .systemFont(ofSize: 11, weight: .semibold)
+            let fit = note.sizeThatFits(CGSize(width: size.width - 24, height: 60))
+            note.frame = CGRect(x: (size.width - min(fit.width, size.width - 24)) / 2, y: size.height * 0.45, width: min(fit.width, size.width - 24), height: fit.height + 8)
+            setNeedsDisplay()
+            return
+        }
         let step = max(1, total / 6000)
         let view = frame.camera.transform.inverse
         var p: [CGPoint] = []; var d: [Float] = []
@@ -1544,12 +1780,7 @@ final class PointCloudView: UIView {
             }
         }
         pts = p; dist = d
-        if total == 0 {
-            note.text = "  Лидар пока не отдал сетку — точек нет  "
-            note.isHidden = false
-        } else { note.isHidden = true }
-        note.sizeToFit()
-        note.frame = CGRect(x: (size.width - note.bounds.width) / 2, y: size.height * 0.45, width: note.bounds.width, height: 30)
+        note.isHidden = true
         setNeedsDisplay()
     }
 

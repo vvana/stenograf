@@ -688,7 +688,7 @@ async function lidarMeasure(pid, rooms, room) {
 // обмер / обход всей квартиры: несколько комнат подряд (mode 'multi'), с кадрами — на этап
 async function lidarApartment(pid, rooms, stageId, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId, hd: !!(stageId && opts.hd) }); }
+  try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId, hd: !!(stageId && opts.hd), maxDim: stageId && opts.hd ? 4096 : 1600 }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { results, wallMap, transform } = await applyStructure(pid, rooms, scan);
   if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
@@ -786,7 +786,7 @@ function stageHDModels(st) {
 
 async function lidarWalk(pid, room, stageId, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'walk', hd: !!opts.hd }); }
+  try { scan = await Native.RP.scan({ mode: 'walk', hd: !!opts.hd, maxDim: opts.hd ? 4096 : 1600 })   // HD: фото стен без уменьшения (1920 или 12 Мп); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
   if (toPlan) await saveNorth(pid, scan, turn);

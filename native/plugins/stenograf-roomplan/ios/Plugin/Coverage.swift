@@ -38,14 +38,15 @@ struct CovSurface {
     let a: simd_float3, b: simd_float3   // для стены — концы по низу (мини-карта)
 }
 
-private let cellSize: Float = 0.4
+// размер клетки покрытия: 40 см; в HD-обходе 20 см (2026-10-21, «максимально подробная съёмка») — задаётся при старте сканера
+var coverageCellSize: Float = 0.4
 
 private func col3(_ c: simd_float4) -> simd_float3 { simd_float3(c.x, c.y, c.z) }
 
 /// Клетки прямоугольника: центр c, оси u (ширина w) и v (высота h).
 private func gridCells(c: simd_float3, u: simd_float3, v: simd_float3, w: Float, h: Float,
                        keep: ((simd_float3) -> Bool)? = nil) -> [CovCell] {
-    let nx = max(1, Int(ceil(w / cellSize))), ny = max(1, Int(ceil(h / cellSize)))
+    let nx = max(1, Int(ceil(w / coverageCellSize))), ny = max(1, Int(ceil(h / coverageCellSize)))
     let dx = w / Float(nx), dy = h / Float(ny)
     var out: [CovCell] = []
     for i in 0..<nx {
@@ -125,10 +126,17 @@ func coverageSurfaces(room: CapturedRoom, index: Int) -> [CovSurface] {
 }
 
 /// Сколько кадров видят каждую клетку.
-func coverageCounts(_ s: CovSurface, views: [CovView]) -> [Int] {
+func coverageCounts(_ s: CovSurface, views: [CovView]) -> [Int] { coverageCountsClose(s, views: views, closeDist: nil).0 }
+
+/// Сколько кадров видят каждую клетку и сколько из них — с близкого расстояния (≤ closeDist; для HD — мелкие детали).
+func coverageCountsClose(_ s: CovSurface, views: ArraySlice<CovView>, closeDist: Float?) -> ([Int], [Int]) {
+    coverageCountsClose(s, views: Array(views), closeDist: closeDist)
+}
+func coverageCountsClose(_ s: CovSurface, views: [CovView], closeDist: Float?) -> ([Int], [Int]) {
     var counts = [Int](repeating: 0, count: s.cells.count)
+    var close = [Int](repeating: 0, count: s.cells.count)
     for (i, cell) in s.cells.enumerated() {
-        var n = 0
+        var n = 0, nc = 0
         for v in views {
             switch v.target {
             case .any: break
@@ -146,10 +154,12 @@ func coverageCounts(_ s: CovSurface, views: [CovView]) -> [Int] {
             let py: Float = v.cy - v.fy * (pc.y / z)
             if px < v.w * 0.03 || py < v.h * 0.03 || px > v.w * 0.97 || py > v.h * 0.97 { continue }
             n += 1
+            if let cd = closeDist, dist <= cd { nc += 1 }
         }
         counts[i] = n
+        close[i] = nc
     }
-    return counts
+    return (counts, close)
 }
 
 /// Модель покрытия с кешем: пересчёт только при новых кадрах или изменении комнаты.
@@ -157,9 +167,11 @@ func coverageCounts(_ s: CovSurface, views: [CovView]) -> [Int] {
 final class CoverageModel {
     var views: [CovView] = []
     let need: Int                                  // сколько кадров на клетку = «хорошо» (HD — 2, обычный — 1)
-    private var cache: [String: (Int, [Int])] = [:]
+    let closeDist: Float?                          // HD: среди кадров клетки нужен хотя бы один не дальше этого (м)
+    // кеш по поверхности: сколько видов уже учтено, сырые счётчики и близкие — новые виды досчитываются, а не всё заново
+    private var cache: [String: (Int, [Int], [Int])] = [:]
 
-    init(need: Int) { self.need = need }
+    init(need: Int, closeDist: Float? = nil) { self.need = need; self.closeDist = closeDist }
 
     func add(_ v: CovView) { views.append(v) }
 
@@ -174,14 +186,29 @@ final class CoverageModel {
         return n
     }
 
-    func counts(_ s: CovSurface) -> [Int] {
+    /// Сырые счётчики (все кадры, близкие кадры) по клеткам.
+    func raw(_ s: CovSurface) -> ([Int], [Int]) {
         // кеш годится, только если не изменилось и число клеток: RoomPlan по ходу скана уточняет стены, и у поверхности
         // с тем же ключом клеток может стать больше (пол/потолок режутся по контуру стен) — раньше старый короткий
         // массив отдавался для новой сетки, и подсветка падала с выходом за границы массива (приложение закрывалось)
-        if let c = cache[s.key], c.0 == views.count, c.1.count == s.cells.count { return c.1 }
-        let c = coverageCounts(s, views: views)
-        cache[s.key] = (views.count, c)
-        return c
+        if let c = cache[s.key], c.1.count == s.cells.count, c.0 <= views.count {
+            if c.0 == views.count { return (c.1, c.2) }
+            let add = coverageCountsClose(s, views: views[c.0...], closeDist: closeDist)   // только новые кадры
+            var a = c.1, b = c.2
+            for i in 0..<a.count { a[i] += add.0[i]; b[i] += add.1[i] }
+            cache[s.key] = (views.count, a, b)
+            return (a, b)
+        }
+        let r = coverageCountsClose(s, views: views, closeDist: closeDist)
+        cache[s.key] = (views.count, r.0, r.1)
+        return r
+    }
+
+    /// Счётчик для «снято»: в HD без близкого кадра клетка не дотягивает до нормы (не зеленеет).
+    func counts(_ s: CovSurface) -> [Int] {
+        let (a, b) = raw(s)
+        guard closeDist != nil else { return a }
+        return zip(a, b).map { $0.1 > 0 ? $0.0 : min($0.0, need - 1) }
     }
 
     /// Доля клеток, снятых достаточным числом кадров.

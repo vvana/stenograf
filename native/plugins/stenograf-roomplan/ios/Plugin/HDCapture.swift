@@ -29,8 +29,12 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     private var prevPollT: simd_float4x4?
     private var sharpHistory: [Float] = []        // резкость последних кадров — порог «смазан» относительно обычной для этой комнаты
     private(set) var blurRejected = 0
+    // облако точек из глубины HD-кадров (если сетки лидара нет): сетка вокселей 2 см, цвет — из кадра
+    private var voxels: [SIMD3<Int32>: (simd_float3, SIMD3<UInt8>)] = [:]
+    private let maxVoxels = 600_000
+    var cloudCount: Int { voxels.count }
     private(set) var depthFrames = 0
-    let maxFrames = 1000  // ≈ 1 ГБ на квартиру (было 300 — пользователь: «300 точно мало»); влезет ли обучение Brush в 12 ГБ видеопамяти — не проверено
+    let maxFrames = 2000  // 2026-10-21: «максимально подробная съёмка» (было 1000, до того 300); ≈ 1,5–2 ГБ на квартиру
     var count: Int { entries.count }
     var last: Entry? { entries.last }
 
@@ -60,11 +64,11 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
             prevPollT = T
             if simd_length(pos - pp) > 0.06 || acos(max(-1, min(1, simd_dot(fwd, pf)))) > 0.08 { return false }
         } else { prevPollT = T; return false }
-        // новый ракурс: сдвиг ≥ 15 см или поворот ≥ 10°
+        // новый ракурс: сдвиг ≥ 8 см или поворот ≥ 5° (2026-10-21; было 15 см / 10°)
         if let lp = lastPos, let lf = lastFwd {
             let moved = simd_length(pos - lp)
             let turned = acos(max(-1, min(1, simd_dot(fwd, lf))))
-            if moved < 0.15 && turned < 0.17 { return false }
+            if moved < 0.08 && turned < 0.087 { return false }
         }
         // резкость (энергия лапласиана по яркости): заметно ниже обычной для этой съёмки — кадр смазан, пропускаем
         let sharp = Self.sharpness(frame.capturedImage)
@@ -81,7 +85,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         // глубина лидара для кадра (та же ориентация, что у кадра; Nerfstudio растянет её до размера кадра)
         let depthName = String(format: "depth/frame_%05ld.png", n)
         let depthPNG = Self.depthPNG(frame)
-        if depthPNG != nil { depthFrames += 1 }
+        if depthPNG != nil { depthFrames += 1; addCloud(frame: frame, image: cg) }
         entries.append(Entry(file: name, depth: depthPNG != nil ? depthName : nil, c2w: T, fx: K.columns.0.x, fy: K.columns.1.y, cx: K.columns.2.x, cy: K.columns.2.y,
                              w: cg.width, h: cg.height))
         lastPos = pos; lastFwd = fwd
@@ -96,8 +100,10 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     }
 
     /// Дописывает transforms.json, облако точек и инструкцию, упаковывает в ZIP. Возвращает путь к архиву.
-    func finish(pointsPLY: Data?) throws -> URL {
+    func finish(pointsPLY meshPLY: Data?) throws -> URL {
         queue.sync {}   // дождаться записи всех JPEG
+        // облако для старта обучения: сетка лидара, если RoomPlan её отдал, иначе — из глубины HD-кадров
+        let pointsPLY = meshPLY ?? cloudPLY()
         var frames: [[String: Any]] = []
         for e in entries {
             let m = e.c2w
@@ -110,7 +116,8 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         }
         var root: [String: Any] = ["camera_model": "OPENCV", "k1": 0, "k2": 0, "p1": 0, "p2": 0, "frames": frames,
                                    "fixpoint": ["coords": "ARKit world, Y up, meters", "frames": entries.count, "depthFrames": depthFrames,
-                                                "depthUnit": "mm (16-bit PNG, 0 = no data)", "blurRejected": blurRejected]]
+                                                "depthUnit": "mm (16-bit PNG, 0 = no data)", "blurRejected": blurRejected,
+                                                "points": meshPLY != nil ? "lidar mesh" : (voxels.isEmpty ? "none" : "depth \(voxels.count)")]]
         if let f = entries.first { root["fl_x"] = f.fx; root["fl_y"] = f.fy; root["cx"] = f.cx; root["cy"] = f.cy; root["w"] = f.w; root["h"] = f.h }
         if let ply = pointsPLY {
             try ply.write(to: dir.appendingPathComponent("points.ply"))
@@ -130,6 +137,68 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     }
 
     func discard() { queue.sync {}; try? FileManager.default.removeItem(at: dir) }
+
+    /// Точки глубины кадра → в воксельное облако с цветом из кадра (кадр уменьшается до размера карты глубины).
+    private func addCloud(frame: ARFrame, image cg: CGImage) {
+        guard voxels.count < maxVoxels, let sd = frame.sceneDepth ?? frame.smoothedSceneDepth else { return }
+        let w = CVPixelBufferGetWidth(sd.depthMap), h = CVPixelBufferGetHeight(sd.depthMap)
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        let ok = rgba.withUnsafeMutableBytes { buf -> Bool in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.interpolationQuality = .low
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return }
+        let K = frame.camera.intrinsics, res = frame.camera.imageResolution
+        let sx = Float(res.width) / Float(w), sy = Float(res.height) / Float(h)
+        let T = frame.camera.transform
+        let step = 2
+        let dm = sd.depthMap
+        CVPixelBufferLockBaseAddress(dm, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(dm, .readOnly) }
+        guard let db = CVPixelBufferGetBaseAddress(dm) else { return }
+        let bpr = CVPixelBufferGetBytesPerRow(dm)
+        var conf: UnsafeMutablePointer<UInt8>? = nil; var cbpr = 0
+        if let cm = sd.confidenceMap { CVPixelBufferLockBaseAddress(cm, .readOnly); conf = CVPixelBufferGetBaseAddress(cm)?.assumingMemoryBound(to: UInt8.self); cbpr = CVPixelBufferGetBytesPerRow(cm) }
+        defer { if let cm = sd.confidenceMap { CVPixelBufferUnlockBaseAddress(cm, .readOnly) } }
+        var y = 0
+        while y < h {
+            let row = (db + y * bpr).assumingMemoryBound(to: Float32.self)
+            var x = 0
+            while x < w {
+                let d = row[x]
+                if d.isFinite && d > 0.1 && d < 6, (conf.map { $0[y * cbpr + x] >= UInt8(ARConfidenceLevel.high.rawValue) } ?? true) {
+                    let u = (Float(x) + 0.5) * sx, v = (Float(y) + 0.5) * sy
+                    let pw = T * simd_float4((u - K.columns.2.x) / K.columns.0.x * d, -(v - K.columns.2.y) / K.columns.1.y * d, -d, 1)
+                    let key = SIMD3<Int32>(Int32((pw.x / 0.02).rounded(.down)), Int32((pw.y / 0.02).rounded(.down)), Int32((pw.z / 0.02).rounded(.down)))
+                    if voxels[key] == nil {
+                        // CGContext рисует снизу вверх: строка y карты глубины — строка (h−1−y) буфера
+                        let i = ((h - 1 - y) * w + x) * 4
+                        voxels[key] = (simd_float3(pw.x, pw.y, pw.z), SIMD3<UInt8>(rgba[i], rgba[i + 1], rgba[i + 2]))
+                    }
+                }
+                x += step
+            }
+            y += step
+        }
+    }
+
+    /// Облако из глубины → бинарный PLY (x, y, z, red, green, blue).
+    private func cloudPLY() -> Data? {
+        guard !voxels.isEmpty else { return nil }
+        var out = Data("ply\nformat binary_little_endian 1.0\nelement vertex \(voxels.count)\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n".utf8)
+        out.reserveCapacity(out.count + voxels.count * 15)
+        for (_, v) in voxels {
+            var p = v.0
+            withUnsafeBytes(of: &p.x) { out.append(contentsOf: $0) }
+            withUnsafeBytes(of: &p.y) { out.append(contentsOf: $0) }
+            withUnsafeBytes(of: &p.z) { out.append(contentsOf: $0) }
+            out.append(contentsOf: [v.1.x, v.1.y, v.1.z])
+        }
+        return out
+    }
 
     /// Резкость кадра: средний квадрат лапласиана яркости (плоскость Y кадра ARKit) по центральной части, шаг 4 px.
     static func sharpness(_ pb: CVPixelBuffer) -> Float {
