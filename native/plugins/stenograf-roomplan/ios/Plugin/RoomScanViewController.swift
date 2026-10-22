@@ -76,6 +76,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var cloudView: PointCloudView?
     private var cloudButton: UIButton?
     private var cloudLink: CADisplayLink?
+    private let cloudQueue = DispatchQueue(label: "fixpoint.cloud", qos: .userInitiated)
+    private var cloudBusy = false   // сетка считается в фоне — новый расчёт не начинать
     // подсказка «чего не хватает для кадра стены» над кнопками и перекрестие в центре (кадр стены берётся по стене под центром экрана)
     private let aimLabel = UILabel()
     private let crosshair = UILabel()
@@ -387,9 +389,23 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     }
 
     @objc private func cloudTick() {
-        guard let cv = cloudView, let frame = sharedSession?.currentFrame else { return }
+        guard let cv = cloudView, !cloudBusy, let frame = sharedSession?.currentFrame else { return }
         let anchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
-        cv.update(frame: frame, anchors: anchors, diag: lidarDiag(frame, anchors: anchors.count))
+        if anchors.isEmpty { cv.update(frame: frame, anchors: anchors, diag: lidarDiag(frame, anchors: 0)); return }
+        // 2026-10-22: фризы по 0,3–0,5 с каждую секунду (запись пользователя) — рёбра сетки считались на главном потоке
+        // через projectPoint на каждую вершину всей комнаты. Теперь: матрицы берём здесь, проекция — в фоне, по одному расчёту за раз
+        let size = cv.bounds.size
+        let cam = frame.camera
+        let vp = cam.projectionMatrix(for: .portrait, viewportSize: size, zNear: 0.1, zFar: 20) * cam.viewMatrix(for: .portrait)
+        let camPos = simd_float3(cam.transform.columns.3.x, cam.transform.columns.3.y, cam.transform.columns.3.z)
+        cloudBusy = true
+        cloudQueue.async { [weak self, weak cv] in
+            let path = meshWirePath(anchors: anchors, viewProj: vp, camPos: camPos, size: size)
+            DispatchQueue.main.async {
+                self?.cloudBusy = false
+                cv?.setWire(path)
+            }
+        }
     }
 
     // MARK: покрытие
@@ -1801,19 +1817,68 @@ func depthWorldPoints(_ frame: ARFrame, step: Int) -> [simd_float3] {
     return out
 }
 
+/// Рёбра треугольников сетки лидара на экране (портрет): одна матрица на якорь, без projectPoint — считается в фоне.
+/// Якоря ближе 7 м, вершины 0,15–6 м от камеры, не больше ~20 тыс. треугольников.
+func meshWirePath(anchors: [ARMeshAnchor], viewProj: simd_float4x4, camPos: simd_float3, size: CGSize) -> CGPath {
+    let near = anchors.filter { simd_length(simd_float3($0.transform.columns.3.x, $0.transform.columns.3.y, $0.transform.columns.3.z) - camPos) < 7 }
+    let totalFaces = near.reduce(0) { $0 + $1.geometry.faces.count }
+    let fstep = max(1, totalFaces / 20000)
+    let path = CGMutablePath()
+    let W = Float(size.width), H = Float(size.height), pad: Float = 40
+    for a in near {
+        let g = a.geometry, vs = g.vertices
+        let M = viewProj * a.transform
+        let vbase = vs.buffer.contents().advanced(by: vs.offset)
+        var scr = [SIMD2<Float>](repeating: SIMD2<Float>(.nan, .nan), count: vs.count)
+        for i in 0..<vs.count {
+            let v = vbase.advanced(by: i * vs.stride).assumingMemoryBound(to: (Float, Float, Float).self).pointee
+            let c = M * simd_float4(v.0, v.1, v.2, 1)
+            guard c.w > 0.15 && c.w < 6 else { continue }          // w клипа = расстояние до камеры по оси взгляда
+            let x = (c.x / c.w + 1) * 0.5 * W, y = (1 - c.y / c.w) * 0.5 * H
+            if x > -pad && y > -pad && x < W + pad && y < H + pad { scr[i] = SIMD2(x, y) }
+        }
+        let fs = g.faces
+        guard fs.indexCountPerPrimitive == 3 else { continue }
+        let fbase = fs.buffer.contents()
+        var f = 0
+        while f < fs.count {
+            let o = f * 3 * fs.bytesPerIndex
+            let i0: Int, i1: Int, i2: Int
+            if fs.bytesPerIndex == 4 {
+                let ip = fbase.advanced(by: o).assumingMemoryBound(to: UInt32.self); i0 = Int(ip[0]); i1 = Int(ip[1]); i2 = Int(ip[2])
+            } else {
+                let ip = fbase.advanced(by: o).assumingMemoryBound(to: UInt16.self); i0 = Int(ip[0]); i1 = Int(ip[1]); i2 = Int(ip[2])
+            }
+            f += fstep
+            guard i0 < scr.count, i1 < scr.count, i2 < scr.count else { continue }
+            let p0 = scr[i0], p1 = scr[i1], p2 = scr[i2]
+            if p0.x.isNaN || p1.x.isNaN || p2.x.isNaN { continue }
+            path.move(to: CGPoint(x: CGFloat(p0.x), y: CGFloat(p0.y)))
+            path.addLine(to: CGPoint(x: CGFloat(p1.x), y: CGFloat(p1.y)))
+            path.addLine(to: CGPoint(x: CGFloat(p2.x), y: CGFloat(p2.y)))
+            path.closeSubpath()
+        }
+    }
+    return path
+}
+
 /// Сетка лидара (рёбра треугольников ARMeshAnchor) поверх камеры, а без сетки — точки глубины кадра; цвет — по расстоянию (близко — голубой, далеко — фиолетовый).
 /// Не больше ~6000 точек за кадр; если сетки нет — надпись: значит, и облака точек в HD-пакете не будет.
 final class PointCloudView: UIView {
     private var pts: [CGPoint] = []
     private var dist: [Float] = []
-    private var wire: CGPath?          // рёбра треугольников сетки лидара (как у Polycam), когда сетка есть
     private let note = UILabel()
+    private let wireLayer = CAShapeLayer()   // рёбра рисует сервер отрисовки, не главный поток
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         backgroundColor = .clear
         isOpaque = false
+        wireLayer.strokeColor = UIColor(white: 1, alpha: 0.42).cgColor
+        wireLayer.fillColor = nil
+        wireLayer.lineWidth = 0.6
+        layer.addSublayer(wireLayer)
         note.textColor = .white
         note.font = .systemFont(ofSize: 13, weight: .semibold)
         note.backgroundColor = UIColor(white: 0, alpha: 0.5)
@@ -1838,7 +1903,7 @@ final class PointCloudView: UIView {
                 let s = frame.camera.projectPoint(w, orientation: .portrait, viewportSize: size)
                 if s.x >= 0 && s.y >= 0 && s.x <= size.width && s.y <= size.height { p.append(s); d.append(z) }
             }
-            pts = p; dist = d; wire = nil
+            pts = p; dist = d; wireLayer.path = nil
             note.text = "  " + (p.isEmpty ? "Лидар не отдаёт ни сетку, ни глубину" : "Точки из глубины кадра") + " · " + diag + "  "
             note.isHidden = false
             note.numberOfLines = 2
@@ -1848,61 +1913,20 @@ final class PointCloudView: UIView {
             setNeedsDisplay()
             return
         }
-        // сетка есть — рисуем её рёбрами (2026-10-22, по образцу Polycam): вершины ближних якорей проецируем на экран,
-        // у треугольников, все три вершины которых видны, — три ребра. Не больше ~25 тыс. треугольников за кадр.
-        let view = frame.camera.transform.inverse
-        let camPos = simd_float3(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
-        let near = anchors.filter { simd_length(simd_float3($0.transform.columns.3.x, $0.transform.columns.3.y, $0.transform.columns.3.z) - camPos) < 7 }
-        let totalFaces = near.reduce(0) { $0 + $1.geometry.faces.count }
-        let fstep = max(1, totalFaces / 25000)
-        let path = CGMutablePath()
-        let pad: CGFloat = 40
-        for a in near {
-            let g = a.geometry
-            let vs = g.vertices
-            let vbase = vs.buffer.contents().advanced(by: vs.offset)
-            var scr = [CGPoint](repeating: CGPoint(x: CGFloat.nan, y: .nan), count: vs.count)
-            for i in 0..<vs.count {
-                let v = vbase.advanced(by: i * vs.stride).assumingMemoryBound(to: (Float, Float, Float).self).pointee
-                let w = a.transform * simd_float4(v.0, v.1, v.2, 1)
-                let z = -(view * w).z
-                guard z > 0.15 && z < 6 else { continue }
-                let q = frame.camera.projectPoint(simd_float3(w.x, w.y, w.z), orientation: .portrait, viewportSize: size)
-                if q.x > -pad && q.y > -pad && q.x < size.width + pad && q.y < size.height + pad { scr[i] = q }
-            }
-            let fs = g.faces
-            guard fs.indexCountPerPrimitive == 3 else { continue }
-            let fbase = fs.buffer.contents()
-            var f = 0
-            while f < fs.count {
-                let o = f * 3 * fs.bytesPerIndex
-                let i0: Int, i1: Int, i2: Int
-                if fs.bytesPerIndex == 4 {
-                    let ip = fbase.advanced(by: o).assumingMemoryBound(to: UInt32.self); i0 = Int(ip[0]); i1 = Int(ip[1]); i2 = Int(ip[2])
-                } else {
-                    let ip = fbase.advanced(by: o).assumingMemoryBound(to: UInt16.self); i0 = Int(ip[0]); i1 = Int(ip[1]); i2 = Int(ip[2])
-                }
-                f += fstep
-                guard i0 < scr.count, i1 < scr.count, i2 < scr.count else { continue }
-                let p0 = scr[i0], p1 = scr[i1], p2 = scr[i2]
-                if p0.x.isNaN || p1.x.isNaN || p2.x.isNaN { continue }
-                path.move(to: p0); path.addLine(to: p1); path.addLine(to: p2); path.closeSubpath()
-            }
-        }
-        wire = path
-        pts = []; dist = []
+        // сетка есть — её рёбра считает meshWirePath в фоне (cloudTick → setWire)
+    }
+
+    /// Готовые рёбра сетки (посчитаны в фоне, meshWirePath).
+    func setWire(_ path: CGPath) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        wireLayer.frame = bounds; wireLayer.path = path
+        CATransaction.commit()
+        if !pts.isEmpty { pts = []; dist = []; setNeedsDisplay() }
         note.isHidden = true
-        setNeedsDisplay()
     }
 
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
-        if let w = wire {
-            ctx.addPath(w)
-            ctx.setStrokeColor(UIColor(white: 1, alpha: 0.42).cgColor)
-            ctx.setLineWidth(0.6)
-            ctx.strokePath()
-        }
         for (i, q) in pts.enumerated() {
             let t = CGFloat(min(1, max(0, (dist[i] - 0.5) / 4.5)))   // 0,5 м → 0, 5 м → 1
             ctx.setFillColor(UIColor(red: 0.2 + 0.5 * t, green: 0.9 - 0.7 * t, blue: 1.0, alpha: 0.9).cgColor)
