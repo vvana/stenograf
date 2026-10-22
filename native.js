@@ -786,7 +786,7 @@ function stageHDModels(st) {
 
 async function lidarWalk(pid, room, stageId, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'walk', hd: !!opts.hd, maxDim: opts.hd ? 4096 : 1600 })   // HD: фото стен без уменьшения (1920 или 12 Мп); }
+  try { scan = await Native.RP.scan({ mode: 'walk', hd: !!opts.hd, maxDim: opts.hd ? 4096 : 1600 }); }   // HD: фото стен без уменьшения (1920 или 12 Мп)
   catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
   const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
   if (toPlan) await saveNorth(pid, scan, turn);
