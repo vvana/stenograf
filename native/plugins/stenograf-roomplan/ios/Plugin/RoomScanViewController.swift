@@ -81,6 +81,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private let crosshair = UILabel()
     private var lastAimOK = Date.distantPast
     private var hiResCount = 0
+    // кольцо вокруг перекрестия: заполняется, пока телефон неподвижен; кадр снят — вспышка (просьба пользователя 2026-10-22,
+    // вместо текста «Замрите на секунду»)
+    private let stillRing = StillRingView(frame: CGRect(x: 0, y: 0, width: 64, height: 64))
+    private var ringLink: CADisplayLink?
+    private var ringPrev: (T: simd_float4x4, t: CFTimeInterval)?
     private var coverageLink: CADisplayLink?
     private var currentSurfaces: [CovSurface] = []
     private var doneSurfaces: [CovSurface] = []      // комнаты, уже завершённые кнопкой «Следующая комната»
@@ -196,7 +201,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private func setupAimHint(above bar: UIView) {
         aimLabel.textColor = .white
-        aimLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        aimLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         aimLabel.textAlignment = .center
         aimLabel.numberOfLines = 2
         aimLabel.backgroundColor = UIColor(red: 0.85, green: 0.37, blue: 0.09, alpha: 0.88)
@@ -215,14 +220,38 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         crosshair.translatesAutoresizingMaskIntoConstraints = false
         crosshair.isUserInteractionEnabled = false
         view.addSubview(crosshair)
+        stillRing.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(stillRing, belowSubview: crosshair)
+        let rl = CADisplayLink(target: self, selector: #selector(ringTick))
+        rl.preferredFramesPerSecond = 30
+        rl.add(to: .main, forMode: .common)
+        ringLink = rl
         NSLayoutConstraint.activate([
+            stillRing.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            stillRing.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            stillRing.widthAnchor.constraint(equalToConstant: 64), stillRing.heightAnchor.constraint(equalToConstant: 64),
             aimLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             aimLabel.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -40),
-            aimLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -14),
+            // сверху, под строкой статуса и мини-картой (128 + отступы): внизу подсказка закрывала мини-модель RoomPlan (замечание пользователя 2026-10-22)
+            aimLabel.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8 + 128 + 10),
             aimLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
             crosshair.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             crosshair.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
+    }
+
+    /// Скорость телефона по кадру ARKit: медленнее порогов съёмки (≈ 12 см/с и 0,12 рад/с — как «≤ 5 см / 0,05 рад за 0,4 с»)
+    /// — кольцо заполняется за 0,8 с, иначе быстро опустошается.
+    @objc private func ringTick(_ link: CADisplayLink) {
+        guard let frame = sharedSession?.currentFrame, reviewRoom == nil, !finished else { stillRing.setProgress(0); return }
+        let T = frame.camera.transform, now = link.timestamp
+        defer { ringPrev = (T, now) }
+        guard let prev = ringPrev, now > prev.t, frame.camera.trackingState == .normal else { stillRing.setProgress(0); return }
+        let dt = Float(now - prev.t)
+        let v = simd_length(xyz(T.columns.3) - xyz(prev.T.columns.3)) / dt
+        let w = acos(max(-1, min(1, simd_dot(simd_normalize(-xyz(T.columns.2)), simd_normalize(-xyz(prev.T.columns.2)))))) / dt
+        let still = v < 0.12 && w < 0.12
+        stillRing.setProgress(still ? min(1, stillRing.progress + CGFloat(dt / 0.8)) : max(0, stillRing.progress - CGFloat(dt * 4)))
     }
 
     /// nil — всё в порядке (кадр снят или снимать нечего); иначе — что мешает. Показ с задержкой 1,2 с, чтобы не мигало на ходу.
@@ -549,6 +578,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         locMgr.stopUpdatingHeading(); locMgr.stopUpdatingLocation()
         stopCoverage()   // CADisplayLink держит контроллер — отпускаем при любом закрытии экрана
         cloudLink?.invalidate(); cloudLink = nil
+        ringLink?.invalidate(); ringLink = nil
     }
 
     override var prefersStatusBarHidden: Bool { true }
@@ -1186,6 +1216,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         // но сетка и облако точек при этом потерялись — вернули 2026-10-20: «функционал не надо было менять»)
         if mode == "final" || hd { pollKeyFrame(frame: frame) }
         if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
+            stillRing.flash()
             // в обходе этапа счётчик HD — в строке «Снято кадров»; HD-кадры идут и в подсветку (подробность съёмки)
             if mode == "final" { statusLabel.text = "HD-кадров: \(hc.count) · комнат: \(capturedRooms.count + 1)" }
             if let e = hc.last {
@@ -1363,6 +1394,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         frames[wall.identifier] = list
         if !hd { setAim(nil) }
         coverage?.add(covView)
+        stillRing.flash()
         // HD: пробуем полноразмерный снимок 12 Мп (ARKit 6) вместо кадра видео 1920×1440 — получится ли внутри сессии RoomPlan,
         // проверяется на устройстве: счётчик «12 Мп» в строке статуса
         if hd, let sess = sharedSession {
@@ -1676,6 +1708,46 @@ let keyFrames = input.keyFrames
 /// Стеклянная кнопка поверх камеры: размытие фона (системный материал), светлый ободок, белый значок.
 /// Круглая со значком SF Symbols или капсула с текстом; `tint` — цветное стекло для главного действия.
 /// Нажатие — пружинное сжатие; выключенная — полупрозрачная.
+/// Кольцо прогресса вокруг перекрестия: белая дорожка, оранжевая дуга заполняется по часовой с 12 часов; flash() — кадр снят.
+final class StillRingView: UIView {
+    private let track = CAShapeLayer(), arc = CAShapeLayer()
+    private(set) var progress: CGFloat = 0
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        for (l, c, w) in [(track, UIColor(white: 1, alpha: 0.35), CGFloat(4)), (arc, UIColor(red: 0.85, green: 0.37, blue: 0.09, alpha: 1), CGFloat(4))] {
+            l.fillColor = UIColor.clear.cgColor; l.strokeColor = c.cgColor; l.lineWidth = w; l.lineCap = .round
+            layer.addSublayer(l)
+        }
+        arc.strokeEnd = 0
+        layer.shadowColor = UIColor.black.cgColor; layer.shadowOpacity = 0.35; layer.shadowRadius = 2; layer.shadowOffset = .zero
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let r = min(bounds.width, bounds.height) / 2 - 3
+        let path = UIBezierPath(arcCenter: CGPoint(x: bounds.midX, y: bounds.midY), radius: r, startAngle: -.pi / 2, endAngle: 1.5 * .pi, clockwise: true).cgPath
+        track.path = path; arc.path = path
+    }
+    func setProgress(_ p: CGFloat) {
+        progress = p
+        CATransaction.begin(); CATransaction.setDisableActions(true); arc.strokeEnd = p; CATransaction.commit()
+    }
+    /// Кадр снят: кольцо зеленеет, коротко «вздувается» и сбрасывается.
+    func flash() {
+        arc.strokeColor = UIColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 1).cgColor
+        setProgress(1)
+        transform = .identity
+        UIView.animate(withDuration: 0.12, animations: { self.transform = CGAffineTransform(scaleX: 1.25, y: 1.25) }) { _ in
+            UIView.animate(withDuration: 0.18, animations: { self.transform = .identity }) { _ in
+                self.arc.strokeColor = UIColor(red: 0.85, green: 0.37, blue: 0.09, alpha: 1).cgColor
+                self.setProgress(0)
+            }
+        }
+    }
+}
+
 /// Точки мира из карты глубины кадра (лидар): каждый step-й пиксель, только средняя и высокая уверенность.
 /// Карта глубины в той же ориентации, что кадр камеры (датчик, альбомная), интринсики — от полного кадра.
 func depthWorldPoints(_ frame: ARFrame, step: Int) -> [simd_float3] {

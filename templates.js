@@ -81,8 +81,20 @@ async function sha256Hex(blob) {
 let geoCache = { at: 0, pos: null };
 // геометка: только с согласия (первый раз спросит браузер), с кешем на 2 минуты; при отказе — null, без блокировки съёмки
 function getGeo(timeoutMs = 4000) {
-  if (!navigator.geolocation) return Promise.resolve(null);
   if (Date.now() - geoCache.at < 120000) return Promise.resolve(geoCache.pos);
+  // в приложении — через iOS (системное разрешение, спрашивается один раз); веб-путь в WKWebView спрашивал «localhost хочет…» при каждом запуске
+  const RP = typeof Native !== 'undefined' && Native.isNative ? Native.RP : null;
+  if (RP && RP.getLocation) {
+    return Promise.race([
+      RP.getLocation({ timeout: timeoutMs / 1000 }).then(r => {
+        const pos = r && r.lat != null ? { lat: +(+r.lat).toFixed(6), lon: +(+r.lon).toFixed(6), acc: Math.round(r.acc) } : null;
+        if (pos) geoCache = { at: Date.now(), pos };
+        return pos || geoCache.pos;
+      }).catch(() => geoCache.pos),
+      new Promise(res => setTimeout(() => res(geoCache.pos), timeoutMs + 500)),
+    ]);
+  }
+  if (!navigator.geolocation) return Promise.resolve(null);
   return new Promise(res => {
     let done = false;
     const finish = v => { if (!done) { done = true; res(v); } };

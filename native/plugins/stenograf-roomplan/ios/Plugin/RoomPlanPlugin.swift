@@ -9,6 +9,7 @@ import Photos
 import Contacts
 import ContactsUI
 import UniformTypeIdentifiers
+import CoreLocation
 
 /// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
@@ -34,6 +35,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "saveFileAs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "takeIncoming", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getLocation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickContact", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "searchContacts", returnType: CAPPluginReturnPromise),
     ]
@@ -284,6 +286,25 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Геопозиция для печати фото — через CoreLocation, по системному разрешению приложения (то же, что у компаса в сканере).
+    /// Раньше JS брал её через navigator.geolocation, и встроенный браузер спрашивал «localhost хочет использовать геопозицию»
+    /// при каждом запуске (WKWebView не запоминает разрешение сайта). Ответ {lat, lon, acc} или {denied: true} / {} по таймауту.
+    private var geoOnce: LocationOnce?
+    @objc func getLocation(_ call: CAPPluginCall) {
+        let timeout = call.getDouble("timeout") ?? 4
+        DispatchQueue.main.async {
+            if self.geoOnce != nil { call.resolve([:]); return }   // уже идёт запрос — без геометки, съёмку не держим
+            let g = LocationOnce(timeout: timeout) { [weak self] loc, denied in
+                self?.geoOnce = nil
+                if denied { call.resolve(["denied": true]); return }
+                guard let l = loc else { call.resolve([:]); return }
+                call.resolve(["lat": l.coordinate.latitude, "lon": l.coordinate.longitude, "acc": l.horizontalAccuracy])
+            }
+            self.geoOnce = g
+            g.start()
+        }
+    }
+
     /// Выбор контакта системным окном iOS (CNContactPickerViewController): окно работает вне приложения,
     /// поэтому разрешение на доступ ко всей книге контактов не нужно — приложение получает только выбранный контакт.
     /// Ответ {picked, name, phones: [String]}; отмена — picked: false.
@@ -464,6 +485,34 @@ final class PickFileDelegate: NSObject, UIDocumentPickerDelegate, UIAdaptivePres
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish(nil) }
     // окно смахнули вниз — тоже отмена, иначе JS ждал бы ответа вечно
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { finish(nil) }
+}
+
+/// Одна геоточка: при необходимости спрашивает системное разрешение «при использовании», затем requestLocation; таймаут — ответ без точки.
+final class LocationOnce: NSObject, CLLocationManagerDelegate {
+    private let mgr = CLLocationManager()
+    private var done: ((CLLocation?, Bool) -> Void)?
+    private let timeout: Double
+    init(timeout: Double, _ done: @escaping (CLLocation?, Bool) -> Void) { self.timeout = timeout; self.done = done; super.init() }
+    func start() {
+        mgr.delegate = self
+        mgr.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in self?.finish(nil, false) }
+        switch mgr.authorizationStatus {
+        case .notDetermined: mgr.requestWhenInUseAuthorization()   // ответ придёт в locationManagerDidChangeAuthorization
+        case .denied, .restricted: finish(nil, true)
+        default: mgr.requestLocation()
+        }
+    }
+    private func finish(_ l: CLLocation?, _ denied: Bool) { let d = done; done = nil; mgr.delegate = nil; d?(l, denied) }
+    func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
+        switch m.authorizationStatus {
+        case .notDetermined: break
+        case .denied, .restricted: finish(nil, true)
+        default: m.requestLocation()
+        }
+    }
+    func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) { finish(locs.last, false) }
+    func locationManager(_ m: CLLocationManager, didFailWithError error: Error) { finish(nil, false) }
 }
 
 final class ContactPickerDelegate: NSObject, CNContactPickerDelegate {
