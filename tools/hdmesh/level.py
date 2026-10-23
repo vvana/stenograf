@@ -68,6 +68,13 @@ for gi, g in enumerate(geoms):
     rc = R[F]                                                              # (nF,3,3) эталон углов
     gain = (rc + 6) / (tc + 6)
     gain = np.where(np.isfinite(gain) & ~orange[..., None], np.clip(gain, float(__import__("os").environ.get("GMIN", 0.55)), float(__import__("os").environ.get("GMAX", 1.8))), 1.0)
+    # поправка — одна на вершину: у соседних треугольников в общей вершине она была разной (своя выборка текстуры у каждого угла),
+    # и на резкой текстуре 12 Мп проступала сетка треугольников (пакет 1648). Вершины внутри куска текстуры общие,
+    # а на швах кусков раздвоены — там поправки остаются разными, как и нужно
+    ok = (np.isfinite(rc).all(-1) & ~orange).reshape(-1)
+    vg = np.zeros((nV, 3)); vc = np.zeros(nV)
+    np.add.at(vg, F.reshape(-1)[ok], gain.reshape(-1, 3)[ok]); np.add.at(vc, F.reshape(-1)[ok], 1)
+    gain = np.where((vc > 0)[:, None], vg / np.maximum(vc, 1)[:, None], 1.0)[F]
     if __import__("os").environ.get("NOGAIN"): gain[:] = 1.0
     # карта: какой треугольник в каждом пикселе атласа
     idmap = np.zeros((H, W), np.int32)

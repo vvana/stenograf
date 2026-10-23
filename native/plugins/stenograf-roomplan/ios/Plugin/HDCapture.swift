@@ -36,6 +36,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     private let maxVoxels = 600_000
     var cloudCount: Int { voxels.count }
     private(set) var depthFrames = 0
+    static let hiResLongSide = 3024              // снимок 12 Мп (4032×3024) → 3024×2268
     private(set) var hiRes = 0                    // кадров, заменённых полноразмерным снимком (12 Мп)
     private var hiResSize = ""
     let maxFrames = 2000  // 2026-10-21: «максимально подробная съёмка» (было 1000, до того 300); ≈ 1,5–2 ГБ на квартиру
@@ -109,10 +110,14 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         guard index < entries.count else { return }
         let e = entries[index], res = hf.camera.imageResolution
         guard Int(res.width) > e.w else { return }          // не больше видеокадра — смысла нет
+        // 2026-10-23: снимок 12 Мп сохраняем уменьшенным до 3024 по длинной стороне (~7 Мп) с качеством 0,85 —
+        // 12 Мп с 0,92 давали ~3,9 МБ на кадр (пакет 1648 — 460 МБ), так ~0,95 МБ; резкость всё ещё в 1,6 раза выше видеокадра
+        let k = min(1, Float(Self.hiResLongSide) / Float(max(res.width, res.height)))
         let K = hf.camera.intrinsics
         var n = e
-        n.c2w = hf.camera.transform; n.fx = K.columns.0.x; n.fy = K.columns.1.y; n.cx = K.columns.2.x; n.cy = K.columns.2.y
-        n.w = Int(res.width); n.h = Int(res.height)
+        n.c2w = hf.camera.transform; n.fx = K.columns.0.x * k; n.fy = K.columns.1.y * k; n.cx = K.columns.2.x * k; n.cy = K.columns.2.y * k
+        n.w = Int((Float(res.width) * k).rounded()); n.h = Int((Float(res.height) * k).rounded())
+        guard n.w > e.w else { return }
         let ownDepth = Self.depthPNG(hf)
         if ownDepth == nil, e.depth != nil { n.depthC2W = e.c2w; n.depthK = [e.fx, e.fy, e.cx, e.cy, Float(e.w), Float(e.h)] }
         if ownDepth != nil && e.depth == nil { depthFrames += 1 }
@@ -120,11 +125,16 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         entries[index] = n
         hiRes += 1; hiResSize = "\(n.w)x\(n.h)"
         pending += 1
-        let url = dir.appendingPathComponent(e.file), pb = hf.capturedImage, depthName = n.depth
+        let url = dir.appendingPathComponent(e.file), pb = hf.capturedImage, depthName = n.depth, outW = n.w, outH = n.h
         queue.async { [weak self] in   // очередь последовательная: запись видеокадра этого же файла уже прошла
             let cs = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-            if let data = ciContext.jpegRepresentation(of: CIImage(cvPixelBuffer: pb), colorSpace: cs,
-                                                       options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.92]) {
+            var img = CIImage(cvPixelBuffer: pb)
+            if k < 1, let f = CIFilter(name: "CILanczosScaleTransform") {
+                f.setValue(img, forKey: kCIInputImageKey); f.setValue(k, forKey: kCIInputScaleKey); f.setValue(1.0, forKey: kCIInputAspectRatioKey)
+                if let o = f.outputImage { img = o.cropped(to: CGRect(x: 0, y: 0, width: outW, height: outH)) }
+            }
+            if let data = ciContext.jpegRepresentation(of: img, colorSpace: cs,
+                                                       options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.85]) {
                 try? data.write(to: url)
             }
             if let d = ownDepth, let name = depthName, let self = self { try? d.write(to: self.dir.appendingPathComponent(name)) }

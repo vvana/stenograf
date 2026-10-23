@@ -552,6 +552,7 @@ async function viewTour(pid, roomId = null) {
   const meshStage = () => { const ok = stages.filter(s => (s.meshScans || []).some(m => m.blob)); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
   const hdStage = () => { const ok = stages.filter(s => stageHDModels(s).length); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
   if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
+  if (tourState.mode === 'final') tourState.mode = 'house';   // режима «Финал» больше нет в переключателе
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
@@ -574,7 +575,7 @@ async function viewTour(pid, roomId = null) {
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}<span>Объект</span></button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('person')}<span>Внутри</span></button>
           ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}<span>HD</span></button>` : ''}
-          ${meshStage() || (project.finalScan && project.finalScan.blob) ? `<button data-mode="final" class="${tourState.mode === 'final' ? 'active' : ''}">${I('flag')}<span>Финал</span></button>` : ''}
+          ${'' /* «Финал» (сетка лидара с телефона, stage.meshScans / project.finalScan) убран из 3D 2026-10-23 по просьбе пользователя — сетки по-прежнему сохраняются, код режима остался */}
           ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
         </div>
         <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>

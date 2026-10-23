@@ -1563,3 +1563,15 @@ button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
 /* знак в шапке и на пустом главном экране — картинка (2026-10-17) */
 .topbar .logo .logo-img { width: 32px; height: 32px; margin: 0 6px 0 0; display: block; }   /* без отрицательных отступов: h1 с overflow:hidden обрезал верх знака */
 .empty-ico.logo-big .logo-img { width: 88px; height: 88px; display: inline-block; }
+
+/* главный экран (2026-10-23, просьба пользователя): кнопки внизу закреплены, список объектов прокручивается под ними;
+   карандаш — в правом верхнем углу карточки; название приложения — подписью в конце списка */
+.home-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; margin: 0;
+  padding: 28px 16px calc(env(safe-area-inset-bottom) + 16px);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent) 0, var(--bg) 26px); }
+.home-pad { min-height: 0; padding-bottom: calc(env(safe-area-inset-bottom) + 190px); }
+.project-card .card-edit { top: 4px; right: 4px; margin-top: 0; }
+.home-brand { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 20px 0 0; color: var(--mut); font: 600 13px system-ui, -apple-system, sans-serif; }
+.home-brand .logo .logo-img { width: 20px; height: 20px; display: block; }
+.proj-mini { right: 16px; top: 34px; bottom: 10px; }
+.project-card:has(.proj-mini) { padding-right: 96px; }

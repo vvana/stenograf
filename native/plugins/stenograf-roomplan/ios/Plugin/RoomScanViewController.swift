@@ -78,6 +78,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private var cloudLink: CADisplayLink?
     private let cloudQueue = DispatchQueue(label: "fixpoint.cloud", qos: .userInitiated)
     private var cloudBusy = false   // сетка считается в фоне — новый расчёт не начинать
+    private var cloudSuspended = false   // скан комнаты закончен (модель едет в центр, проверка) — сетку лидара не показываем
     // подсказка «чего не хватает для кадра стены» над кнопками и перекрестие в центре (кадр стены берётся по стене под центром экрана)
     private let aimLabel = UILabel()
     private let crosshair = UILabel()
@@ -382,10 +383,19 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             link.preferredFramesPerSecond = 6
             link.add(to: .main, forMode: .common)
             cloudLink = link
+            suspendCloud(cloudSuspended)
         } else if !on {
             cloudLink?.invalidate(); cloudLink = nil
             cloudView?.removeFromSuperview(); cloudView = nil
         }
+    }
+
+    /// 2026-10-22, просьба пользователя: после окончания скана комнаты (готовая модель едет в центр экрана) сетку лидара выключать;
+    /// при следующей комнате — снова как была. Кнопка облака остаётся как есть.
+    private func suspendCloud(_ s: Bool) {
+        cloudSuspended = s
+        cloudView?.isHidden = s
+        cloudLink?.isPaused = s
     }
 
     @objc private func cloudTick() {
@@ -615,6 +625,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                                        message: n > 0 ? "Уже принято комнат: \(n). Они сохранятся, если переснять только текущую." : nil,
                                        preferredStyle: .actionSheet)
             ac.addAction(UIAlertAction(title: "Переснять эту комнату", style: .default) { [weak self] _ in self?.restartCurrentRoom() })
+            // пауза: сохранить готовое сейчас, остальные комнаты — потом новым обходом (добавятся к той же схеме)
+            if !savableRooms().isEmpty {
+                ac.addAction(UIAlertAction(title: "Сохранить готовое и закончить", style: .default) { [weak self] _ in self?.saveAndFinish() })
+            }
             ac.addAction(UIAlertAction(title: "Отменить весь обмер", style: .destructive) { [weak self] _ in self?.confirmCancelAll() })
             ac.addAction(UIAlertAction(title: "Продолжить скан", style: .cancel))
             present(ac, animated: true)
@@ -643,6 +657,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         discardCurrent = true
         nextButton?.isEnabled = false; doneButton.isEnabled = false
         statusLabel.text = "Начинаю комнату заново…"
+        suspendCloud(true)
         captureView.captureSession.stop(pauseARSession: false)
     }
 
@@ -682,6 +697,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         pendingAction = "next"
         nextButton.isEnabled = false; doneButton.isEnabled = false
         statusLabel.text = "Обрабатываю комнату…"
+        suspendCloud(true)
         captureView.captureSession.stop(pauseARSession: false)   // AR-сессия живёт дальше — общие координаты
     }
 
@@ -718,6 +734,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         }
         doneButton.isEnabled = false; nextButton?.isEnabled = false
         statusLabel.text = "Обрабатываю скан…"
+        suspendCloud(true)
         captureView.captureSession.stop(pauseARSession: false)
     }
 
@@ -734,11 +751,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
         guard !finished else { return }
-        if let error = error {
-            finished = true
-            dismiss(animated: true) { self.completion(.failure(ScanError.failed(error.localizedDescription))) }
-            return
-        }
+        if let error = error { scanInterrupted(error); return }
         if isMulti {                             // по комнатам: сначала показать результат на проверку
             showReview(processedResult)
             return
@@ -950,7 +963,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         view.insertSubview(cv, at: 0)
         captureView = cv
         latestRoom = nil
-        nextButton.isEnabled = true; doneButton.isEnabled = true
+        suspendCloud(false)
+        nextButton?.isEnabled = true; doneButton?.isEnabled = true
         statusLabel.text = capturedRooms.isEmpty ? initialHint() : "Комнат принято: \(capturedRooms.count). Перейдите в следующую и продолжайте"
         runCapture()
     }
@@ -1090,11 +1104,81 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     }
 
     func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
-        if let error = error, !finished {
+        if let error = error, !finished { DispatchQueue.main.async { [weak self] in self?.scanInterrupted(error) } }
+    }
+
+    // MARK: прерывание скана (звонок, потеря положения) — прогресс не теряем
+
+    /// 2026-10-23: во время скана позвонили, после разговора «телефон теряет положение», RoomPlan закончил скан с ошибкой —
+    /// и сканер закрывался, выбрасывая принятые комнаты и HD-кадры. Теперь — окно: продолжить / сохранить готовое / отменить.
+    private var interruptShown = false
+    private func scanInterrupted(_ error: Error) {
+        guard !finished, !interruptShown else { return }
+        if mode == "ghost" {
             finished = true
-            pollTimer?.invalidate()
             dismiss(animated: true) { self.completion(.failure(ScanError.failed(error.localizedDescription))) }
+            return
         }
+        interruptShown = true
+        if reviewRoom != nil { hideReview() }
+        nextButton?.isEnabled = false; doneButton?.isEnabled = false
+        suspendCloud(true)
+        let canSave = savableRooms().count > 0
+        var lines: [String] = []
+        if !capturedRooms.isEmpty { lines.append("Принято комнат: \(capturedRooms.count)") }
+        if let r = latestRoom, r.walls.count >= 3 { lines.append("текущая комната — по последнему виду (стен: \(r.walls.count))") }
+        if let hc = hdCapture, hc.count > 0 { lines.append("HD-кадров: \(hc.count)") }
+        let ac = UIAlertController(title: "Скан прервался",
+                                   message: (lines.isEmpty ? "" : lines.joined(separator: ", ") + " — сохранены.
+")
+                                       + "«Продолжить» — снова наведите камеру на уже снятое место, телефон найдёт своё положение.",
+                                   preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "Продолжить", style: .default) { [weak self] _ in self?.resumeAfterInterrupt() })
+        if canSave { ac.addAction(UIAlertAction(title: "Сохранить и закончить", style: .default) { [weak self] _ in self?.saveAndFinish() }) }
+        ac.addAction(UIAlertAction(title: "Отменить", style: .destructive) { [weak self] _ in
+            // отдельное подтверждение; «Нет» — снова это окно (кнопки скана сейчас выключены)
+            let c = UIAlertController(title: "Отменить весь скан?", message: "Всё снятое в этом скане будет потеряно.", preferredStyle: .alert)
+            c.addAction(UIAlertAction(title: "Нет, вернуться", style: .cancel) { _ in self?.interruptShown = false; self?.scanInterrupted(error) })
+            c.addAction(UIAlertAction(title: "Отменить всё", style: .destructive) { _ in self?.interruptShown = false; self?.cancelAll() })
+            self?.present(c, animated: true)
+        })
+        statusLabel.text = "Скан прервался — прогресс сохранён"
+        if presentedViewController != nil { dismiss(animated: false) { [weak self] in self?.present(ac, animated: true) } }
+        else { present(ac, animated: true) }
+    }
+
+    /// Комнаты, которые можно сохранить сейчас: принятые + текущая по последнему виду RoomPlan (если в ней ≥ 3 стен).
+    private func savableRooms() -> [CapturedRoom] {
+        var rooms = capturedRooms
+        if let r = latestRoom, r.walls.count >= 3 { rooms.append(r) }
+        return rooms
+    }
+
+    /// Текущая комната — заново в той же AR-сессии (ARKit сам находит прежнее положение по уже снятому); принятое остаётся.
+    private func resumeAfterInterrupt() {
+        interruptShown = false
+        guard !finished else { return }
+        currentSurfaces = []
+        startNextRoom()
+        statusLabel.text = "Продолжаем. Наведите камеру на уже снятое место, затем сканируйте дальше"
+    }
+
+    /// «Сохранить и закончить»: принятые комнаты + текущая по последнему виду, HD-пакет — как при обычном завершении.
+    /// Оставшиеся комнаты снимаются потом новым обходом — они добавятся к той же схеме.
+    private func saveAndFinish() {
+        interruptShown = false
+        guard !finished else { return }
+        let rooms = savableRooms()
+        guard !rooms.isEmpty else { confirmCancelAll(); return }
+        finished = true
+        pollTimer?.invalidate(); pollTimer = nil
+        stopCoverage()
+        if let anchors = sharedSession?.currentFrame?.anchors { meshAnchors = anchors.compactMap { $0 as? ARMeshAnchor } }
+        buttonBar?.isHidden = true
+        if reviewRoom != nil { hideReview() }
+        captureView.captureSession.stop(pauseARSession: false)
+        if isMulti { capturedRooms = rooms; finishStructure() }
+        else { capturedRooms = rooms; finishSingle(rooms[rooms.count - 1]) }
     }
 
     // MARK: геометрия → словари для JS

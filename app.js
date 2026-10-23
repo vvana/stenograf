@@ -92,7 +92,8 @@ async function loadProjectData(pid) {
     normalizeRoom(r);
     if (r._migrated) { delete r._migrated; await dbPut('rooms', r); }
   }
-  return { project, rooms, stages, photos };
+  // удалённое, пока идут 3 секунды «Отменить», ещё лежит в базе — не показываем
+  return { project, rooms, stages: stages.filter(s => !pendingDel.has(s.id)), photos: photos.filter(p => !pendingDel.has(p.id)) };
 }
 
 /* ---------- сжатие фото ---------- */
@@ -353,18 +354,39 @@ const swipeButtons = (send = true) => `${send ? `<button class="swipe-send">${IC
 /* ---------- удаление объекта и схемы ---------- */
 
 // полоса «Удалено · Отменить» на ms миллисекунд — защита от случайного удаления
-function undoBar(text, onUndo, ms = 3000) {
+// Отложенное удаление (2026-10-23): раньше запись сразу стиралась из базы, а для «Отменить» держалась копия в памяти.
+// На iPhone (WKWebView) Blob, прочитанный из IndexedDB, ссылается на файл базы, и после удаления записи вернуть его нельзя —
+// отмена падала «неизвестная ошибка (promise)», этап пропадал вместе с фото. Теперь удаляемое только прячется (pendingDel),
+// а по-настоящему стирается, когда 3 секунды прошли (commit), — или сразу, если поверх появилась следующая отмена / приложение ушло в фон.
+const pendingDel = new Set();
+let undoCommit = null;
+function flushUndo() { const c = undoCommit; undoCommit = null; if (c) c(); }
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushUndo(); });
+
+// hide — id, которые прячем до конца отсчёта; commit — настоящее удаление; onUndo — только для данных без Blob (команда)
+function undoBar(text, onUndo, ms = 3000, { hide = [], commit = null } = {}) {
+  flushUndo();
   document.querySelectorAll('.undo-bar').forEach(e => e.remove());
+  hide.forEach(id => pendingDel.add(id));
   const el = document.createElement('div');
   el.className = 'undo-bar';
   el.innerHTML = `<span>${esc(text)}</span><button>Отменить</button><i style="animation-duration:${ms}ms"></i>`;
   document.body.appendChild(el);
   let done = false;
-  const t = setTimeout(() => { done = true; el.remove(); }, ms);
+  const finish = () => {
+    if (done) return; done = true; clearTimeout(t); el.remove();
+    if (undoCommit === finish) undoCommit = null;
+    Promise.resolve(commit && commit()).catch(e => toast('Не удалось удалить: ' + (e && e.message || e)))
+      .finally(() => hide.forEach(id => pendingDel.delete(id)));
+  };
+  undoCommit = finish;
+  const t = setTimeout(finish, ms);
   el.querySelector('button').onclick = async () => {
     if (done) return;
     done = true; clearTimeout(t); el.remove();
-    await onUndo();
+    if (undoCommit === finish) undoCommit = null;
+    hide.forEach(id => pendingDel.delete(id));
+    if (onUndo) await onUndo();
     toast('Восстановлено');
     render();
   };
@@ -374,17 +396,12 @@ function undoBar(text, onUndo, ms = 3000) {
 async function deleteProject(pid) {
   const project = await dbGet('projects', pid);
   if (!project) return false;
-  const [rooms, stages, photos] = await Promise.all([dbAll('rooms', 'projectId', pid), dbAll('stages', 'projectId', pid), dbAll('photos', 'projectId', pid)]);
-  await dbDelWhere('photos', 'projectId', pid);
-  await dbDelWhere('rooms', 'projectId', pid);
-  await dbDelWhere('stages', 'projectId', pid);
-  await dbDel('projects', pid);
-  undoBar(`Объект «${project.name}» удалён`, async () => {
-    await dbPut('projects', project);
-    for (const r of rooms) await dbPut('rooms', r);
-    for (const st of stages) await dbPut('stages', st);
-    for (const ph of photos) await dbPut('photos', ph);
-  });
+  undoBar(`Объект «${project.name}» удалён`, null, 3000, { hide: [pid], commit: async () => {
+    await dbDelWhere('photos', 'projectId', pid);
+    await dbDelWhere('rooms', 'projectId', pid);
+    await dbDelWhere('stages', 'projectId', pid);
+    await dbDel('projects', pid);
+  } });
   return true;
 }
 
@@ -392,7 +409,7 @@ async function deleteProject(pid) {
 /* ---------- экран: список объектов ---------- */
 
 async function viewProjects() {
-  const projects = await dbAll('projects');
+  const projects = (await dbAll('projects')).filter(p => !pendingDel.has(p.id));
   projects.sort((a, b) => b.created - a.created);
   const photosAll = await dbAll('photos');
   const counts = {};
@@ -402,9 +419,8 @@ async function viewProjects() {
   (await dbAll('rooms')).forEach(r => { if (r.pts || r.w) { normalizeRoom(r); (roomsBy[r.projectId] = roomsBy[r.projectId] || []).push(r); } });
 
   app.innerHTML = `
-    ${header('Fixpoint', null)}
+    ${header('Объекты', false)}
     <div class="pad home-pad">
-      <div class="home-title">Объекты</div>
       ${projects.length === 0 ? `
         <div class="empty">
           <div class="empty-ico logo-big">${LOGO}</div>
@@ -423,7 +439,9 @@ async function viewProjects() {
             </div>
           </div>`).join('')}
       </div>
-      <!-- кнопки — внизу экрана (при длинном списке объектов уезжают ниже вместе с ним) -->
+      <!-- название приложения — подписью в конце списка (в шапке теперь «Объекты», 2026-10-23) -->
+      ${projects.length ? `<div class="home-brand"><span class="logo">${LOGO}</span>Fixpoint</div>` : ''}
+      <!-- кнопки всегда внизу экрана, список прокручивается под ними (2026-10-23) -->
       <div class="home-bottom">
         <button class="btn primary wide" id="add-project">+ Новый объект</button>
         <div class="backup-row">
@@ -2529,18 +2547,19 @@ async function viewStages(pid) {
     const s = stages.find(x => x.id === id);
     if (!s) return false;
     const ph = photos.filter(p => p.stageId === id);
-    const ords = stages.map(x => ({ ...x })); // порядок до удаления — для отмены
-    for (const p of ph) await dbDel('photos', p.id);
-    if (Native.RP && Native.RP.deleteFile) for (const c of stageHDCaps(s)) Native.RP.deleteFile({ path: c.path }).catch(() => {});
-    await dbDel('stages', id);
-    const rest = stages.filter(x => x.id !== id);
-    for (let k = 0; k < rest.length; k++) if (rest[k].ord !== k) { rest[k].ord = k; await dbPut('stages', rest[k]); }
-    render();
-    // этап с фото — 3 секунды на отмену; пустой удаляется сразу
-    if (ph.length) undoBar(`Этап «${s.name}» и ${ph.length} фото удалены`, async () => {
-      for (const x of ords) await dbPut('stages', x);
-      for (const p of ph) await dbPut('photos', p);
-    });
+    const caps = stageHDCaps(s);
+    const commit = async () => {
+      for (const p of ph) await dbDel('photos', p.id);
+      if (Native.RP && Native.RP.deleteFile) for (const c of caps) Native.RP.deleteFile({ path: c.path }).catch(() => {});
+      await dbDel('stages', id);
+      const rest = (await dbAll('stages', 'projectId', pid)).sort((a, b) => a.ord - b.ord);
+      for (let k = 0; k < rest.length; k++) if (rest[k].ord !== k) { rest[k].ord = k; await dbPut('stages', rest[k]); }
+    };
+    // этап с фото или HD-пакетами — 3 секунды на отмену (до их конца этап только спрятан); пустой удаляется сразу
+    if (ph.length || caps.length) {
+      undoBar(`Этап «${s.name}»${ph.length ? ` и ${ph.length} фото` : ''} удалён`, null, 3000, { hide: [id, ...ph.map(p => p.id)], commit });
+      render();
+    } else { await commit(); render(); }
     return true;
   }, id => sendStage(id));
 
@@ -2744,9 +2763,8 @@ async function viewStageAlbum(pid, stageId) {
     const r = rooms.find(x => x.id === roomId);
     const ph = groups.filter(g => g.room === r).flatMap(g => g.list);
     if (!ph.length) return false;
-    for (const x of ph) await dbDel('photos', x.id);
+    undoBar(`${r.name}: удалено фото — ${ph.length}`, null, 3000, { hide: ph.map(x => x.id), commit: async () => { for (const x of ph) await dbDel('photos', x.id); } });
     render();
-    undoBar(`${r.name}: удалено фото — ${ph.length}`, async () => { for (const x of ph) await dbPut('photos', x); render(); });
     return true;
   });
   $('#album-status').onclick = async () => {
