@@ -218,7 +218,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             pausedRooms = ScanJournal.pausedRooms()
             frames = ScanJournal.frames()
             capturedRooms = ScanJournal.rooms()
+            surfFrames = ScanJournal.surfFrames()
             journal = ScanJournal(resuming: frames)
+            let si = ScanJournal.surfIndexJSON()
+            journal?.resumeSurf(count: si.compactMap { ($0["n"] as? NSNumber)?.intValue }.max() ?? 0, index: si)
         } else {
             if hd { hdCapture = HDCapture() }
             // журнал — для обходов и сканов по комнатам (долгие); короткие обмер комнаты, пол/потолок и призрак — без него
@@ -621,7 +624,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 self.waitingReloc = false
                 self.statusLabel.text = "Место найдено — продолжаем. Принято комнат: \(self.capturedRooms.count)"
                 self.runCapture()
-            } else if Date().timeIntervalSince(self.relocStart) > 40 {
+            } else if Date().timeIntervalSince(self.relocStart) > 15 {
                 self.relocTimer?.invalidate(); self.relocTimer = nil
                 self.relocFailed()
             }
@@ -1089,6 +1092,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
                 let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in buildColoredMesh(meshInput) }.value
                 for (k, v) in mesh { out[k] = v }
+                await self.buildTexModel(hc, anchors: anchors, into: &out)
                 let ply = (out["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
                 await self.packHD(hc, into: &out, pointsPLY: (out["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
             }
@@ -1137,10 +1141,34 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 for (k, v) in mesh { dict[k] = v }
             }
             if let hc = hdc {
+                await self.buildTexModel(hc, anchors: anchors, into: &dict)
                 let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
                 await self.packHD(hc, into: &dict, pointsPLY: (dict["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
             }
             return dict
+        }
+    }
+
+    /// Модель «как у Polycam» на телефоне: сетка лидара + HD-кадры → GLB в Documents/scan-models (до упаковки пакета — кадры ещё на диске).
+    private func buildTexModel(_ hc: HDCapture, anchors: [ARMeshAnchor], into dict: inout [String: Any]) async {
+        guard !anchors.isEmpty, hc.count > 0 else { return }
+        statusLabel.text = "Собираю 3D-модель с текстурой…"
+        hc.flushJournal()
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("scan-models", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("Fixpoint-3D-\(Int(Date().timeIntervalSince1970)).glb")
+        let input = TexInput(anchors: anchors, frames: hc.texFrames)
+        let label = statusLabel
+        let res = await Task.detached(priority: .userInitiated) { () -> (faces: Int, seen: Int)? in
+            TextureBuilder.build(anchors: input.anchors, frames: input.frames, to: url) { p in
+                DispatchQueue.main.async { label.text = "Собираю 3D-модель с текстурой… \(Int(p * 100))%" }
+            }
+        }.value
+        if let r = res, FileManager.default.fileExists(atPath: url.path) {
+            dict["texModel"] = url.path
+            dict["texFaces"] = r.faces
+            dict["texSeen"] = r.seen
+            dict["texBytes"] = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
         }
     }
 
@@ -1152,6 +1180,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         var rooms = ScanJournal.rooms()
         if let cur = ScanJournal.current(), cur.walls.count >= 3 { rooms.append(cur) }
         frames = ScanJournal.frames()
+        surfFrames = ScanJournal.surfFrames()
         if let dir = ScanJournal.hdDir { hdCapture = HDCapture(restoring: dir) }
         if rooms.isEmpty {
             // комнат нет, но есть HD-кадры — сохраняем хотя бы HD-пакет (модель на компьютере строится и без схемы)
@@ -1530,9 +1559,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let K = cam.intrinsics
         coverage?.add(CovView(inv: T.inverse, fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
                               w: Float(targetW), h: Float(targetH), pos: pos, target: .planes))
-        surfFrames.append(KeyFrame(transformInv: T.inverse,
-                                   fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
-                                   w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd))
+        let kf = KeyFrame(transformInv: T.inverse,
+                          fx: K.columns.0.x * k, fy: K.columns.1.y * k, cx: K.columns.2.x * k, cy: K.columns.2.y * k,
+                          w: targetW, h: targetH, rgba: rgba, pos: pos, fwd: fwd)
+        surfFrames.append(kf)
+        journal?.saveSurfFrame(kf)   // в журнал скана — чтобы пол/потолок не терялись при паузе и восстановлении
         lastSurfPos = pos; lastSurfFwd = fwd
     }
 

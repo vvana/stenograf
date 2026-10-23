@@ -171,6 +171,17 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     /// дождаться записи всех кадров и журнала (перед паузой)
     func flushJournal() { queue.sync {} }
 
+    /// Кадры для текстуры модели на телефоне (TextureBuilder): файлы на диске, позы, интринсики, глубина.
+    var texFrames: [TexFrame] {
+        entries.map { e in
+            let dk = e.depthK
+            return TexFrame(image: dir.appendingPathComponent(e.file), depth: e.depth.map { dir.appendingPathComponent($0) },
+                            c2w: e.c2w, fx: e.fx, fy: e.fy, cx: e.cx, cy: e.cy, w: e.w, h: e.h,
+                            dc2w: e.depthC2W ?? e.c2w, dfx: dk?[0] ?? e.fx, dfy: dk?[1] ?? e.fy, dcx: dk?[2] ?? e.cx, dcy: dk?[3] ?? e.cy,
+                            dW: Int(dk?[4] ?? Float(e.w)))
+        }
+    }
+
     static func journalCount(dir: URL) -> Int {
         guard let d = try? Data(contentsOf: dir.appendingPathComponent("entries.json")),
               let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return 0 }

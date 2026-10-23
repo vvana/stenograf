@@ -1,5 +1,6 @@
 import Foundation
 import ARKit
+import UIKit
 import RoomPlan
 import simd
 
@@ -112,6 +113,61 @@ final class ScanJournal {
             for (u, d) in toWrite { try? d.write(to: u, options: .atomic) }
             Self.writeJSON(["frames": index], to: url)
         }
+    }
+
+    // MARK: кадры пола и потолка (2026-10-23): 480 px с позой камеры — из них в конце склеивается вид сверху
+
+    private var surfCount = 0
+    private var surfIndex: [[String: Any]] = []
+
+    /// кадр пола/потолка → surf/N.jpg (≈ 30 КБ вместо 690 КБ сырых байтов) + surf.json с позой и интринсиками
+    func saveSurfFrame(_ kf: KeyFrame) {
+        surfCount += 1
+        let n = surfCount
+        let m = kf.transformInv
+        surfIndex.append(["n": n, "inv": (0..<4).flatMap { c in (0..<4).map { r in m[c][r] } }, "fx": kf.fx, "fy": kf.fy, "cx": kf.cx, "cy": kf.cy,
+                          "w": kf.w, "h": kf.h, "pos": [kf.pos.x, kf.pos.y, kf.pos.z], "fwd": [kf.fwd.x, kf.fwd.y, kf.fwd.z]])
+        let index = surfIndex, rgba = kf.rgba, w = kf.w, h = kf.h
+        let dirS = dir.appendingPathComponent("surf", isDirectory: true)
+        let idxURL = dir.appendingPathComponent("surf.json")
+        io.async {
+            try? FileManager.default.createDirectory(at: dirS, withIntermediateDirectories: true)
+            var buf = rgba
+            let img: CGImage? = buf.withUnsafeMutableBytes { b in
+                CGContext(data: b.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
+            }
+            if let cg = img, let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.85) {
+                try? jpg.write(to: dirS.appendingPathComponent("\(n).jpg"), options: .atomic)
+            }
+            Self.writeJSON(["frames": index], to: idxURL)
+        }
+    }
+
+    /// Продолжение с паузы: дописывать после уже сохранённых кадров.
+    func resumeSurf(count: Int, index: [[String: Any]]) { surfCount = count; surfIndex = index }
+
+    static func surfIndexJSON() -> [[String: Any]] {
+        guard let d = try? Data(contentsOf: root.appendingPathComponent("surf.json")),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [] }
+        return j["frames"] as? [[String: Any]] ?? []
+    }
+
+    static func surfFrames() -> [KeyFrame] {
+        var out: [KeyFrame] = []
+        for e in surfIndexJSON() {
+            guard let n = (e["n"] as? NSNumber)?.intValue,
+                  let img = UIImage(contentsOfFile: root.appendingPathComponent("surf/\(n).jpg").path)?.cgImage,
+                  let w = (e["w"] as? NSNumber)?.intValue, let h = (e["h"] as? NSNumber)?.intValue,
+                  let a = (e["inv"] as? [NSNumber])?.map({ $0.floatValue }), a.count == 16,
+                  let rgba = rgbaBytes(of: img, width: w, height: h) else { continue }
+            func f(_ k: String) -> Float { (e[k] as? NSNumber)?.floatValue ?? 0 }
+            func v3(_ k: String) -> simd_float3 { let v = (e[k] as? [NSNumber])?.map { $0.floatValue } ?? [0, 0, 0]; return v.count == 3 ? simd_float3(v[0], v[1], v[2]) : .zero }
+            let inv = simd_float4x4(columns: (simd_float4(a[0], a[1], a[2], a[3]), simd_float4(a[4], a[5], a[6], a[7]),
+                                              simd_float4(a[8], a[9], a[10], a[11]), simd_float4(a[12], a[13], a[14], a[15])))
+            out.append(KeyFrame(transformInv: inv, fx: f("fx"), fy: f("fy"), cx: f("cx"), cy: f("cy"), w: w, h: h, rgba: rgba, pos: v3("pos"), fwd: v3("fwd")))
+        }
+        return out
     }
 
     func flush() { io.sync {} }

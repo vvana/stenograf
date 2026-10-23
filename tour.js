@@ -553,6 +553,7 @@ async function viewTour(pid, roomId = null) {
   const hdStage = () => { const ok = stages.filter(s => stageHDModels(s).length); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
   if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
   if (tourState.mode === 'final') tourState.mode = 'house';   // режима «Финал» больше нет в переключателе
+  if (tourState.mode === 'hd' && !stages.some(s => stageHDModels(s).length)) tourState.mode = 'house';   // моделей нет — к схеме
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
@@ -561,9 +562,10 @@ async function viewTour(pid, roomId = null) {
       <canvas id="tour-canvas"></canvas>
       <div class="tour-top">
         <div class="tour-row">
-          ${photos.length ? '' : '<div class="inp tour-nophoto">Фото пока нет</div>'}
-          ${photos.length ? `<select class="inp" id="tour-stage">
-            ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+          ${photos.length || hdStage() ? '' : '<div class="inp tour-nophoto">Фото пока нет</div>'}
+          ${photos.length || hdStage() ? `<select class="inp" id="tour-stage">
+            ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id && tourState.mode !== 'hd' ? 'selected' : ''}>${esc(s.name)}</option>` +
+              (stageHDModels(s).length ? `<option value="hd:${s.id}" ${tourState.stage === s.id && tourState.mode === 'hd' ? 'selected' : ''}>3D-модель · ${esc(s.name)}</option>` : '')).join('')}
           </select>
           <button id="tour-photos" class="tour-pic ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах">${I('image')}</button>` : ''}
         </div>
@@ -574,7 +576,7 @@ async function viewTour(pid, roomId = null) {
           <span class="seg-thumb" id="seg-thumb"></span>
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}<span>Объект</span></button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('person')}<span>Внутри</span></button>
-          ${hdStage() ? `<button data-mode="hd" class="${tourState.mode === 'hd' ? 'active' : ''}">${I('flag')}<span>HD</span></button>` : ''}
+          ${'' /* кнопки «HD» нет (просьба пользователя 2026-10-23): 3D-модели этапов — пунктами «… · 3D-модель» в списке этапов */}
           ${'' /* «Финал» (сетка лидара с телефона, stage.meshScans / project.finalScan) убран из 3D 2026-10-23 по просьбе пользователя — сетки по-прежнему сохраняются, код режима остался */}
           ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
         </div>
@@ -677,6 +679,21 @@ async function viewTour(pid, roomId = null) {
           const scan = pick[k];
           say(pick.length > 1 ? `Загружаю HD-модели… ${k + 1} из ${pick.length}` : 'Загружаю HD-модель…');
           try {
+            if (scan.format === 'glb') {
+              // модель «как у Polycam» (сетка лидара + текстура из кадров), собранная телефоном после HD-обхода (2026-10-23)
+              const { GLTFLoader } = await import('./vendor/GLTFLoader.js');
+              const gltf = await new GLTFLoader().parseAsync(await scan.blob.arrayBuffer(), '');
+              const g = new THREE.Group(); g.add(gltf.scene);
+              gltf.scene.traverse(o => { if (o.isMesh) { const mp = o.material.map; if (mp) { mp.colorSpace = THREE.SRGBColorSpace; mp.anisotropy = 4; mp.minFilter = THREE.LinearMipmapLinearFilter; mp.generateMipmaps = true; mp.needsUpdate = true; } o.material = new THREE.MeshBasicMaterial({ map: mp }); } });
+              const tr = scan.transform || { ang: 0, ox: 0, oy: 0 };
+              g.rotation.y = -tr.ang; g.position.set(tr.ox, 0, tr.oy);
+              g.dispose = async () => { g.traverse(o => { if (o.isMesh) { o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); };
+              scene.add(g); g.updateMatrixWorld(true);
+              hdViewers.push(g);
+              const box = new THREE.Box3().setFromObject(g), c = box.getCenter(new THREE.Vector3());
+              xs.push(c.x); ys.push(c.y); zs.push(c.z);
+              continue;
+            }
             const fmt = { ply: GS.SceneFormat.Ply, spz: GS.SceneFormat.Spz, splat: GS.SceneFormat.Splat, ksplat: GS.SceneFormat.KSplat }[scan.format] ?? GS.SceneFormat.Ply;
             const v = new GS.DropInViewer({ sharedMemoryForWorkers: false, gpuAcceleratedSort: false, dynamicScene: false, sceneRevealMode: GS.SceneRevealMode.Instant });
             const url = URL.createObjectURL(scan.blob);
@@ -866,6 +883,7 @@ async function viewTour(pid, roomId = null) {
     // стеклянный переключатель режимов: светлая «плашка» переезжает под выбранный режим
     const th = $('#seg-thumb'), act = app.querySelector('[data-mode].active');
     if (th && act) { th.style.width = `${act.offsetWidth}px`; th.style.transform = `translateX(${act.offsetLeft - 4}px)`; th.style.opacity = 1; }
+    else if (th) th.style.opacity = 0;   // 3D-модель (выбрана в списке) — ни один из режимов не подсвечен
     const pb = $('#tour-photos'); if (pb) pb.classList.toggle('active', tourState.photos);
     const isHD = tourState.mode === 'hd';
     const isFinal = tourState.mode === 'final' || isHD, isInside = tourState.mode === 'inside';
@@ -879,6 +897,8 @@ async function viewTour(pid, roomId = null) {
   }
   function setMode(m) {
     tourState.mode = m;
+    const sel = $('#tour-stage');
+    if (sel && m !== 'hd' && sel.value.startsWith('hd:')) sel.value = sel.value.slice(3);
     resize();   // сдвиг картинки вверх нужен только в «Объекте»
     if (m === 'final') loadFinal().then(updateHint);
     if (m === 'hd') loadHD().then(updateHint);
@@ -940,7 +960,12 @@ async function viewTour(pid, roomId = null) {
   };
   const photosBtn = $('#tour-photos');
   if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
-  if ($('#tour-stage')) $('#tour-stage').onchange = e => { tourState.stage = e.target.value; applyStage(); if (tourState.mode === 'hd') loadHD().then(updateHint); };
+  if ($('#tour-stage')) $('#tour-stage').onchange = e => {
+    const v = e.target.value;
+    if (v.startsWith('hd:')) { tourState.stage = v.slice(3); applyStage(); look.yaw = 0; look.pitch = 0; setMode('hd'); return; }   // 3D-модель этапа
+    tourState.stage = v; applyStage();
+    if (tourState.mode === 'hd') pickMode('house');   // из модели — обратно к схеме этапа
+  };
 
   /* ---------- экспорт в GLB: стены, полы, потолки, проёмы, мебель, фото выбранного этапа ---------- */
   const glbBtn = $('#tour-glb');

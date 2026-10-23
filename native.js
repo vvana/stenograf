@@ -472,8 +472,99 @@ async function framesToPhotos(pid, roomId, stageId, frames, idMap, place = null)
       await dbPut('photos', rec);
       n++;
     }
+    // развёртка стены из всех её кадров (2026-10-23): в 3D — вся стена, а не один кадр с её частью
+    try { if (await saveWallMosaic(pid, roomId, stageId, wid, list, by)) n++; } catch (e) { console.warn('развёртка стены', e); }
   }
   return { photos: n, walls: Object.keys(byWall).length };
+}
+
+/* ---------- развёртка стены: все кадры стены выпрямляются по углам стены и складываются в одну картинку ----------
+   Просьба пользователя 2026-10-23: «мне нужна 3D-модель с изображением стен, пола и потолка; если лучше склеивать стены
+   из разных фото — склеиваем». Как пол/потолок, только по 4 углам стены в каждом кадре (f.corners, портрет, 0..1:
+   TL, TR, BR, BL для смотрящего из комнаты). Пиксель стены берётся из кадров, где он виден, с весом: дальше от края кадра
+   и прямее на стену — больше (вес в степени — у шва побеждает лучший кадр, а не среднее с «двоением»). */
+
+// единичный квадрат (s, t) → четырёхугольник q (TL, TR, BR, BL) — проективное преобразование (Heckbert)
+function squareToQuad(q) {
+  const [x0, y0] = q[0], [x1, y1] = q[1], [x2, y2] = q[2], [x3, y3] = q[3];
+  const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3, dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+  let a, b, c, d, e, f, g, h;
+  if (Math.abs(dx3) < 1e-12 && Math.abs(dy3) < 1e-12) { g = 0; h = 0; a = x1 - x0; b = x2 - x1; c = x0; d = y1 - y0; e = y2 - y1; f = y0; }
+  else {
+    const den = dx1 * dy2 - dx2 * dy1;
+    g = (dx3 * dy2 - dx2 * dy3) / den; h = (dx1 * dy3 - dx3 * dy1) / den;
+    a = x1 - x0 + g * x1; b = x3 - x0 + h * x3; c = x0; d = y1 - y0 + g * y1; e = y3 - y0 + h * y3; f = y0;
+  }
+  return (sx, ty) => { const w = g * sx + h * ty + 1; return [(a * sx + b * ty + c) / w, (d * sx + e * ty + f) / w]; };
+}
+
+// frames: [{jpeg (base64) или blob, corners, score}], w/h — стена в метрах → Blob JPEG развёртки (или null)
+async function wallMosaic(frames, wm, hm) {
+  if (!frames.length || !(wm > 0.2) || !(hm > 0.2)) return null;
+  const K = Math.min(250, 2048 / Math.max(wm, hm));   // пикселей на метр
+  const W = Math.max(16, Math.round(wm * K)), H = Math.max(16, Math.round(hm * K));
+  const acc = new Float32Array(W * H * 3), wsum = new Float32Array(W * H);
+  const P = 3;   // степень веса
+  for (const f of frames) {
+    const blob = f.blob || await (await fetch('data:image/jpeg;base64,' + f.jpeg)).blob();
+    const bmp = await createImageBitmap(blob);
+    const sc = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const iw = Math.max(1, Math.round(bmp.width * sc)), ih = Math.max(1, Math.round(bmp.height * sc));
+    const cv = document.createElement('canvas'); cv.width = iw; cv.height = ih;
+    const cg = cv.getContext('2d', { willReadFrequently: true }); cg.drawImage(bmp, 0, 0, iw, ih); bmp.close();
+    const px = cg.getImageData(0, 0, iw, ih).data;
+    const map = squareToQuad(f.corners);
+    const fw = Math.pow(Math.max(0.05, f.score || 1), P);
+    for (let y = 0; y < H; y++) {
+      const t = (y + 0.5) / H;
+      for (let x = 0; x < W; x++) {
+        const [u, v] = map((x + 0.5) / W, t);
+        if (!(u >= 0 && u < 1 && v >= 0 && v < 1)) continue;
+        const edge = Math.min(u, 1 - u, v, 1 - v);
+        const wgt = fw * Math.pow(Math.min(1, edge / 0.12), P) + 1e-6;
+        // билинейная выборка
+        const fx = u * iw - 0.5, fy = v * ih - 0.5;
+        const x0 = Math.max(0, Math.min(iw - 2, Math.floor(fx))), y0 = Math.max(0, Math.min(ih - 2, Math.floor(fy)));
+        const ax = Math.min(1, Math.max(0, fx - x0)), ay = Math.min(1, Math.max(0, fy - y0));
+        const i00 = (y0 * iw + x0) * 4, i10 = i00 + 4, i01 = i00 + iw * 4, i11 = i01 + 4;
+        const o = (y * W + x);
+        for (let ch = 0; ch < 3; ch++) {
+          const top = px[i00 + ch] * (1 - ax) + px[i10 + ch] * ax, bot = px[i01 + ch] * (1 - ax) + px[i11 + ch] * ax;
+          acc[o * 3 + ch] += wgt * (top * (1 - ay) + bot * ay);
+        }
+        wsum[o] += wgt;
+      }
+      if (y % 64 === 63) await new Promise(r => setTimeout(r, 0));   // не замораживать интерфейс
+    }
+  }
+  // непокрытое — средним цветом снятого
+  let mr = 0, mg = 0, mb = 0, mn = 0;
+  for (let i = 0; i < W * H; i++) if (wsum[i] > 0) { mr += acc[i * 3] / wsum[i]; mg += acc[i * 3 + 1] / wsum[i]; mb += acc[i * 3 + 2] / wsum[i]; mn++; }
+  if (!mn) return null;
+  mr /= mn; mg /= mn; mb /= mn;
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const og = out.getContext('2d'); const img = og.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const s = wsum[i];
+    img.data[i * 4] = s > 0 ? acc[i * 3] / s : mr; img.data[i * 4 + 1] = s > 0 ? acc[i * 3 + 1] / s : mg;
+    img.data[i * 4 + 2] = s > 0 ? acc[i * 3 + 2] / s : mb; img.data[i * 4 + 3] = 255;
+  }
+  og.putImageData(img, 0, 0);
+  return new Promise(res => out.toBlob(res, 'image/jpeg', 0.88));
+}
+
+// развёртка стены → фото этапа (source 'wall-mosaic', заменяет прежнюю развёртку этой стены этого этапа). true — сохранена.
+async function saveWallMosaic(pid, roomId, stageId, wid, frames, by) {
+  const f0 = frames[0];
+  const blob = await wallMosaic(frames, f0.w, f0.h);
+  if (!blob) return false;
+  const wallKey = `${roomId}:${wid}`;
+  for (const old of await dbAll('photos', 'wallKey', wallKey)) if (old.projectId === pid && old.stageId === stageId && old.source === 'wall-mosaic') await dbDel('photos', old.id);
+  const rec = { id: uid(), projectId: pid, wallKey, stageId, blob, note: '', created: Date.now() + 1, by, marks: [], source: 'wall-mosaic',
+    calib: { type: 'quad', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], w: cm(f0.w), h: cm(f0.h) } };
+  await sealPhoto(rec, { source: 'wall-mosaic' });
+  await dbPut('photos', rec);
+  return true;
 }
 
 /* ---------- пол и потолок из обхода: ортофото в осях скана → снимок по габариту комнаты на схеме ---------- */
@@ -700,7 +791,11 @@ async function applyApartmentScan(pid, rooms, stageId, scan) {
   const { results, wallMap, transform } = await applyStructure(pid, rooms, scan);
   if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
   await saveProjectUsdz(pid, scan);
-  if (stageId) { results.hd = await saveStageHD(stageId, scan, transform, 'Вся квартира', '*'); await saveStageMesh(stageId, scan, transform, 'Вся квартира', '*'); }
+  if (stageId) {
+    results.hd = await saveStageHD(stageId, scan, transform, 'Вся квартира', '*');
+    await saveStageMesh(stageId, scan, transform, 'Вся квартира', '*');
+    results.tex = await saveStageTexModel(stageId, scan, transform, 'Вся квартира', '*');
+  }
   let mirrors = 0;
   for (const r of results) mirrors += await proposeMirrors(r.room, r.scanRoom, r.res, r.idMap);
   let photos = 0;
@@ -720,7 +815,7 @@ async function applyApartmentScan(pid, rooms, stageId, scan) {
     });
   }
   const leafN = (scan.rooms || []).reduce((n, sr) => n + doorLeafIds(sr).size, 0);
-  toast(`Квартира: ${results.length} комн.${leafN ? `, створок дверей убрано: ${leafN}` : ''}${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
+  toast(`Квартира: ${results.length} комн.${leafN ? `, створок дверей убрано: ${leafN}` : ''}${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${results.tex ? `, 3D-модель готова (3D → HD)` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
   return results;
 }
 
@@ -776,6 +871,24 @@ async function saveStageHD(stageId, scan, transform, place = '', roomId = null) 
   await dbPut('stages', st);
   return true;
 }
+// модель «как у Polycam», собранная телефоном после HD-обхода (2026-10-23): файл GLB → HD-модель этапа для комнаты
+// (заменяет прежнюю такую же модель этой комнаты; модели с компьютера — сплаты — не трогаются). В 3D — кнопка «HD».
+async function saveStageTexModel(stageId, scan, transform, place = '', roomId = null) {
+  if (!scan.texModel) return false;
+  const st = await dbGet('stages', stageId);
+  let blob = null;
+  try { blob = await (await fetch(Capacitor.convertFileSrc('file://' + scan.texModel))).blob(); } catch (e) { console.error(e); }
+  if (Native.RP && Native.RP.deleteFile) Native.RP.deleteFile({ path: scan.texModel }).catch(() => {});
+  if (!st || !blob || !blob.size) return false;
+  const list = stageHDModels(st).filter(m => m.id !== 'legacy' && !(m.format === 'glb' && m.auto && m.roomId === roomId));
+  const caps = stageHDCaps(st);
+  list.push({ id: uid(), roomId, place, capId: caps.length ? caps[caps.length - 1].id : null, blob, name: (place || 'Модель') + '.glb', size: blob.size,
+    format: 'glb', auto: true, created: Date.now(), flip: false, transform: transform || null, faces: scan.texFaces || 0 });
+  st.hdModels = list;
+  await dbPut('stages', st);
+  return true;
+}
+
 // пакеты HD этапа списком; старая запись (один пакет: hdCapture + hdTransform) читается как первый элемент
 function stageHDCaps(st) {
   if (!st) return [];
@@ -808,10 +921,11 @@ async function applyWalkScan(pid, room, stageId, scan) {
   r.planes = await savePlanes(pid, stageId, scan.planes, () => toPlan ? { room, toPlan } : null);
   const o = toPlan && toPlan([0, 0]);
   r.hd = await saveStageHD(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null, room.name || '', room.id);
+  r.tex = await saveStageTexModel(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null, room.name || '', room.id);
   await saveStageMesh(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null, room.name || '', room.id);
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;
   const extra = [['f', 'пол'], ['c', 'потолок']].filter(([sf]) => (scan.planes || []).some(o => o.surface === sf)).map(([, t]) => t);
-  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${r.hd ? ` · HD-кадров: ${scan.hdFrames}` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
+  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${r.hd ? ` · HD-кадров: ${scan.hdFrames}` : ''}${r.tex ? ` · 3D-модель готова (3D → HD)` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
   return r;
 }
 
