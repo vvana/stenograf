@@ -470,7 +470,7 @@ async function viewProjects() {
     await dbPut('projects', p);
     const first = STAGE_TEMPLATES[0].stages[0];
     await dbPut('stages', { id: uid(), projectId: p.id, name: first[0], ord: 0, status: 0, hint: first[1] });
-    nav(`#/p/${p.id}`);
+    render();   // объект не открываем — остаёмся в списке (просьба пользователя 2026-10-23)
   };
   $('#export-all').onclick = exportBackup;
   $('#import-all').onclick = importBackup;

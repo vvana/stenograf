@@ -1567,11 +1567,15 @@ button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
 /* главный экран (2026-10-23, просьба пользователя): кнопки внизу закреплены, список объектов прокручивается под ними;
    карандаш — в правом верхнем углу карточки; название приложения — подписью в конце списка */
 .home-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; margin: 0;
-  padding: 28px 16px calc(env(safe-area-inset-bottom) + 16px);
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) 0%, transparent) 0, var(--bg) 26px); }
+  padding: 0 16px calc(env(safe-area-inset-bottom) + 16px);
+  background: none; pointer-events: none; }   /* без подложки: стеклянные кнопки прямо поверх списка (просьба пользователя) */
+.home-bottom > * { pointer-events: auto; }
+.home-bottom .backup-row { pointer-events: none; }
+.home-bottom .backup-row .btn { pointer-events: auto; }
 .home-pad { min-height: 0; padding-bottom: calc(env(safe-area-inset-bottom) + 190px); }
 .project-card .card-edit { top: 4px; right: 4px; margin-top: 0; }
 .home-brand { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 20px 0 0; color: var(--mut); font: 600 13px system-ui, -apple-system, sans-serif; }
 .home-brand .logo .logo-img { width: 20px; height: 20px; display: block; }
 .proj-mini { right: 16px; top: 34px; bottom: 10px; }
 .project-card:has(.proj-mini) { padding-right: 96px; }
+.home-bottom .backup-row .btn { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.26) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .40); }
