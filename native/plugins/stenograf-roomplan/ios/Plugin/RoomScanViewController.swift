@@ -14,10 +14,11 @@ import CoreLocation
 final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, RoomCaptureSessionDelegate {
 
     enum ScanError: LocalizedError {
-        case cancelled, failed(String)
+        case cancelled, paused, failed(String)
         var errorDescription: String? {
             switch self {
             case .cancelled: return "cancelled"
+            case .paused: return "paused"
             case .failed(let s): return s
             }
         }
@@ -33,9 +34,13 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
 
     private var captureView: RoomCaptureView!
     private var sharedSession: ARSession?
-    private var latestRoom: CapturedRoom?
-    private var capturedRooms: [CapturedRoom] = []
-    private var frames: [UUID: [WallFrame]] = [:]   // лучшие кадры по стенам
+    // всё, что нельзя потерять при выгрузке приложения, по ходу пишется в журнал на диске (ScanJournal, 2026-10-23)
+    private var latestRoom: CapturedRoom? { didSet { journal?.saveCurrent(latestRoom) } }
+    private var capturedRooms: [CapturedRoom] = [] { didSet { journal?.saveRooms(capturedRooms); journal?.clearCurrent() } }
+    private var frames: [UUID: [WallFrame]] = [:] { didSet { journal?.saveFrames(frames, rewrite: frameRewrite) } }   // лучшие кадры по стенам
+    private var frameRewrite: UUID?          // кадр, JPEG которого заменил снимок 12 Мп, — переписать в журнале
+    private var journal: ScanJournal?
+    var journalContext: [String: Any]?       // контекст JS (что за скан и куда сохранять) — задаёт плагин до показа
     private var pollTimer: Timer?
     private var lastTransform: simd_float4x4?
     private let ciContext = CIContext()
@@ -110,10 +115,16 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let corners: [[Float]]   // 4 × [u, v] в портретном кадре: TL, TR, BR, BL для зрителя
         let w: Float
         let h: Float
+        var id = UUID()          // имя файла кадра в журнале скана
     }
 
-    init(mode: String, maxDim: Int, wantFrames: Bool, overlay: [String: Any]?, hd: Bool = false,
+    private let resume: Bool                 // продолжение скана с паузы (журнал + карта места ARKit)
+    private var waitingReloc = false          // ждём, пока ARKit узнает помещение по карте места
+    private var pausedRooms: [CapturedRoom] = []   // комнаты, недоснятые на момент пауз, — для переноса их кадров стен
+
+    init(mode: String, maxDim: Int, wantFrames: Bool, overlay: [String: Any]?, hd: Bool = false, resume: Bool = false,
          completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        self.resume = resume
         self.mode = mode
         self.hd = hd && (mode == "final" || mode == "walk" || mode == "multi")   // HD-пакет — и в обходе этапа
         self.maxDim = maxDim
@@ -140,6 +151,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) { cfg.frameSemantics.insert(.sceneDepth) }
             // HD: формат видео, с которым ARKit умеет делать полноразмерные снимки (12 Мп) — captureHighResolutionFrame
             if hd, let f = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing { cfg.videoFormat = f }
+            // продолжение с паузы: карта места — ARKit узнаёт помещение и возвращает прежние координаты
+            if resume, let map = ScanJournal.worldMap() { cfg.initialWorldMap = map; waitingReloc = true }
             s.run(cfg)
             ownSession = true
             captureView = RoomCaptureView(frame: view.bounds, arSession: s)
@@ -199,7 +212,20 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if mode == "ghost" { setupGhost(bar: bar) }
         if mode != "ghost" { setupCompass(); setupCloudToggle() }
         if wantFrames { setupAimHint(above: bar) }
-        if hd { hdCapture = HDCapture() }
+        if resume {
+            // продолжение с паузы: принятые комнаты, кадры стен и HD-кадры — из журнала, дальше пишем в тот же журнал
+            if hd { hdCapture = ScanJournal.hdDir.flatMap { HDCapture(restoring: $0) } ?? HDCapture() }
+            pausedRooms = ScanJournal.pausedRooms()
+            frames = ScanJournal.frames()
+            capturedRooms = ScanJournal.rooms()
+            journal = ScanJournal(resuming: frames)
+        } else {
+            if hd { hdCapture = HDCapture() }
+            // журнал — для обходов и сканов по комнатам (долгие); короткие обмер комнаты, пол/потолок и призрак — без него
+            if mode == "walk" || isMulti {
+                journal = ScanJournal(mode: mode, hd: hd, wantFrames: wantFrames, maxDim: maxDim, hdDir: hdCapture?.dir, context: journalContext)
+            }
+        }
         if mode == "final" || wantSurfaces { setupCoverage() }
     }
 
@@ -577,7 +603,62 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         super.viewDidAppear(animated)
         // во время скана экран не гаснет и телефон не блокируется (обмер квартиры идёт долго, экрана не касаются)
         UIApplication.shared.isIdleTimerDisabled = true
-        runCapture()
+        if waitingReloc { waitForRelocalization() } else { runCapture() }
+    }
+
+    /// Продолжение с паузы: RoomPlan запускаем только после того, как ARKit узнал помещение по карте места
+    /// (до этого координаты другие — кадры и комнаты не совпали бы с уже снятыми).
+    private var relocTimer: Timer?
+    private var relocStart = Date()
+    private func waitForRelocalization() {
+        relocStart = Date()
+        statusLabel.text = "Продолжаем скан. Наведите камеру на уже снятое место и медленно поводите — телефон ищет, где вы"
+        relocTimer?.invalidate()
+        relocTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            guard let self = self, !self.finished, let f = self.sharedSession?.currentFrame else { return }
+            if case .normal = f.camera.trackingState {
+                self.relocTimer?.invalidate(); self.relocTimer = nil
+                self.waitingReloc = false
+                self.statusLabel.text = "Место найдено — продолжаем. Принято комнат: \(self.capturedRooms.count)"
+                self.runCapture()
+            } else if Date().timeIntervalSince(self.relocStart) > 40 {
+                self.relocTimer?.invalidate(); self.relocTimer = nil
+                self.relocFailed()
+            }
+        }
+    }
+
+    private func relocFailed() {
+        let ac = UIAlertController(title: "Не узнаю помещение",
+                                   message: "Телефон не нашёл уже снятое место. Подойдите туда, где остановились, и попробуйте ещё — или сохраните снятое до паузы и доснимите остальное новым обходом.",
+                                   preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "Ещё попробовать", style: .default) { [weak self] _ in self?.waitForRelocalization() })
+        ac.addAction(UIAlertAction(title: "Сохранить снятое", style: .default) { [weak self] _ in self?.saveAndFinish() })
+        present(ac, animated: true)
+    }
+
+    /// Пауза: журнал уже на диске; добавляем карту места ARKit и недоснятую комнату, закрываем сканер.
+    /// Продолжение — новый вызов scan с resume (JS спрашивает «Продолжить скан на паузе?»).
+    private func pauseScan() {
+        guard !finished else { return }
+        pollTimer?.invalidate(); pollTimer = nil
+        relocTimer?.invalidate(); relocTimer = nil
+        nextButton?.isEnabled = false; doneButton?.isEnabled = false
+        statusLabel.text = "Сохраняю скан для продолжения…"
+        if !waitingReloc { journal?.savePausedRoom(latestRoom) }
+        let finishPause: (ARWorldMap?) -> Void = { [weak self] map in
+            guard let self = self, !self.finished else { return }
+            if let m = map { self.journal?.saveWorldMap(m) }
+            self.hdCapture?.flushJournal()
+            self.journal?.markPaused(hasMap: map != nil || ScanJournal.worldMap() != nil)
+            self.finished = true
+            self.stopCoverage()
+            self.captureView.captureSession.stop(pauseARSession: true)
+            self.dismiss(animated: true) { self.completion(.failure(ScanError.paused)) }
+        }
+        // пока помещение не узнано, карта места — прежняя (новую не снимаем: она была бы в чужих координатах)
+        guard !waitingReloc, let sess = sharedSession else { finishPause(nil); return }
+        sess.getCurrentWorldMap { map, _ in DispatchQueue.main.async { finishPause(map) } }
     }
 
     private func runCapture() {
@@ -625,11 +706,22 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                                        message: n > 0 ? "Уже принято комнат: \(n). Они сохранятся, если переснять только текущую." : nil,
                                        preferredStyle: .actionSheet)
             ac.addAction(UIAlertAction(title: "Переснять эту комнату", style: .default) { [weak self] _ in self?.restartCurrentRoom() })
-            // пауза: сохранить готовое сейчас, остальные комнаты — потом новым обходом (добавятся к той же схеме)
+            if journal != nil {
+                ac.addAction(UIAlertAction(title: "Пауза — продолжить позже", style: .default) { [weak self] _ in self?.pauseScan() })
+            }
+            // сохранить готовое сейчас, остальные комнаты — потом новым обходом (добавятся к той же схеме)
             if !savableRooms().isEmpty {
                 ac.addAction(UIAlertAction(title: "Сохранить готовое и закончить", style: .default) { [weak self] _ in self?.saveAndFinish() })
             }
             ac.addAction(UIAlertAction(title: "Отменить весь обмер", style: .destructive) { [weak self] _ in self?.confirmCancelAll() })
+            ac.addAction(UIAlertAction(title: "Продолжить скан", style: .cancel))
+            present(ac, animated: true)
+            return
+        }
+        if journal != nil {   // обход комнаты: тоже можно поставить на паузу
+            let ac = UIAlertController(title: "Остановить обход?", message: nil, preferredStyle: .actionSheet)
+            ac.addAction(UIAlertAction(title: "Пауза — продолжить позже", style: .default) { [weak self] _ in self?.pauseScan() })
+            ac.addAction(UIAlertAction(title: "Отменить обход", style: .destructive) { [weak self] _ in self?.cancelAll() })
             ac.addAction(UIAlertAction(title: "Продолжить скан", style: .cancel))
             present(ac, animated: true)
             return
@@ -741,6 +833,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     // MARK: RoomCaptureViewDelegate
 
     func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool {
+        if finished { return false }            // пауза или отмена — обработка комнаты не нужна
         if discardCurrent {                     // «Переснять эту комнату» во время скана: результат не нужен
             discardCurrent = false
             DispatchQueue.main.async { [weak self] in self?.startNextRoom() }
@@ -970,16 +1063,24 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     }
 
     private func finishSingle(_ room: CapturedRoom) {
+        sharedSession?.pause()
+        Task { @MainActor in
+            let out = await self.singleResult(room)
+            self.dismiss(animated: true) { self.completion(.success(out)) }
+        }
+    }
+
+    /// Результат одиночного скана (обход комнаты и т.п.) — и при обычном завершении, и при восстановлении из журнала.
+    private func singleResult(_ room: CapturedRoom) async -> [String: Any] {
         let mirrors = detectMirrors(rooms: [room])
         var dict = buildResult(rooms: [room])
         dict["mirrors"] = mirrors
         if let usdz = exportUSDZ({ try room.export(to: $0) }) { dict["usdz"] = usdz }
-        sharedSession?.pause()
         let base = dict
         let hdc = hdCapture
         let anchors = meshAnchors
         let keys = keyFrames
-        Task { @MainActor in
+        do {
             var out = base
             await self.addSurfaces(to: &out, rooms: [room])
             if let hc = hdc {
@@ -991,18 +1092,27 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 let ply = (out["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
                 await self.packHD(hc, into: &out, pointsPLY: (out["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
             }
-            self.dismiss(animated: true) { self.completion(.success(out)) }
+            return out
         }
     }
 
     private func finishStructure() {
+        Task { @MainActor in
+            let dict = await self.structureResult()
+            self.sharedSession?.pause()
+            self.dismiss(animated: true) { self.completion(.success(dict)) }
+        }
+    }
+
+    /// Результат скана по комнатам (StructureBuilder) — и при обычном завершении, и при восстановлении из журнала.
+    private func structureResult() async -> [String: Any] {
         let rooms = capturedRooms
         let anchors = meshAnchors
         let keys = keyFrames
         let hdc = hdCapture
         let wantMesh = mode == "final" || hdc != nil   // HD-обход квартиры — тоже с сеткой и облаком точек
         statusLabel.text = wantMesh ? "Собираю квартиру и 3D-модель…" : "Собираю план квартиры…"
-        Task { @MainActor in
+        do {
             var finalRooms = rooms
             var usdz: String? = nil
             if rooms.count > 1 {
@@ -1030,9 +1140,32 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
                 await self.packHD(hc, into: &dict, pointsPLY: (dict["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
             }
-            self.sharedSession?.pause()
-            self.dismiss(animated: true) { self.completion(.success(dict)) }
+            return dict
         }
+    }
+
+    // MARK: восстановление скана из журнала (приложение выгрузили во время скана)
+
+    /// Собрать результат из журнала без AR-сессии: принятые комнаты + текущая по последнему виду, кадры стен, HD-кадры.
+    /// Сетки лидара, снимков пола/потолка и покрытия нет — они жили только в сессии.
+    func recoverFromJournal() async -> [String: Any]? {
+        var rooms = ScanJournal.rooms()
+        if let cur = ScanJournal.current(), cur.walls.count >= 3 { rooms.append(cur) }
+        frames = ScanJournal.frames()
+        if let dir = ScanJournal.hdDir { hdCapture = HDCapture(restoring: dir) }
+        if rooms.isEmpty {
+            // комнат нет, но есть HD-кадры — сохраняем хотя бы HD-пакет (модель на компьютере строится и без схемы)
+            guard let hc = hdCapture, hc.count > 0 else { return nil }
+            var out = buildResult(rooms: [])
+            await packHD(hc, into: &out, pointsPLY: nil)
+            out["recovered"] = true
+            return out
+        }
+        capturedRooms = rooms
+        var out: [String: Any]
+        if isMulti { out = await structureResult() } else { out = await singleResult(rooms[rooms.count - 1]) }
+        out["recovered"] = true
+        return out
     }
 
     /// HD-пакет (кадры + позы + облако точек лидара points.ply) → ZIP в Documents; в результат — путь, число кадров и размер.
@@ -1134,6 +1267,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                                    preferredStyle: .alert)
         ac.addAction(UIAlertAction(title: "Продолжить", style: .default) { [weak self] _ in self?.resumeAfterInterrupt() })
         if canSave { ac.addAction(UIAlertAction(title: "Сохранить и закончить", style: .default) { [weak self] _ in self?.saveAndFinish() }) }
+        if journal != nil { ac.addAction(UIAlertAction(title: "Пауза — продолжить позже", style: .default) { [weak self] _ in self?.interruptShown = false; self?.pauseScan() }) }
         ac.addAction(UIAlertAction(title: "Отменить", style: .destructive) { [weak self] _ in
             // отдельное подтверждение; «Нет» — снова это окно (кнопки скана сейчас выключены)
             let c = UIAlertController(title: "Отменить весь скан?", message: "Всё снятое в этом скане будет потеряно.", preferredStyle: .alert)
@@ -1290,7 +1424,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         }
         out["rooms"] = rooms.map(roomDict)
         var fr: [[String: Any]] = []
-        for (wallId, list) in frames {
+        for (wallId, list) in remapPausedFrames(to: rooms) {
             for f in list {
                 fr.append([
                     "wall": wallId.uuidString,
@@ -1304,6 +1438,30 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
         }
         out["frames"] = fr
+        return out
+    }
+
+    /// Кадры стен комнаты, недоснятой на момент паузы, ссылаются на её стены; после продолжения RoomPlan снимает комнату
+    /// заново с новыми id — переносим кадры на ближайшую новую стену (координаты те же после узнавания места).
+    private func remapPausedFrames(to rooms: [CapturedRoom]) -> [UUID: [WallFrame]] {
+        guard !pausedRooms.isEmpty else { return frames }
+        let walls = rooms.flatMap { $0.walls }
+        let known = Set(walls.map { $0.identifier })
+        let old = Dictionary(pausedRooms.flatMap { $0.walls }.map { ($0.identifier, $0) }, uniquingKeysWith: { a, _ in a })
+        var out: [UUID: [WallFrame]] = [:]
+        for (wid, list) in frames {
+            if known.contains(wid) { out[wid, default: []] += list; continue }
+            guard let ow = old[wid] else { continue }
+            let oc = xyz(ow.transform.columns.3), on = simd_normalize(xyz(ow.transform.columns.2))
+            var best: (UUID, Float)? = nil
+            for w in walls {
+                let c = xyz(w.transform.columns.3), n = simd_normalize(xyz(w.transform.columns.2))
+                guard abs(simd_dot(n, on)) > 0.9 else { continue }
+                let d: Float = simd_length(c - oc) + abs(simd_dot(c - oc, n)) * 2   // в стороне по плоскости — терпимо, поперёк — нет
+                if d < 1.0 && d < (best?.1 ?? Float.infinity) { best = (w.identifier, d) }
+            }
+            if let b = best { out[b.0, default: []] += list }
+        }
         return out
     }
 
@@ -1519,7 +1677,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 DispatchQueue.main.async {
                     guard var l = self.frames[wid], let i = l.firstIndex(where: { simd_length($0.camPos - pos) < 0.001 }) else { return }
                     l[i].jpeg = j
+                    self.frameRewrite = l[i].id
                     self.frames[wid] = l
+                    self.frameRewrite = nil
                     self.hiResCount += 1
                 }
             }

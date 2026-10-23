@@ -688,8 +688,15 @@ async function lidarMeasure(pid, rooms, room) {
 // обмер / обход всей квартиры: несколько комнат подряд (mode 'multi'), с кадрами — на этап
 async function lidarApartment(pid, rooms, stageId, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId, hd: !!(stageId && opts.hd), maxDim: stageId && opts.hd ? 4096 : 1600 }); }
-  catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
+  const recover = { kind: 'apartment', pid, stageId: stageId || null };   // для восстановления из журнала скана
+  if (await offerPausedScan()) return null;
+  try { scan = await Native.RP.scan({ mode: 'multi', frames: !!stageId, hd: !!(stageId && opts.hd), maxDim: stageId && opts.hd ? 4096 : 1600, recover }); }
+  catch (err) { if (scanStopped(err)) return null; throw err; }
+  return applyApartmentScan(pid, rooms, stageId, scan);
+}
+
+// результат скана квартиры → схема, фото, HD; и после обычного скана, и после восстановления из журнала
+async function applyApartmentScan(pid, rooms, stageId, scan) {
   const { results, wallMap, transform } = await applyStructure(pid, rooms, scan);
   if (results[0] && results[0].place) await saveNorth(pid, scan, results[0].place.turn);
   await saveProjectUsdz(pid, scan);
@@ -744,7 +751,7 @@ async function lidarGhost(photo, wallSize) {
 // transform — мир AR-сессии → схема ({ang, ox, oy}), чтобы обученная модель встала на план.
 // Окрашенная сетка лидара из HD-обхода (то, что раньше давал «Финальный скан»): у этапа по одной на комнату ('*' — квартира).
 async function saveStageMesh(stageId, scan, transform, place = '', roomId = null) {
-  if (!scan.mesh) return false;
+  if (!scan.mesh || !scan.meshVertices) return false;   // пустая сетка (восстановленный скан, сессия без сетки) не затирает прежнюю
   const st = await dbGet('stages', stageId);
   if (!st) return false;
   const blob = await (await fetch('data:application/octet-stream;base64,' + scan.mesh)).blob();
@@ -786,8 +793,15 @@ function stageHDModels(st) {
 
 async function lidarWalk(pid, room, stageId, opts = {}) {
   let scan;
-  try { scan = await Native.RP.scan({ mode: 'walk', hd: !!opts.hd, maxDim: opts.hd ? 4096 : 1600 }); }   // HD: фото стен без уменьшения (1920 или 12 Мп)
-  catch (err) { if (String(err && err.message).includes('cancelled')) return null; throw err; }
+  const recover = { kind: 'walk', pid, roomId: room.id, stageId };   // для восстановления из журнала скана
+  if (await offerPausedScan()) return null;
+  try { scan = await Native.RP.scan({ mode: 'walk', hd: !!opts.hd, maxDim: opts.hd ? 4096 : 1600, recover }); }   // HD: фото стен без уменьшения (1920 или 12 Мп)
+  catch (err) { if (scanStopped(err)) return null; throw err; }
+  return applyWalkScan(pid, room, stageId, scan);
+}
+
+// результат обхода комнаты → фото стен, пол/потолок, HD; и после обычного скана, и после восстановления из журнала
+async function applyWalkScan(pid, room, stageId, scan) {
   const { idMap, toPlan, turn } = matchScanToRoom(room, scan);
   if (toPlan) await saveNorth(pid, scan, turn);
   const r = await framesToPhotos(pid, room.id, stageId, scan.frames, idMap, toPlan ? { toPlan, turn, floorY: scan.floorY } : null);
@@ -799,4 +813,107 @@ async function lidarWalk(pid, room, stageId, opts = {}) {
   const extra = [['f', 'пол'], ['c', 'потолок']].filter(([sf]) => (scan.planes || []).some(o => o.surface === sf)).map(([, t]) => t);
   toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${r.hd ? ` · HD-кадров: ${scan.hdFrames}` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
   return r;
+}
+
+
+/* ---------- незавершённый скан (2026-10-23): приложение выгрузили во время скана (долгий звонок) — восстановить из журнала ---------- */
+let pendingScanBusy = false;
+async function checkPendingScan() {
+  if (pendingScanBusy) return;
+  pendingScanBusy = true;
+  try { await checkPendingScanOnce(); } finally { pendingScanBusy = false; }
+}
+async function checkPendingScanOnce() {
+  if (!Native.isNative || !Native.RP || !Native.RP.pendingScan) return;
+  let p;
+  try { p = await Native.RP.pendingScan(); } catch (e) { return; }
+  if (!p || !p.exists) return;
+  if (p.paused) { await offerPausedScan(p, true); return; }
+  const ctx = p.context || {};
+  const project = ctx.pid ? await dbGet('projects', ctx.pid) : null;
+  const stage = ctx.stageId ? await dbGet('stages', ctx.stageId) : null;
+  const when = new Date(p.created || Date.now()).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  const parts = [];
+  if (p.rooms) parts.push(`принято комнат: ${p.rooms}`);
+  if (p.current) parts.push('текущая комната — по последнему виду');
+  if (p.wallFrames) parts.push(`фото стен: ${p.wallFrames}`);
+  if (p.hdFrames) parts.push(`HD-кадров: ${p.hdFrames}`);
+  const where = [project && project.name, stage && stage.name].filter(Boolean).join(' · ');
+  const ok = await uiDialog({ text: `Скан от ${when}${where ? ` (${where})` : ''} не был завершён — приложение закрылось.
+${parts.join(', ')}.
+Восстановить?`,
+    ok: 'Восстановить', cancel: 'Удалить' });
+  if (!ok) {
+    if (await uiConfirm('Удалить незавершённый скан? Снятое в нём пропадёт.')) { await Native.RP.discardScan(); toast('Незавершённый скан удалён'); }
+    return;
+  }
+  if (!project) { uiAlert('Объект этого скана не найден — восстановить некуда.'); return; }
+  toast('Восстанавливаю скан…');
+  let scan;
+  try { scan = await Native.RP.recoverScan(); } catch (e) { uiAlert('Не удалось восстановить: ' + (e && e.message || e)); return; }
+  await applyScanByContext(ctx, scan);
+}
+
+// результат скана (восстановленного из журнала или продолженного с паузы) → туда, откуда скан запускали
+async function applyScanByContext(ctx, scan) {
+  const stage = ctx.stageId ? await dbGet('stages', ctx.stageId) : null;
+  try {
+    const hasRooms = (scan.rooms || []).length > 0;
+    if (!hasRooms) {
+      // только HD-кадры: пакет без схемы — всё равно сохраняем к этапу
+      if (stage) { await saveStageHD(stage.id, scan, null, ctx.kind === 'walk' ? '' : 'Вся квартира', ctx.roomId || '*'); toast(`HD-пакет восстановлен: ${scan.hdFrames || 0} кадров`); }
+    } else if (ctx.kind === 'walk') {
+      const room = await dbGet('rooms', ctx.roomId);
+      if (!room) { uiAlert('Комната этого обхода не найдена.'); return; }
+      normalizeRoom(room);
+      await applyWalkScan(ctx.pid, room, ctx.stageId, scan);
+    } else {
+      const rooms = await dbAll('rooms', 'projectId', ctx.pid);
+      rooms.forEach(normalizeRoom);
+      await applyApartmentScan(ctx.pid, rooms, ctx.stageId, scan);
+    }
+    if (typeof render === 'function') render();
+  } catch (e) { uiAlert('Скан получен, но сохранить его не удалось: ' + (e && e.message || e)); }
+}
+setTimeout(checkPendingScan, 2000);
+
+// пауза в сканере («Пауза — продолжить позже») или отмена — не ошибка
+function scanStopped(err) {
+  const m = String(err && err.message);
+  if (m.includes('paused')) { toast('Скан на паузе. Продолжить — «Начать обход» или при следующем запуске'); return true; }
+  return m.includes('cancelled');
+}
+
+// Есть скан на паузе — предложить продолжить. true — продолжили (или пользователь ушёл в него), новый скан не начинать.
+// atStart — вызов при запуске приложения: «Позже» вместо «Начать новый».
+async function offerPausedScan(p = null, atStart = false) {
+  if (!Native.isNative || !Native.RP || !Native.RP.pendingScan) return false;
+  if (!p) { try { p = await Native.RP.pendingScan(); } catch (e) { return false; } }
+  if (!p || !p.exists) return false;
+  if (!p.paused) { await checkPendingScan(); return false; }   // незавершённый (приложение закрылось) — сначала восстановить
+  const ctx = p.context || {};
+  const project = ctx.pid ? await dbGet('projects', ctx.pid) : null;
+  const stage = ctx.stageId ? await dbGet('stages', ctx.stageId) : null;
+  const room = ctx.roomId ? await dbGet('rooms', ctx.roomId) : null;
+  const when = new Date(p.pausedAt || p.created || Date.now()).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  const where = [project && project.name, stage && stage.name, room && room.name].filter(Boolean).join(' · ');
+  const parts = [];
+  if (p.rooms) parts.push(`принято комнат: ${p.rooms}`);
+  if (p.wallFrames) parts.push(`фото стен: ${p.wallFrames}`);
+  if (p.hdFrames) parts.push(`HD-кадров: ${p.hdFrames}`);
+  const go = await uiDialog({ text: `Скан на паузе с ${when}${where ? ` (${where})` : ''}${parts.length ? '\n' + parts.join(', ') : ''}.\nПродолжить его?`,
+    ok: 'Продолжить', cancel: atStart ? 'Позже' : 'Начать новый' });
+  if (!go) {
+    if (atStart) return false;
+    if (!await uiConfirm('Начать новый скан? Скан на паузе будет удалён вместе со всем, что в нём снято.')) return true;
+    await Native.RP.discardScan();
+    return false;
+  }
+  if (!project) { uiAlert('Объект этого скана не найден — продолжить некуда.'); return true; }
+  if (p.worldMap === false) toast('Карта места не сохранилась — телефон может не узнать помещение');
+  let scan;
+  try { scan = await Native.RP.scan({ mode: p.mode, frames: !!p.frames, hd: !!p.hd, maxDim: p.maxDim || 1600, recover: ctx, resume: true }); }
+  catch (err) { if (scanStopped(err)) return true; uiAlert('Скан не продолжился: ' + (err && err.message || err)); return true; }
+  await applyScanByContext(ctx, scan);
+  return true;
 }

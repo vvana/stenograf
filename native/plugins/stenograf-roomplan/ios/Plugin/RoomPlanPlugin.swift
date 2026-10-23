@@ -23,6 +23,9 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isSupported", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pendingScan", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "recoverScan", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "discardScan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deviceInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "quickLook", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "shareFile", returnType: CAPPluginReturnPromise),
@@ -437,13 +440,19 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         let wantFrames = call.getBool("frames") ?? (mode == "walk")
         let overlay = call.getObject("overlay")
         let hd = call.getBool("hd") ?? false
+        let recoverCtx = call.getObject("recover")   // контекст JS для восстановления скана из журнала (см. ScanJournal)
+        let resume = call.getBool("resume") ?? false  // продолжить скан, поставленный на паузу
+        if resume && ScanJournal.manifest() == nil { call.reject("Нет скана на паузе"); return }
         DispatchQueue.main.async {
-            let vc = RoomScanViewController(mode: mode, maxDim: maxDim, wantFrames: wantFrames, overlay: overlay, hd: hd) { result in
+            let vc = RoomScanViewController(mode: mode, maxDim: maxDim, wantFrames: wantFrames, overlay: overlay, hd: hd, resume: resume) { result in
+                // скан завершён или отменён — журнал больше не нужен (HD-кадры уже упакованы или удалены); пауза — журнал остаётся
+                if case .failure(let e) = result, e.localizedDescription == "paused" { } else { ScanJournal.discard(keepHD: true) }
                 switch result {
                 case .success(let dict): call.resolve(dict)
                 case .failure(let err): call.reject(err.localizedDescription)
                 }
             }
+            vc.journalContext = recoverCtx
             vc.modalPresentationStyle = .fullScreen
             guard let host = self.bridge?.viewController else {
                 call.reject("Нет окна для сканирования")
@@ -451,6 +460,40 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             host.present(vc, animated: true)
         }
+    }
+}
+
+// MARK: незавершённый скан (приложение выгрузили во время скана) — журнал ScanJournal
+
+extension RoomPlanPlugin {
+    /// Есть ли что восстановить: {exists, created, mode, rooms, current, wallFrames, hdFrames, context}
+    @objc func pendingScan(_ call: CAPPluginCall) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let s = ScanJournal.summary() { var r = s; r["exists"] = true; call.resolve(r) }
+            else { call.resolve(["exists": false]) }
+        }
+    }
+
+    /// Собрать результат из журнала (как при обычном завершении скана) и удалить журнал.
+    @objc func recoverScan(_ call: CAPPluginCall) {
+        guard #available(iOS 17.0, *) else { call.reject("Нужна iOS 17 или новее"); return }
+        guard let m = ScanJournal.manifest() else { call.reject("Нет незавершённого скана"); return }
+        DispatchQueue.main.async {
+            let vc = RoomScanViewController(mode: m["mode"] as? String ?? "walk", maxDim: (m["maxDim"] as? NSNumber)?.intValue ?? 1600,
+                                            wantFrames: m["frames"] as? Bool ?? false, overlay: nil, hd: m["hd"] as? Bool ?? false) { _ in }
+            Task { @MainActor in
+                let out = await vc.recoverFromJournal()
+                ScanJournal.discard(keepHD: true)
+                if var o = out { if let c = m["context"] { o["context"] = c }; call.resolve(o) }
+                else { call.reject("Восстанавливать нечего") }
+            }
+        }
+    }
+
+    /// Пользователь отказался восстанавливать — удалить журнал и недоупакованные HD-кадры.
+    @objc func discardScan(_ call: CAPPluginCall) {
+        ScanJournal.discard()
+        call.resolve()
     }
 }
 

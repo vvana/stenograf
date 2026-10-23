@@ -37,6 +37,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     var cloudCount: Int { voxels.count }
     private(set) var depthFrames = 0
     static let hiResLongSide = 3024              // снимок 12 Мп (4032×3024) → 3024×2268
+    private var nextIndex = 1                     // номер следующего файла кадра
     private(set) var hiRes = 0                    // кадров, заменённых полноразмерным снимком (12 Мп)
     private var hiResSize = ""
     let maxFrames = 2000  // 2026-10-21: «максимально подробная съёмка» (было 1000, до того 300); ≈ 1,5–2 ГБ на квартиру
@@ -85,7 +86,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         let ci = CIImage(cvPixelBuffer: frame.capturedImage)
         guard let cg = ciContext.createCGImage(ci, from: ci.extent) else { return false }   // копия — буфер ARKit не держим
         let K = cam.intrinsics
-        let n = entries.count + 1
+        let n = nextIndex; nextIndex += 1          // номер файла: после продолжения скана с паузы — после уже снятых
         let name = String(format: "images/frame_%05ld.jpg", n)
         // глубина лидара для кадра (та же ориентация, что у кадра; Nerfstudio растянет её до размера кадра)
         let depthName = String(format: "depth/frame_%05ld.png", n)
@@ -101,6 +102,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
             if let d = depthPNG, let self = self { try? d.write(to: self.dir.appendingPathComponent(depthName)) }
             DispatchQueue.main.async { self?.pending -= 1 }
         }
+        writeJournal()
         return true
     }
 
@@ -121,7 +123,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         let ownDepth = Self.depthPNG(hf)
         if ownDepth == nil, e.depth != nil { n.depthC2W = e.c2w; n.depthK = [e.fx, e.fy, e.cx, e.cy, Float(e.w), Float(e.h)] }
         if ownDepth != nil && e.depth == nil { depthFrames += 1 }
-        if ownDepth != nil { n.depth = String(format: "depth/frame_%05ld.png", index + 1) }
+        if ownDepth != nil { n.depth = e.file.replacingOccurrences(of: "images/", with: "depth/").replacingOccurrences(of: ".jpg", with: ".png") }
         entries[index] = n
         hiRes += 1; hiResSize = "\(n.w)x\(n.h)"
         pending += 1
@@ -140,6 +142,69 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
             if let d = ownDepth, let name = depthName, let self = self { try? d.write(to: self.dir.appendingPathComponent(name)) }
             DispatchQueue.main.async { self?.pending -= 1 }
         }
+        writeJournal()
+    }
+
+    // MARK: журнал на диске (2026-10-23): список кадров с позами — чтобы пакет можно было собрать после выгрузки приложения
+
+    private static func m16(_ m: simd_float4x4) -> [Float] { (0..<4).flatMap { c in (0..<4).map { r in m[c][r] } } }
+    private static func m4(_ a: [Float]) -> simd_float4x4? {
+        guard a.count == 16 else { return nil }
+        return simd_float4x4(columns: (simd_float4(a[0], a[1], a[2], a[3]), simd_float4(a[4], a[5], a[6], a[7]),
+                                       simd_float4(a[8], a[9], a[10], a[11]), simd_float4(a[12], a[13], a[14], a[15])))
+    }
+
+    /// entries.json в папке кадров; пишется в той же очереди после JPEG — в журнале только кадры, файлы которых уже записаны
+    private func writeJournal() {
+        let arr: [[String: Any]] = entries.map { e in
+            var d: [String: Any] = ["file": e.file, "c2w": Self.m16(e.c2w), "fx": e.fx, "fy": e.fy, "cx": e.cx, "cy": e.cy, "w": e.w, "h": e.h]
+            if let x = e.depth { d["depth"] = x }
+            if let x = e.depthC2W { d["depthC2W"] = Self.m16(x) }
+            if let x = e.depthK { d["depthK"] = x }
+            return d
+        }
+        let obj: [String: Any] = ["entries": arr, "blurRejected": blurRejected, "depthFrames": depthFrames, "hiRes": hiRes, "hiResSize": hiResSize]
+        let url = dir.appendingPathComponent("entries.json")
+        queue.async { if let data = try? JSONSerialization.data(withJSONObject: obj) { try? data.write(to: url, options: .atomic) } }
+    }
+
+    /// дождаться записи всех кадров и журнала (перед паузой)
+    func flushJournal() { queue.sync {} }
+
+    static func journalCount(dir: URL) -> Int {
+        guard let d = try? Data(contentsOf: dir.appendingPathComponent("entries.json")),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return 0 }
+        return (j["entries"] as? [Any])?.count ?? 0
+    }
+
+    /// Восстановление из журнала (скан прервала выгрузка приложения): кадры, файлы которых на месте.
+    init?(restoring dir: URL) {
+        guard let d = try? Data(contentsOf: dir.appendingPathComponent("entries.json")),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let arr = j["entries"] as? [[String: Any]] else { return nil }
+        self.dir = dir
+        imagesDir = dir.appendingPathComponent("images", isDirectory: true)
+        func f(_ o: Any?) -> Float { (o as? NSNumber)?.floatValue ?? 0 }
+        for e in arr {
+            guard let file = e["file"] as? String, FileManager.default.fileExists(atPath: dir.appendingPathComponent(file).path),
+                  let c2w = Self.m4(((e["c2w"] as? [NSNumber]) ?? []).map { $0.floatValue }) else { continue }
+            var en = Entry(file: file, depth: nil, c2w: c2w, fx: f(e["fx"]), fy: f(e["fy"]), cx: f(e["cx"]), cy: f(e["cy"]),
+                           w: (e["w"] as? NSNumber)?.intValue ?? 0, h: (e["h"] as? NSNumber)?.intValue ?? 0)
+            if let dp = e["depth"] as? String, FileManager.default.fileExists(atPath: dir.appendingPathComponent(dp).path) { en.depth = dp }
+            en.depthC2W = Self.m4(((e["depthC2W"] as? [NSNumber]) ?? []).map { $0.floatValue })
+            en.depthK = (e["depthK"] as? [NSNumber])?.map { $0.floatValue }
+            entries.append(en)
+        }
+        blurRejected = (j["blurRejected"] as? NSNumber)?.intValue ?? 0
+        depthFrames = entries.filter { $0.depth != nil }.count
+        hiRes = (j["hiRes"] as? NSNumber)?.intValue ?? 0
+        hiResSize = j["hiResSize"] as? String ?? ""
+        // следующий номер — после самого большого среди записанных (часть файлов могла не успеть записаться)
+        let nums = arr.compactMap { ($0["file"] as? String).flatMap { Int($0.filter(\.isNumber)) } }
+        nextIndex = (nums.max() ?? 0) + 1
+        try? FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: dir.appendingPathComponent("depth", isDirectory: true), withIntermediateDirectories: true)
+        if entries.isEmpty { return nil }
     }
 
     /// Дописывает transforms.json, облако точек и инструкцию, упаковывает в ZIP. Возвращает путь к архиву.
