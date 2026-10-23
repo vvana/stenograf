@@ -1129,8 +1129,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if let r = latestRoom, r.walls.count >= 3 { lines.append("текущая комната — по последнему виду (стен: \(r.walls.count))") }
         if let hc = hdCapture, hc.count > 0 { lines.append("HD-кадров: \(hc.count)") }
         let ac = UIAlertController(title: "Скан прервался",
-                                   message: (lines.isEmpty ? "" : lines.joined(separator: ", ") + " — сохранены.
-")
+                                   message: (lines.isEmpty ? "" : lines.joined(separator: ", ") + " — сохранены.\n")
                                        + "«Продолжить» — снова наведите камеру на уже снятое место, телефон найдёт своё положение.",
                                    preferredStyle: .alert)
         ac.addAction(UIAlertAction(title: "Продолжить", style: .default) { [weak self] _ in self?.resumeAfterInterrupt() })
