@@ -2149,7 +2149,7 @@ final class PointCloudView: UIView {
         isUserInteractionEnabled = false
         backgroundColor = .clear
         isOpaque = false
-        wireLayer.strokeColor = UIColor(white: 1, alpha: 0.42).cgColor
+        wireLayer.strokeColor = UIColor(white: 1, alpha: 0.2).cgColor   // 2026-10-23, просьба пользователя: сетка менее заметна (было 0.42)
         wireLayer.fillColor = nil
         wireLayer.lineWidth = 0.6
         layer.addSublayer(wireLayer)
@@ -2203,7 +2203,7 @@ final class PointCloudView: UIView {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         for (i, q) in pts.enumerated() {
             let t = CGFloat(min(1, max(0, (dist[i] - 0.5) / 4.5)))   // 0,5 м → 0, 5 м → 1
-            ctx.setFillColor(UIColor(red: 0.2 + 0.5 * t, green: 0.9 - 0.7 * t, blue: 1.0, alpha: 0.9).cgColor)
+            ctx.setFillColor(UIColor(red: 0.2 + 0.5 * t, green: 0.9 - 0.7 * t, blue: 1.0, alpha: 0.45).cgColor)   // точки глубины — тоже прозрачнее (было 0.9)
             ctx.fill(CGRect(x: q.x - 1.5, y: q.y - 1.5, width: 3, height: 3))
         }
     }

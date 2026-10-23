@@ -1609,3 +1609,7 @@ body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 168px
 .tour-dd-item.on { background: color-mix(in srgb, var(--acc) 12%, transparent); color: var(--acc); }
 .tour-dd-item:active { background: color-mix(in srgb, var(--acc) 18%, transparent); }
 .tour-dd-check { width: 16px; flex: none; text-align: center; }
+/* окно-выбор действия (uiActions): кнопки столбиком, «Отмена» — последней (2026-10-23) */
+.ui-dlg-btns.stack { flex-direction: column; }
+.ui-dlg-btns.stack .ui-dlg-btn { flex: none; width: 100%; }
+.ui-dlg-btns.stack .ui-dlg-btn.cancel { order: 9; }

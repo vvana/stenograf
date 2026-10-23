@@ -444,10 +444,6 @@ async function viewProjects() {
       <!-- кнопки всегда внизу экрана, список прокручивается под ними (2026-10-23) -->
       <div class="home-bottom">
         <button class="btn primary wide" id="add-project">+ Новый объект</button>
-        <div class="backup-row">
-          <button class="btn ghost" id="export-all">${I('download')}Резервная копия</button>
-          <button class="btn ghost" id="import-all">${I('upload')}Импорт файла</button>
-        </div>
       </div>
     </div>`;
 
@@ -462,7 +458,12 @@ async function viewProjects() {
     await dbPut('projects', p); render();
   });
 
+  // резервная копия и импорт — у каждого объекта на вкладке «Объект» (просьба пользователя 2026-10-23);
+  // отсюда — только новый объект: пустой или из файла (копия объекта, файл от коллеги)
   $('#add-project').onclick = async () => {
+    const how = await uiActions('Новый объект', [['new', 'Создать'], ['file', 'Загрузить из файла']]);
+    if (how === 'file') return importBackup();
+    if (how !== 'new') return;
     const name = await uiPrompt('Название объекта (например, «Квартира на Ленина»):');
     if (!name || !name.trim()) return;
     // без выбора шаблона: один этап «Исходное состояние», дальше пользователь добавляет свои
@@ -472,8 +473,6 @@ async function viewProjects() {
     await dbPut('stages', { id: uid(), projectId: p.id, name: first[0], ord: 0, status: 0, hint: first[1] });
     render();   // объект не открываем — остаёмся в списке (просьба пользователя 2026-10-23)
   };
-  $('#export-all').onclick = exportBackup;
-  $('#import-all').onclick = importBackup;
   const list = app.querySelector('.cards');
   if (list) attachSwipe(list, async id => { if (await deleteProject(id)) { render(); return true; } return false; }, id => exportProject(id, true));
 }
@@ -3224,6 +3223,8 @@ async function viewMore(pid) {
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
         <button class="btn wide accent-border" data-nav="#/p/${pid}/team">${I('user')}Команда и задания${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
         ${stages.some(s => stageHDCaps(s).length || stageHDModels(s).length) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
+        <button class="btn wide" id="obj-backup" title="Схема, этапы, фото и команда этого объекта — одним файлом">${I('download')}Резервная копия объекта</button>
+        <button class="btn wide" id="obj-import" title="Копия этого объекта или файл от коллеги — сольётся без дублей">${I('upload')}Импорт в объект</button>
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
@@ -3235,6 +3236,8 @@ async function viewMore(pid) {
 
   // «О приложении» (диагностика лидара) убрано 2026-10-16 по просьбе пользователя; nativeDiagnostics() оставлена в native.js на случай отладки
   const lf = $('#leaf-filter'); if (lf) lf.onchange = () => { setDoorLeafFilter(lf.checked); toast(lf.checked ? 'Створки дверей будут убираться' : 'Фильтр створок выключен'); };
+  $('#obj-backup').onclick = () => exportObjectBackup(pid);
+  $('#obj-import').onclick = () => pickJson(data => importIntoProject(pid, data));
   // экспорт GLB — прямо отсюда, без экрана 3D и без фото (модель собирается «за кадром»)
   $('#export-glb').onclick = async () => {
     const b = $('#export-glb'); if (b.disabled) return;
@@ -3528,6 +3531,58 @@ async function exportBackup() {
   await deliverFile(blob, `fixpoint-backup-${new Date().toISOString().slice(0, 10)}.json`, 'Резервная копия Fixpoint');
 }
 
+// резервная копия одного объекта (kind 'backup' — при импорте схема и этапы восстанавливаются, фото не удаляются)
+async function exportObjectBackup(pid) {
+  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  if (!project) return;
+  toast('Готовлю копию объекта…');
+  const blob = await buildExport('backup', [project], rooms, stages, photos);
+  await deliverFile(blob, `${slug(project.name)}-backup-${new Date().toISOString().slice(0, 10)}.json`, `Резервная копия: ${project.name}`);
+}
+function pickJson(onData) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'application/json,.json';
+  inp.onchange = async () => {
+    const file = inp.files && inp.files[0];
+    if (!file) return;
+    try { await onData(JSON.parse(await file.text())); }
+    catch (err) { uiAlert('Не удалось импортировать: ' + err.message); }
+  };
+  inp.click();
+}
+// импорт файла в открытый объект: берём из файла один объект (если их несколько — спрашиваем какой) и сливаем с этим.
+// Файл от того же объекта (копия, фото коллеги) — как есть. Файл другого объекта — с новыми id комнат, этапов и фото,
+// иначе они «переехали» бы из того объекта в этот; название текущего объекта сохраняется.
+async function importIntoProject(pid, data) {
+  if (!data || !['fixpoint', 'stenograf'].includes(data.app) || !Array.isArray(data.projects) || !data.projects.length) throw new Error('Это не файл Fixpoint');
+  let src = data.projects.find(p => p.id === pid);
+  if (!src) {
+    if (data.projects.length === 1) src = data.projects[0];
+    else {
+      const id = await pickSheet('Какой объект из файла?', 'В файле несколько объектов — выберите один', data.projects.map(p => ({ html: esc(p.name), value: p.id })));
+      if (!id) return;
+      src = data.projects.find(p => p.id === id);
+    }
+  }
+  const sid = src.id, same = sid === pid;
+  const here = await dbGet('projects', pid);
+  const rooms = (data.rooms || []).filter(r => r.projectId === sid);
+  const stages = (data.stages || []).filter(x => x.projectId === sid);
+  const photos = (data.photos || []).filter(x => x.projectId === sid);
+  if (!same) {
+    const map = new Map(), nid = id => { if (id == null) return id; if (!map.has(id)) map.set(id, uid()); return map.get(id); };
+    rooms.forEach(r => { r.id = nid(r.id); r.projectId = pid; });
+    stages.forEach(x => { x.id = nid(x.id); x.projectId = pid; if (Array.isArray(x.rooms)) x.rooms = x.rooms.map(id => map.get(id) || id); });
+    photos.forEach(ph => {
+      ph.id = nid(ph.id); ph.projectId = pid;
+      if (ph.stageId) ph.stageId = map.get(ph.stageId) || ph.stageId;
+      if (ph.wallKey) { const i = ph.wallKey.indexOf(':'); const r = ph.wallKey.slice(0, i); if (map.has(r)) ph.wallKey = map.get(r) + ph.wallKey.slice(i); }
+    });
+  }
+  const proj = { ...src, id: pid, name: here ? here.name : src.name, created: here ? here.created : src.created };
+  return importData({ ...data, projects: [proj], rooms, stages, photos });
+}
 async function exportProject(pid, withPhotos) {
   const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return;

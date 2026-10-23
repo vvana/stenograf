@@ -1,7 +1,7 @@
 /* Всплывающие окна в стиле «жидкого стекла» вместо системных alert / confirm / prompt
    (просьба пользователя 2026-10-14: «все всплывающие окна — жидким стеклом»).
    Все три возвращают Promise: uiAlert → undefined, uiConfirm → true/false, uiPrompt → строка или null (отмена). */
-function uiDialog({ text, input = false, value = '', ok = 'ОК', cancel = 'Отмена', danger = false, choices = null }) {
+function uiDialog({ text, input = false, value = '', ok = 'ОК', cancel = 'Отмена', danger = false, choices = null, actions = null }) {
   return new Promise(resolve => {
     const back = document.createElement('div');
     back.className = 'ui-dlg-back';
@@ -51,8 +51,11 @@ function uiDialog({ text, input = false, value = '', ok = 'ОК', cancel = 'От
     const row = document.createElement('div');
     row.className = 'ui-dlg-btns';
     const mk = (label, cls) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'ui-dlg-btn ' + cls; b.textContent = label; row.appendChild(b); return b; };
+    // окно-выбор действия: кнопки друг под другом (первая — оранжевая), внизу «Отмена»; → значение кнопки или null
+    if (actions) row.classList.add('stack');
+    const acts = actions ? actions.map(([v, label], k) => { const b = mk(label, k ? 'act' : 'ok'); b.dataset.v = v; return b; }) : [];
     const bCancel = cancel ? mk(cancel, 'cancel') : null;
-    const bOk = mk(ok, danger ? 'ok danger' : 'ok');
+    const bOk = actions ? acts[0] : mk(ok, danger ? 'ok danger' : 'ok');
     box.appendChild(row);
     back.appendChild(box);
     document.body.appendChild(back);
@@ -65,9 +68,10 @@ function uiDialog({ text, input = false, value = '', ok = 'ОК', cancel = 'От
       setTimeout(() => back.remove(), 180);
       resolve(res);
     };
-    const yes = () => close(input ? inp.value : choices ? pick : true);
-    const no = () => close(input || choices ? null : false);
-    bOk.onclick = yes;
+    const yes = () => close(input ? inp.value : choices ? pick : actions ? actions[0][0] : true);
+    const no = () => close(input || choices || actions ? null : false);
+    if (actions) acts.forEach(b => b.onclick = () => close(b.dataset.v));
+    else bOk.onclick = yes;
     if (bCancel) bCancel.onclick = no;
     back.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); yes(); }
@@ -100,3 +104,5 @@ const uiConfirm = text => uiDialog({ text });
 const uiPrompt = (text, value = '') => uiDialog({ text, input: true, value });
 // выбор одного из вариантов слайдером: choices = [[значение, подпись], …]; → значение или null (отмена)
 const uiChoose = (text, choices, value) => uiDialog({ text, choices, value });
+// выбор действия кнопками: actions = [[значение, подпись], …]; → значение или null (отмена)
+const uiActions = (text, actions) => uiDialog({ text, actions });
