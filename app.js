@@ -1114,6 +1114,7 @@ const ICONS = {
   stages: svgIco('<path d="M11 6h10M11 12h10M11 18h10"/><path d="M2.5 6l1.5 1.5L6.5 5M2.5 12l1.5 1.5L6.5 11"/><circle cx="4.2" cy="18" r="1.3"/>'),
   tour: svgIco('<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>'),
   more: svgIco('<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'),
+  house: svgIco('<path d="M3.5 11 12 4l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5.5h4V20"/>'),   // вкладка «Объект» (бывш. «Ещё», 2026-10-23)
   trash: svgIco('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>'),
   scan: svgIco('<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M8 12h8M12 8v8" opacity=".9"/>'),
   eye: svgIco('<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
@@ -1166,7 +1167,7 @@ function bottomNav(pid, active) {
     ${item('plan', `#/p/${pid}`, ICONS.plan, 'Схема')}
     ${item('stages', `#/p/${pid}/stages`, ICONS.stages, 'Этапы')}
     ${item('tour', `#/p/${pid}/tour`, ICONS.tour, '3D')}
-    ${item('more', `#/p/${pid}/more`, ICONS.more, 'Ещё')}
+    ${item('more', `#/p/${pid}/more`, ICONS.house, 'Объект')}
   </nav>`;
 }
 
@@ -2087,7 +2088,7 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
   // лидар (только нативная iOS-версия на iPhone Pro)
   lidarAvailable().then(ok => {
     if (!ok) {
-      if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Ещё → О приложении»');
+      if (Native.isNative && lidarDiag.error) toast('Модуль лидара не ответил — подробности в «Объект → О приложении»');
       return;
     }
     // при первом открытии схемы лидар ещё не проверен — разметка собрана без него («Редактор» в верхнем ряду).
@@ -2223,8 +2224,8 @@ async function stageWalk(pid, stageId = null) {
     const caps = stageHDCaps(await dbGet('stages', st.id)), cap = caps[caps.length - 1];
     if (!cap) return;
     const mb = cap.bytes ? ` · ${(cap.bytes / 1048576).toFixed(0)} МБ` : '';
-    const send = await uiDialog({ text: `HD-пакет готов: ${cap.frames || 0} кадров${mb}.\n(Сохранённые можно отправить позже: «Ещё» → «HD-скан»)`, ok: 'Отправить', cancel: 'Сохранить' });
-    if (send) { try { await Native.RP.shareFile({ path: cap.path }); } catch (err) { uiAlert('Не удалось отправить: ' + err.message + '\nПакет сохранён — отправьте позже из «Ещё» → «HD-скан».'); } }
+    const send = await uiDialog({ text: `HD-пакет готов: ${cap.frames || 0} кадров${mb}.\n(Сохранённые можно отправить позже: «Объект» → «HD-скан»)`, ok: 'Отправить', cancel: 'Сохранить' });
+    if (send) { try { await Native.RP.shareFile({ path: cap.path }); } catch (err) { uiAlert('Не удалось отправить: ' + err.message + '\nПакет сохранён — отправьте позже из «Объект» → «HD-скан».'); } }
   };
   // схемы ещё нет — обход всей квартиры строит её сам: комнаты обмеряются и встают на схему, кадры стен ложатся на этап
   if (!rooms.length) {
@@ -3217,7 +3218,7 @@ async function viewMore(pid) {
   if (!project) return nav('');
 
   app.innerHTML = `
-    ${header('Ещё', false)}
+    ${header('Объект', false)}
     <div class="pad more-pad">
       <div class="cards">
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>

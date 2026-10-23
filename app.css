@@ -1579,3 +1579,17 @@ button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
 .proj-mini { right: 16px; top: 34px; bottom: 10px; }
 .project-card:has(.proj-mini) { padding-right: 96px; }
 .home-bottom .backup-row .btn { background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.26) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .40); }
+/* полоса отмены удаления — дружелюбнее (2026-10-23, просьба пользователя): светлое матовое стекло, тёмный текст,
+   «Отменить» — оранжевая капсула, тонкая полоса отсчёта; на главном — над кнопками, а не поверх них */
+.undo-bar { background: rgba(255,255,255,.86); color: var(--ink); border: 1px solid rgba(255,255,255,.9); border-radius: 20px;
+  -webkit-backdrop-filter: blur(14px) saturate(1.6); backdrop-filter: blur(14px) saturate(1.6);
+  box-shadow: 0 8px 28px rgba(30,25,15,.16), inset 0 1px 1px rgba(255,255,255,.8); padding: 10px 10px 10px 16px; font-size: 15px; }
+.undo-bar button { color: #fff; background: rgba(217, 95, 24, .9); border-radius: 16px; padding: 9px 14px; font-size: 14px;
+  box-shadow: inset 0 1px 1px rgba(255,255,255,.4); }
+.undo-bar button:active { transform: scale(.95); }
+.undo-bar i { height: 2px; left: 16px; right: 16px; width: auto; bottom: 4px; border-radius: 2px; background: rgba(217, 95, 24, .55); }
+body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 168px); }
+.undo-bar { border: 1.5px solid rgba(217, 95, 24, .75); }
+/* конус взгляда на мини-плане в 3D — белый полупрозрачный (2026-10-23: оранжевый на оранжевой комнате почти не виден; синий пользователь отклонил) */
+.tour-plan .tp-cone { fill: rgba(255, 255, 255, .6); stroke: none; }
+.tour-plan .tp-dot { fill: #fff; stroke: rgba(40, 30, 20, .55); stroke-width: 0.05; }
