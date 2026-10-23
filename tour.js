@@ -563,7 +563,11 @@ async function viewTour(pid, roomId = null) {
       <div class="tour-top">
         <div class="tour-row">
           ${photos.length || hdStage() ? '' : '<div class="inp tour-nophoto">Фото пока нет</div>'}
-          ${photos.length || hdStage() ? `<select class="inp" id="tour-stage">
+          ${photos.length || hdStage() ? `<div class="tour-dd" id="tour-dd">
+            <button class="inp tour-dd-btn" id="tour-dd-btn" aria-haspopup="listbox"><span id="tour-dd-label"></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            <div class="tour-dd-list hidden" id="tour-dd-list" role="listbox"></div>
+          </div>
+          <select class="inp hidden" id="tour-stage" aria-hidden="true">
             ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id && tourState.mode !== 'hd' ? 'selected' : ''}>${esc(s.name)}</option>` +
               (stageHDModels(s).length ? `<option value="hd:${s.id}" ${tourState.stage === s.id && tourState.mode === 'hd' ? 'selected' : ''}>3D-модель · ${esc(s.name)}</option>` : '')).join('')}
           </select>
@@ -872,7 +876,17 @@ async function viewTour(pid, roomId = null) {
     const cone = document.getElementById('tp-cone');
     if (cone) cone.setAttribute('d', `M0 0 L${-sx} ${-sy} A${L} ${L} 0 0 1 ${sx} ${-sy} Z`);
   }
+  // свой выпадающий список этапов (2026-10-23: системное окно iOS всплывало поверх поля — пользователь: «должен быть выпадающий список»)
+  function syncDD() {
+    const sel = $('#tour-stage'), lab = $('#tour-dd-label'), list = $('#tour-dd-list');
+    if (!sel || !lab || !list) return;
+    const cur = sel.options[sel.selectedIndex];
+    lab.textContent = cur ? cur.text : '';
+    list.innerHTML = [...sel.options].map(o => `<button class="tour-dd-item ${o.selected ? 'on' : ''}" data-v="${esc(o.value)}" role="option">` +
+      `<span class="tour-dd-check">${o.selected ? '✓' : ''}</span><span>${esc(o.text)}</span></button>`).join('');
+  }
   function updateHint() {
+    syncDD();
     const ri = roomInfo[tourState.roomId];
     const name = ri ? ri.name : '';
     if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем или двумя, щипок — масштаб. Тап по плану — встать в эту точку внутри.';
@@ -960,6 +974,19 @@ async function viewTour(pid, roomId = null) {
   };
   const photosBtn = $('#tour-photos');
   if (photosBtn) photosBtn.onclick = () => { tourState.photos = !tourState.photos; updateHint(); };
+  if ($('#tour-dd-btn')) {
+    const list = $('#tour-dd-list');
+    const close = () => list.classList.add('hidden');
+    $('#tour-dd-btn').onclick = e => { e.stopPropagation(); syncDD(); list.classList.toggle('hidden'); };
+    list.onclick = e => {
+      const it = e.target.closest('[data-v]'); if (!it) return;
+      e.stopPropagation(); close();
+      const sel = $('#tour-stage'); if (sel.value === it.dataset.v) return;
+      sel.value = it.dataset.v; sel.dispatchEvent(new Event('change'));
+    };
+    app.querySelector('.tour').addEventListener('pointerdown', e => { if (!e.target.closest('#tour-dd')) close(); });
+    syncDD();
+  }
   if ($('#tour-stage')) $('#tour-stage').onchange = e => {
     const v = e.target.value;
     if (v.startsWith('hd:')) { tourState.stage = v.slice(3); applyStage(); look.yaw = 0; look.pitch = 0; setMode('hd'); return; }   // 3D-модель этапа
