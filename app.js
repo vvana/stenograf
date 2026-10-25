@@ -784,6 +784,7 @@ function roomPath(r) {
   return d + 'Z';
 }
 
+const SHOT_POINTS = false;
 async function viewPlan(pid) {
   const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -791,7 +792,9 @@ async function viewPlan(pid) {
   const shotAll = photos.filter(p => p.shot && rooms.some(r => r.id === parseWallKey(p.wallKey).roomId));
   const shotStages = stages.filter(s => shotAll.some(p => p.stageId === s.id));
   if (!shotStages.some(s => s.id === planState.shotStage)) planState.shotStage = shotStages.length ? shotStages[shotStages.length - 1].id : null;
-  const showShots = planState.shots && shotStages.length && !planState.edit;
+  // кнопка «Точки съёмки» скрыта (решение пользователя 2026-10-25): стена теперь собирается целиком из всех кадров обхода
+  // (развёртка), и откуда снят отдельный кадр, не нужно. Точки (photo.shot) по-прежнему записываются — вернуть: SHOT_POINTS = true
+  const showShots = SHOT_POINTS && planState.shots && shotStages.length && !planState.edit;
   const shots = showShots ? shotAll.filter(p => p.stageId === planState.shotStage) : [];
   const counts = {}, points = {};
   photos.forEach(p => {
@@ -847,7 +850,7 @@ async function viewPlan(pid) {
         ${lidarNow && !planState.edit ? `<!-- с лидаром «Редактор» — стеклянной кнопкой в углу схемы, на одном уровне с «Отправить» (просьба пользователя 2026-10-14) -->
         <button class="plan-glass-edit" id="toggle-edit-in" title="Редактор схемы"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>Редактор</span></button>` : ''}
         <div class="plan-tools">
-          ${shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
+          ${SHOT_POINTS && shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool" id="plan-undo" ${planUndo.stack.length ? '' : 'disabled'} title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
           ${rooms.length && !planState.edit ? `<button class="plan-tool plan-shot" id="plan-shot" title="Снимок схемы — нарисовать поверх, сохранить или отправить" aria-label="Снимок схемы">${ICONS.camera}<span>Фото</span></button>` : ''}
           ${rooms.length && !planState.edit ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
@@ -2665,6 +2668,14 @@ async function viewStages(pid) {
 /* ---------- экран: альбом этапа — все фото этапа по комнатам и стенам ---------- */
 
 const albumOpen = new Set();   // какие комнаты раскрыты в альбоме этапа (на время работы приложения)
+// фото поверхности на одном этапе для показа: есть развёртка стены (собрана из всех кадров обхода) — она одна вместо
+// кадров обхода (source 'lidar', хранятся, но не показываются — решение пользователя 2026-10-25); ручные фото остаются
+function wallShown(list) {
+  const mosaic = list.filter(p => p.source === 'wall-mosaic').pop() || null;
+  const rest = mosaic ? list.filter(p => p !== mosaic && p.source !== 'lidar' && p.source !== 'wall-mosaic') : list;
+  return { mosaic, rest, count: rest.length + (mosaic ? 1 : 0) };
+}
+const mosaicHTML = m => `<div class="wall-mosaic" data-view="${m.id}"><img src="${newURL(m.blob)}" alt="Стена целиком">${(m.marks || []).length ? `<span class="thumb-badge">${m.marks.length}</span>` : ''}</div>`;
 async function viewStageAlbum(pid, stageId) {
   const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -2679,7 +2690,7 @@ async function viewStageAlbum(pid, stageId) {
     const sides = [...roomEdges(r).map(e => e.id), 'c', 'f'];
     for (const side of sides) {
       const key = `${r.id}:${side}`;
-      if (byKey[key]) { groups.push({ key, room: r, side, list: byKey[key] }); delete byKey[key]; }
+      if (byKey[key]) { groups.push({ key, room: r, side, list: byKey[key], shown: wallShown(byKey[key]) }); delete byKey[key]; }
     }
   }
   const orphans = Object.values(byKey).flat();
@@ -2697,7 +2708,7 @@ async function viewStageAlbum(pid, stageId) {
     ${header(stage.name, false, `<button class="iconbtn" id="rename-stage" title="Переименовать этап">${ICONS.edit}</button>`)}
     <div class="pad">
       <div class="album-head">
-        <span class="mut small">${mine.length} фото</span>
+        <span class="mut small">${groups.reduce((k, g) => k + g.shown.count, 0) + orphans.length} фото</span>
         <button class="chip ${STATUS[stage.status || 0].cls}" id="album-status">${STATUS[stage.status || 0].t}</button>
       </div>
       ${rooms.length ? `<div class="card where-card">
@@ -2712,13 +2723,13 @@ async function viewStageAlbum(pid, stageId) {
       ${mine.length ? '' : `<div class="empty"><div class="empty-ico">${ICONS.camera}</div><p><b>Фото этого этапа пока нет.</b></p></div>`}
       ${rooms.filter(r => groups.some(g => g.room === r)).map(r => {
         // фото этапа — по комнатам раскрывающимися списками (просьба пользователя 2026-10-19), внутри — по стенам, потолку, полу
-        const gs = groups.filter(g => g.room === r), n = gs.reduce((k, g) => k + g.list.length, 0);
+        const gs = groups.filter(g => g.room === r), n = gs.reduce((k, g) => k + g.shown.count, 0);
         // свайп влево — «Удалить»: все фото этой комнаты на этом этапе (как у этапов и объектов, 3 с на отмену; просьба пользователя 2026-10-20)
         return `<div class="swipe album-swipe" data-id="${r.id}">${swipeButtons(false)}<details class="card album-room swipe-body" data-aroom="${r.id}" ${albumOpen.has(stage.id + ':' + r.id) ? 'open' : ''}>
           <summary><b>${esc(r.name)}</b><span class="mut small">${n} фото</span><svg class="album-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></summary>
           ${gs.map(g => `<div class="album-group">
-            <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side).replace(r.name + ' — ', ''))} <span class="mut small">· ${g.list.length}</span> ›</div>
-            ${thumbs(g.list)}
+            <div class="album-title" data-nav="#/p/${pid}/w/${encodeURIComponent(g.key)}">${esc(wallLabel(g.room, g.side).replace(r.name + ' — ', ''))} <span class="mut small">· ${g.shown.count}</span> ›</div>
+            ${g.shown.mosaic ? mosaicHTML(g.shown.mosaic) : ''}${g.shown.rest.length ? thumbs(g.shown.rest) : ''}
           </div>`).join('')}
         </details></div>`;
       }).join('')}
@@ -2839,7 +2850,9 @@ async function viewWall(pid, wallKey) {
         </div>` : ''}
       <div class="cards">
         ${stages.map(s => {
-          const list = byStage[s.id] || [];
+          // есть развёртка стены этого этапа (собрана из всех кадров обхода) — показываем её крупно, а отдельные кадры обхода
+          // (source 'lidar') прячем; ручные фото — миниатюрами под ней (просьба пользователя 2026-10-25)
+          const { mosaic, rest: list } = wallShown(byStage[s.id] || []);
           return `<div class="card stage-photos">
             <div class="stage-photos-head">
               <b>${esc(s.name)}</b>
@@ -2848,6 +2861,7 @@ async function viewWall(pid, wallKey) {
                 <button class="btn small-btn" data-pick="${s.id}">${I('image')}Галерея</button>
               </span>
             </div>
+            ${mosaic ? mosaicHTML(mosaic) : ''}
             ${list.length ? `<div class="thumbs">
               ${list.map(p => {
                 const n = (p.marks || []).length;
@@ -2857,7 +2871,7 @@ async function viewWall(pid, wallKey) {
                   ${n ? `<span class="thumb-badge">${n}</span>` : ''}
                 </div>`;
               }).join('')}
-            </div>` : `<div class="mut small">Нет фото</div>`}
+            </div>` : mosaic ? '' : `<div class="mut small">Нет фото</div>`}
           </div>`;
         }).join('')}
       </div>

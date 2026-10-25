@@ -1613,3 +1613,7 @@ body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 168px
 .ui-dlg-btns.stack { flex-direction: column; }
 .ui-dlg-btns.stack .ui-dlg-btn { flex: none; width: 100%; }
 .ui-dlg-btns.stack .ui-dlg-btn.cancel { order: 9; }
+/* экран стены: развёртка стены этапа — крупно, на всю ширину карточки (2026-10-25) */
+.wall-mosaic { position: relative; margin-top: 10px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); cursor: pointer; background: var(--bg); }
+.wall-mosaic img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: contain; }
+.wall-mosaic + .thumbs { margin-top: 8px; }

@@ -449,7 +449,6 @@ function shotOf(f, place, room) {
 
 async function framesToPhotos(pid, roomId, stageId, frames, idMap, place = null) {
   const by = await userNameAsk();
-  const room = place ? await dbGet('rooms', roomId) : null;
   const byWall = {};
   for (const f of frames || []) {
     const wid = idMap[f.wall];
@@ -459,21 +458,10 @@ async function framesToPhotos(pid, roomId, stageId, frames, idMap, place = null)
   let n = 0;
   for (const [wid, list] of Object.entries(byWall)) {
     list.sort((a, b) => (b.full - a.full) || (b.score - a.score));
-    const take = list.filter(f => f.full).length ? list.filter(f => f.full).slice(0, 2) : list.slice(0, 1);
-    for (const f of take) {
-      const blob = await (await fetch('data:image/jpeg;base64,' + f.jpeg)).blob();
-      const rec = {
-        id: uid(), projectId: pid, wallKey: `${roomId}:${wid}`, stageId, blob, note: '', created: Date.now(), by,
-        calib: { type: 'quad', pts: f.corners, w: cm(f.w), h: cm(f.h) }, marks: [], source: 'lidar',
-      };
-      const shot = room ? shotOf(f, place, room) : null;
-      if (shot) rec.shot = shot;
-      await sealPhoto(rec, { source: 'lidar' });
-      await dbPut('photos', rec);
-      n++;
-    }
-    // развёртка стены из всех её кадров (2026-10-23): в 3D — вся стена, а не один кадр с её частью
-    try { if (await saveWallMosaic(pid, roomId, stageId, wid, list, by)) n++; } catch (e) { console.warn('развёртка стены', e); }
+    // развёртка стены из всех её кадров (2026-10-23): в 3D, на экране стены и в альбоме — вся стена, а не один кадр с её частью.
+    // Отдельные кадры обхода не сохраняются совсем, даже если развёртка не собралась (решение пользователя 2026-10-25)
+    try { if (await saveWallMosaic(pid, roomId, stageId, wid, list, by)) n++; else console.warn('развёртка стены не собралась', wid); }
+    catch (e) { console.warn('развёртка стены', e); }
   }
   return { photos: n, walls: Object.keys(byWall).length };
 }
