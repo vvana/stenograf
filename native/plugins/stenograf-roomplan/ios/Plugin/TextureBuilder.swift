@@ -90,22 +90,29 @@ enum TextureBuilder {
             }
             for t in 0..<nF {
                 let tri = F[t]
-                guard vin[Int(tri.x)], vin[Int(tri.y)], vin[Int(tri.z)] else { continue }
                 let p = w2c * simd_float4(fc[t], 1); let z = -p.z
-                guard z > 0.15, z < 6 else { continue }
-                // не загорожено: глубина лидара этого кадра в центре треугольника
-                let pd = dw2c * simd_float4(fc[t], 1); let zd = -pd.z
-                guard zd > 0.1 else { continue }
-                let du = Int(f.dfx * kd * pd.x / zd + f.dcx * kd), dv = Int(-f.dfy * kd * pd.y / zd + f.dcy * kd)
-                guard du >= 0, du < dep.w, dv >= 0, dv < dep.h else { continue }
-                let dd = Float(dep.mm[dv * dep.w + du]) / 1000
-                guard dd > 0, abs(zd - dd) < 0.03 + 0.02 * zd else { continue }
+                guard z > 0.1, z < 8 else { continue }
+                let u = f.fx * p.x / z + f.cx, v = -f.fy * p.y / z + f.cy
+                guard u > 0, u < W, v > 0, v < H else { continue }
+                // глубина лидара этого кадра в центре треугольника (0 — нет данных)
+                var dd: Float = 0, zd: Float = z
+                let pd = dw2c * simd_float4(fc[t], 1); zd = -pd.z
+                if zd > 0.1 {
+                    let du = Int(f.dfx * kd * pd.x / zd + f.dcx * kd), dv = Int(-f.dfy * kd * pd.y / zd + f.dcy * kd)
+                    if du >= 0, du < dep.w, dv >= 0, dv < dep.h { dd = Float(dep.mm[dv * dep.w + du]) / 1000 }
+                }
                 let viewW = simd_normalize(simd_float3(f.c2w.columns.3.x, f.c2w.columns.3.y, f.c2w.columns.3.z) - fc[t])
                 let cosv = simd_dot(fn[t], viewW)
-                guard cosv > 0.25 else { continue }
-                let u = f.fx * p.x / z + f.cx, v = -f.fy * p.y / z + f.cy
                 let r2 = pow((u - W / 2) / (W / 2), 2) + pow((v - H / 2) / (H / 2), 2)
-                let s = cosv * cosv * max(0.1, min(1, 1 - 0.5 * r2)) / max(z, 0.5)
+                let cent = max(0.1, min(1, 1 - 0.5 * r2))
+                // строго: все вершины в кадре, не загорожено (±3 см + 2%), прямо (cos > 0,25)
+                let strict = vin[Int(tri.x)] && vin[Int(tri.y)] && vin[Int(tri.z)] && z > 0.15 && z < 6 &&
+                             dd > 0 && abs(zd - dd) < 0.03 + 0.02 * zd && cosv > 0.25
+                // мягко (2026-10-26, пакет 0923: 23% без кадра — серые заплатки): вскользь до cos 0,05, допуск глубины шире
+                // или глубины нет; оценка ×0,001 — строгий кадр всегда главнее
+                let relaxed = cosv > 0.05 && (dd <= 0 || abs(zd - dd) < 0.08 + 0.05 * zd)
+                guard strict || relaxed else { continue }
+                let s = strict ? cosv * cosv * cent / max(z, 0.5) : 0.001 * cosv * cent / max(z, 0.5)
                 // вставка в top-K
                 let o = t * K
                 var m = -1; var ms = s
@@ -263,23 +270,17 @@ enum TextureBuilder {
                     atlas[o + 1] = UInt8(max(0, min(255, Float(atlas[o + 1]) * gg.y)))
                     atlas[o + 2] = UInt8(max(0, min(255, Float(atlas[o + 2]) * gg.z)))
                 }
-            } else {
-                let C = R.map { $0.x >= 0 ? $0 : simd_float3(repeating: 170) }
-                for (x, y, b) in tpl[rank[t] % 2] {
-                    let c = C[0] * b.x + C[1] * b.y + C[2] * b.z
-                    let o = ((oy + y) * N + ox + x) * 4
-                    atlas[o] = UInt8(max(0, min(255, c.x))); atlas[o + 1] = UInt8(max(0, min(255, c.y))); atlas[o + 2] = UInt8(max(0, min(255, c.z)))
-                }
-            }
+            }   // без кадра — дыра, как у Polycam (серые заплатки выглядели хуже), в GLB не идёт
         }
         progress?(0.95)
 
+        guard seen > 0 else { return nil }   // ни один треугольник не попал в кадры
         // ---------- GLB ----------
         guard let jpg = jpegFromRGBA(atlas, w: N, h: N, quality: 0.88) else { return nil }
         var pos = [Float](); pos.reserveCapacity(nF * 9)
         var uv = [Float](); uv.reserveCapacity(nF * 6)
         var mn = simd_float3(repeating: .greatestFiniteMagnitude), mx = simd_float3(repeating: -.greatestFiniteMagnitude)
-        for t in 0..<nF {
+        for t in 0..<nF where best[t] >= 0 {
             let (ox, oy) = cellOrigin(t)
             let T = rank[t] % 2 == 0 ? T1 : T2
             for (j, vi) in [F[t].x, F[t].y, F[t].z].enumerated() {
@@ -287,7 +288,7 @@ enum TextureBuilder {
                 uv += [(Float(ox) + T[j].x) / Float(N), (Float(oy) + T[j].y) / Float(N)]
             }
         }
-        let idx = (0..<UInt32(nF * 3)).map { $0 }
+        let idx = (0..<UInt32(pos.count / 3)).map { $0 }
         writeGLB(url: url, positions: pos, uvs: uv, indices: idx, jpeg: jpg, minP: mn, maxP: mx)
         progress?(1)
         return (nF, seen)

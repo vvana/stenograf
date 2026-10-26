@@ -38,6 +38,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     private(set) var depthFrames = 0
     static let hiResLongSide = 3024              // снимок 12 Мп (4032×3024) → 3024×2268
     private var nextIndex = 1                     // номер следующего файла кадра
+    var onTheMove = false                         // LiDAR Mode и обычный обход: кадры на ходу (без требования замереть)
     private(set) var hiRes = 0                    // кадров, заменённых полноразмерным снимком (12 Мп)
     private var hiResSize = ""
     let maxFrames = 2000  // 2026-10-21: «максимально подробная съёмка» (было 1000, до того 300); ≈ 1,5–2 ГБ на квартиру
@@ -68,7 +69,11 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
             let pp = simd_float3(p.columns.3.x, p.columns.3.y, p.columns.3.z)
             let pf = simd_normalize(-simd_float3(p.columns.2.x, p.columns.2.y, p.columns.2.z))
             prevPollT = T
-            if simd_length(pos - pp) > 0.06 || acos(max(-1, min(1, simd_dot(fwd, pf)))) > 0.08 { return false }
+            // на ходу (LiDAR Mode, 2026-10-26): неподвижности не требуем — смазанные отсеивает фильтр резкости ниже;
+            // отбрасываем только явный рывок (> 25 см / 0,35 рад за опрос)
+            let dMove = simd_length(pos - pp), dTurn = acos(max(-1, min(1, simd_dot(fwd, pf))))
+            if onTheMove { if dMove > 0.25 || dTurn > 0.35 { return false } }
+            else if dMove > 0.06 || dTurn > 0.08 { return false }
         } else { prevPollT = T; return false }
         // новый ракурс: сдвиг ≥ 8 см или поворот ≥ 5° (2026-10-21; было 15 см / 10°)
         if let lp = lastPos, let lf = lastFwd {

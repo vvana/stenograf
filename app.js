@@ -809,8 +809,10 @@ async function viewPlan(pid) {
     <div class="plan-wrap ${lidarNow ? 'full' : ''} ${lidarNow && planState.edit ? 'editing' : ''}">
       <div class="plan-actions">
         ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}
-        <button class="pa-btn pa-scan2 ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-apt" title="Все комнаты подряд за один сеанс — встанут на схеме на свои места">${ICONS.building}<span>Обмер квартиры</span></button>
-        <button class="pa-btn pa-scan ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-measure" title="Обмер одной комнаты лидаром (RoomPlan)">${ICONS.scan}<span>Обмер комнаты</span></button>
+        <button class="pa-btn pa-scan ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-apt" title="Комнаты подряд за один сеанс — встанут на схеме на свои места (одна комната — тоже так)">${ICONS.building}<span>Обмер</span></button>
+        <button class="pa-btn pa-lidar ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-mode" title="LiDAR Mode: 3D-модель с текстурой без RoomPlan — водите телефоном, пока синее не исчезнет">${ICONS.scan}<span>Скан</span></button>
+        ${'' /* «Обмер комнаты» убран (2026-10-26, решение пользователя): первый обмер — всегда «Обмер» (квартира, хоть из одной комнаты);
+               переобмер одной комнаты — в её меню на схеме («Переобмерить лидаром») */}
         ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Создать</span></button><span class="pa-btn pa-spacer ${lidarNow ? '' : 'hidden'}" aria-hidden="true"></span>` : ''}
         ${lidarNow && planState.edit ? `<!-- редактор с лидаром: слева стеклянный крестик (выйти без изменений), справа галочка (готово) -->
         <button class="pa-round" id="edit-cancel" title="Выйти без изменений" aria-label="Отменить изменения и выйти"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ''}
@@ -2099,19 +2101,13 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
     // в редакторе только правка схемы; обмер — из обычного режима. Пустое место на месте «Обмера комнаты»,
     // чтобы «Создать» и «Готово» стояли там же и тех же размеров, что «Обмер квартиры» и «Редактор»
     if (planState.edit) { const sp = $('.pa-spacer'); if (sp) sp.classList.remove('hidden'); return; }
-    const measBtn = $('#lidar-measure');
     const aptBtn = $('#lidar-apt');
-    if (aptBtn) { aptBtn.classList.remove('hidden'); aptBtn.onclick = () => measureApartment(pid); }
-    if (measBtn) {
-      measBtn.classList.remove('hidden');
+    if (aptBtn) {
+      aptBtn.classList.remove('hidden'); aptBtn.onclick = () => measureApartment(pid);
+      const lm = $('#lidar-mode');
+      if (lm) { lm.classList.remove('hidden'); lm.onclick = () => lidarModeScan(pid); }
       const empty = $('.empty .mut');
-      if (empty) empty.textContent = 'Нажмите «Обмер квартиры» и обойдите комнаты подряд — они сразу встанут на схеме на свои места. Или «Обмер комнаты» для одной комнаты, или «Редактор», чтобы нарисовать вручную.';
-      measBtn.onclick = async () => {
-        const room = selRoom();
-        if (room && !await uiConfirm(`Переобмерить «${room.name}» лидаром? Схема комнаты заменится обмером, фото стен сохранятся.`)) return;
-        try { await lidarMeasure(pid, rooms, room || null); render(); }
-        catch (err) { uiAlert('Обмер не удался: ' + err.message); }
-      };
+      if (empty) empty.textContent = 'Нажмите «Обмер» и обойдите комнаты подряд — они сразу встанут на схеме на свои места. Или «Редактор», чтобы нарисовать вручную. Переобмерить одну комнату — тап по ней на схеме → «Переобмерить лидаром».';
     }
   });
   if (planState.edit) {
@@ -2203,18 +2199,16 @@ async function stageWalk(pid, stageId = null) {
       : `<div class="walk-mini ${room ? '' : 'all'}">${surfMiniSvg(rooms, room ? room.id : null)}</div>
         <p class="walk-chosen">${room ? `Комната: <b>${esc(room.name)}</b>` : '<b>Вся квартира</b>'}</p>`;
     host.innerHTML = `<div class="sh-grab" aria-hidden="true"></div><div class="sh-title">Обход: ${esc(st.name)}</div>${chosen}
-      <p class="mut small">Снятая область подсвечивается зелёным.</p>
-      <label class="walk-hd"><input type="checkbox" id="walk-hd"><span class="wh-box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="wh-text"><b>HD — с обработкой на компьютере</b>
-        <span class="mut small">Кроме фото стен телефон снимет до 1000 кадров в полном разрешении (до ≈ 1 ГБ) для фотореалистичной 3D-модели: пакет потом обучается на компьютере.</span></span></label>
+      <p class="mut small">Снятая область подсвечивается зелёным. После обхода соберётся 3D-модель.</p>
+      ${'' /* галочки «HD» больше нет (2026-10-26, решение пользователя): обход один — кадры 4K, модель на телефоне, пакета для компьютера нет */}
       <div class="walk-actions">
         <button class="round-btn" data-k="x" title="Отмена" aria-label="Отмена"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         <button class="round-btn go" data-k="go" title="Начать обход" aria-label="Начать обход"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></button>
       </div>`;
     document.body.appendChild(host);
     host.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
-      const hd = host.querySelector('#walk-hd').checked;
       host.remove();
-      resolve(b.dataset.k === 'x' ? null : hd ? 'hd' : 'std');
+      resolve(b.dataset.k === 'x' ? null : 'std');
     });
     swipeDownToClose(host, () => { host.remove(); resolve(null); });
   });
@@ -2257,10 +2251,35 @@ async function stageWalk(pid, stageId = null) {
 }
 
 // обмер всей квартиры: комнаты подряд в одной сессии, Apple сводит их в одну схему
+// «Обмер» на схеме (2026-10-26, просьба пользователя): выбор «Вся квартира» / «Комната»
+// LiDAR Mode (2026-10-26, как у Polycam): скан без RoomPlan — камера + сетка лидара → модель с текстурой и HD-пакет.
+// Схему не трогает; модель ложится на выбранный этап (свой roomId, без привязки к схеме) и сразу открывается в 3D.
+async function lidarModeScan(pid) {
+  const { stages } = await loadProjectData(pid);
+  if (!stages.length) { uiAlert('Сначала добавьте этап — модель сохранится на него'); return; }
+  const stageId = stages.length === 1 ? stages[0].id
+    : await pickSheet('LiDAR-скан', 'На какой этап сохранить модель?', stages.map(x => ({ html: esc(x.name), value: x.id })));
+  if (!stageId) return;
+  let scan;
+  try { scan = await Native.RP.scan({ mode: 'lidar' }); }
+  catch (err) { if (String(err && err.message).includes('cancelled')) return; uiAlert('LiDAR-скан не удался: ' + err.message); return; }
+  const key = 'lidar-' + uid(), place = 'LiDAR-скан ' + new Date().toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  await saveStageHD(stageId, scan, null, place, key);
+  if (!await saveTexModelFile(stageId, scan, null, place, key)) { uiAlert('3D-модель не собралась' + (scan.hdZip ? ' — HD-пакет сохранён («Объект» → «HD-скан»)' : '')); render(); return; }
+  const st = await dbGet('stages', stageId), m = stageHDModels(st).find(x => x.roomId === key);
+  tourState.mode = 'hd'; tourState.stage = stageId; tourState.hdModel = m ? m.id : null;
+  nav(`#/p/${pid}/tour`);
+}
+
 async function measureApartment(pid) {
-  if (!await uiConfirm('Обмер квартиры: сканируйте комнаты по очереди — закончили комнату, нажмите «Следующая комната» и перейдите в другую. Все комнаты встанут на схеме на свои места; уже обмеренные обновятся. Начать?')) return;
+  const how = await uiDialog({ text: 'Что обмеряем?', actions: [['apt', 'Вся квартира'], ['room', 'Комната']] });
+  if (!how) return;
   const { rooms } = await loadProjectData(pid);
-  try { await lidarApartment(pid, rooms, null); render(); } catch (err) { uiAlert('Обмер не удался: ' + err.message); }
+  try {
+    if (how === 'apt') await lidarApartment(pid, rooms, null);   // комнаты подряд в одной сессии — встают на свои места
+    else await lidarMeasure(pid, rooms, null);                    // одна комната (новая; переобмер — в меню комнаты)
+    render();
+  } catch (err) { uiAlert('Обмер не удался: ' + err.message); }
 }
 /* ---------- HD-скан: пакет для компьютера и загрузка обученной модели ---------- */
 const fmtMB = b => (b / 1048576).toFixed(b > 104857600 ? 0 : 1).replace('.', ',') + ' МБ';
@@ -2378,7 +2397,6 @@ async function viewHD(pid, stageId = null) {
         <button class="iconbtn" data-model-view="${m.id}" title="Смотреть в 3D" aria-label="Смотреть в 3D">${I('tour')}</button>
         <button class="iconbtn danger" data-model-del="${m.id}" title="Удалить модель" aria-label="Удалить модель">${I('trash')}</button>
       </div>
-      <label class="check-row small"><input type="checkbox" data-model-flip="${m.id}" ${m.flip ? 'checked' : ''}> вверх ногами — перевернуть</label>
     </div>`;
   app.innerHTML = `
     ${header('HD-скан', `#/p/${pid}/more`)}

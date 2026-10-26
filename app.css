@@ -730,6 +730,7 @@ select.inp {
 .plan-actions:has(.pa-spacer:not(.hidden)) #trace-room, .plan-actions #add-vertex { font-size: 13px; }
 .pa-btn.pa-scan { flex: 1; background: var(--acc); border-color: var(--acc); color: #fff; font-size: 13px; }
 .stage-lidar { padding: 10px 0 0; }
+.pa-btn.pa-lidar { flex: 0 0 84px; font-size: 13px; }
 .pa-btn.pa-scan2 { flex: 1; border-color: var(--acc); color: var(--acc); font-size: 13px; }
 .tour-bottom { justify-content: flex-end; }
 .tour-glb { pointer-events: auto; margin-right: auto; width: auto; gap: 5px; padding: 0 12px; font: 600 13px system-ui, -apple-system, sans-serif; }

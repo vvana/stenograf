@@ -71,6 +71,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     // пол/потолок из кадров: обход этапа и отдельный скан одной поверхности (mode "surface", overlay.surface = "f" | "c")
     private var wantSurfaces: Bool { (wantFrames && (mode == "walk" || mode == "multi")) || mode == "surface" }
     private let hd: Bool                              // HD-скан: полные кадры + позы для обучения на компьютере
+    // обычный обход этапа (без HD) тоже даёт 3D-модель с текстурой, привязанную к схеме (2026-10-26, просьба пользователя):
+    // кадры на ходу из обычного видео (без 4K и без снимков 12 Мп), HD-пакета нет — только модель в фоне
+    private let texOnly: Bool
     private var hdCapture: HDCapture?
 
     // покрытие финального скана: подсветка в камере, мини-карта, проверка перед завершением
@@ -128,6 +131,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         self.resume = resume
         self.mode = mode
         self.hd = hd && (mode == "final" || mode == "walk" || mode == "multi")   // HD-пакет — и в обходе этапа
+        self.texOnly = !self.hd && wantFrames && (mode == "walk" || mode == "multi")
         self.maxDim = maxDim
         self.wantFrames = wantFrames
         self.overlayParams = overlay
@@ -153,9 +157,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             // HD: формат видео, с которым ARKit умеет делать полноразмерные снимки (12 Мп) — captureHighResolutionFrame
             // HD (2026-10-26): видео 4K — кадры прямо из видео, беззвучно и на ходу. Снимки 12 Мп (captureHighResolutionFrame)
             // щёлкали затвором на каждом кадре (пользователь: «постоянно слышен звук затвора»). Нет 4K — прежний формат для 12 Мп.
-            if hd {
+            // обычный обход (texOnly) — тоже 4K: единственный режим обхода, модель из этих кадров (2026-10-26, выбор пользователя)
+            if hd || texOnly {
                 if let f = ARWorldTrackingConfiguration.recommendedVideoFormatFor4KResolution { cfg.videoFormat = f; video4K = true }
-                else if let f = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing { cfg.videoFormat = f }
+                else if hd, let f = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing { cfg.videoFormat = f }
             }
             // продолжение с паузы: карта места — ARKit узнаёт помещение и возвращает прежние координаты
             if resume, let map = ScanJournal.worldMap() { cfg.initialWorldMap = map; waitingReloc = true }
@@ -220,7 +225,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if wantFrames { setupAimHint(above: bar) }
         if resume {
             // продолжение с паузы: принятые комнаты, кадры стен и HD-кадры — из журнала, дальше пишем в тот же журнал
-            if hd { hdCapture = ScanJournal.hdDir.flatMap { HDCapture(restoring: $0) } ?? HDCapture() }
+            if hd || texOnly { hdCapture = ScanJournal.hdDir.flatMap { HDCapture(restoring: $0) } ?? HDCapture(); hdCapture?.onTheMove = texOnly }
             pausedRooms = ScanJournal.pausedRooms()
             frames = ScanJournal.frames()
             capturedRooms = ScanJournal.rooms()
@@ -229,7 +234,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             let si = ScanJournal.surfIndexJSON()
             journal?.resumeSurf(count: si.compactMap { ($0["n"] as? NSNumber)?.intValue }.max() ?? 0, index: si)
         } else {
-            if hd { hdCapture = HDCapture() }
+            if hd || texOnly { hdCapture = HDCapture(); hdCapture?.onTheMove = texOnly }
             // журнал — для обходов и сканов по комнатам (долгие); короткие обмер комнаты, пол/потолок и призрак — без него
             if mode == "walk" || isMulti {
                 journal = ScanJournal(mode: mode, hd: hd, wantFrames: wantFrames, maxDim: maxDim, hdDir: hdCapture?.dir, context: journalContext)
@@ -680,7 +685,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if hd || mode == "final" || cloudView != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.boostSession() }
         }
-        if hd {
+        if hd || texOnly {
             // экспозиция и баланс белого: дать автомату 2 с подстроиться под комнату и зафиксировать до конца комнаты
             HDCapture.setCameraLocked(false)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in if self?.finished == false { HDCapture.setCameraLocked(true) } }
@@ -693,7 +698,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         UIApplication.shared.isIdleTimerDisabled = false   // вернуть обычное автогашение экрана
-        if hd { HDCapture.setCameraLocked(false) }
+        if hd || texOnly { HDCapture.setCameraLocked(false) }
         locMgr.stopUpdatingHeading(); locMgr.stopUpdatingLocation()
         stopCoverage()   // CADisplayLink держит контроллер — отпускаем при любом закрытии экрана
         cloudLink?.invalidate(); cloudLink = nil
@@ -1092,7 +1097,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         do {
             var out = base
             await self.addSurfaces(to: &out, rooms: [room])
-            if let hc = hdc {
+            if let hc = hdc, texOnly {
+                // обычный обход: только модель с текстурой (в фоне), без HD-пакета и окрашенной сетки
+                if !anchors.isEmpty && hc.count > 0 { self.scheduleTexModel(hc, anchors: anchors, into: &out) } else { hc.discard() }
+            } else if let hc = hdc {
                 // как в финальном скане: окрашенная сетка лидара (смотреть в 3D) и она же — облако точек для старта обучения
                 self.statusLabel.text = "Собираю 3D-сетку лидара…"
                 let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
@@ -1121,7 +1129,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let anchors = meshAnchors
         let keys = keyFrames
         let hdc = hdCapture
-        let wantMesh = mode == "final" || hdc != nil   // HD-обход квартиры — тоже с сеткой и облаком точек
+        let wantMesh = mode == "final" || (hdc != nil && !texOnly)   // HD-обход квартиры — тоже с сеткой и облаком точек
         statusLabel.text = wantMesh ? "Собираю квартиру и 3D-модель…" : "Собираю план квартиры…"
         do {
             var finalRooms = rooms
@@ -1147,7 +1155,9 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 }.value
                 for (k, v) in mesh { dict[k] = v }
             }
-            if let hc = hdc {
+            if let hc = hdc, texOnly {
+                if !anchors.isEmpty && hc.count > 0 { self.scheduleTexModel(hc, anchors: anchors, into: &dict) } else { hc.discard() }
+            } else if let hc = hdc {
                 let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
                 let tex = !anchors.isEmpty && hc.count > 0
                 await self.packHD(hc, into: &dict, pointsPLY: (dict["meshVertices"] as? Int ?? 0) > 0 ? ply : nil, keepFiles: tex)
@@ -1190,7 +1200,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if let cur = ScanJournal.current(), cur.walls.count >= 3 { rooms.append(cur) }
         frames = ScanJournal.frames()
         surfFrames = ScanJournal.surfFrames()
-        if let dir = ScanJournal.hdDir { hdCapture = HDCapture(restoring: dir) }
+        // кадры обычного обхода (texOnly) без сетки лидара ни к чему — после выгрузки приложения её нет
+        if let dir = ScanJournal.hdDir { if texOnly { try? FileManager.default.removeItem(at: dir) } else { hdCapture = HDCapture(restoring: dir) } }
         if rooms.isEmpty {
             // комнат нет, но есть HD-кадры — сохраняем хотя бы HD-пакет (модель на компьютере строится и без схемы)
             guard let hc = hdCapture, hc.count > 0 else { return nil }
@@ -1516,7 +1527,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
             stillRing.flash()
             // 2026-10-22: HD-кадр — полноразмерный снимок 12 Мп вместо видеокадра 1920×1440 (резче текстура модели)
-            if !video4K, !hiResBusy, let sess = sharedSession {
+            if hd, !video4K, !hiResBusy, let sess = sharedSession {
                 hiResBusy = true
                 let idx = hc.count - 1, ctx = ciContext
                 sess.captureHighResolutionFrame { [weak self, weak hc] hf, _ in
@@ -1725,7 +1736,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
         }
         let n = frames.values.reduce(0) { $0 + $1.count }
-        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" + (video4K ? " (4K)" : $0.hiRes > 0 ? " (12 Мп: \($0.hiRes))" : "") } ?? "") + (hiResCount > 0 ? " · 12 Мп: \(hiResCount)" : "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
+        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { (texOnly ? " · 3D: " : " · HD: ") + "\($0.count)" + (video4K ? " (4K)" : $0.hiRes > 0 ? " (12 Мп: \($0.hiRes))" : "") } ?? "") + (hiResCount > 0 ? " · 12 Мп: \(hiResCount)" : "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
     }
 
     // MARK: AR-призрак

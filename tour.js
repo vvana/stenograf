@@ -249,6 +249,7 @@ function buildTourScene(THREE, rooms) {
   const scene = new THREE.Scene();
 
   const bbAll = rooms.map(roomBBox);
+  if (!bbAll.length) bbAll.push({ x: -2, y: -2, w: 4, h: 4 });   // схемы нет — только 3D-модель LiDAR-скана: условная площадка 4×4 м
   const minX = Math.min(...bbAll.map(b => b.x)), maxX = Math.max(...bbAll.map(b => b.x + b.w));
   const minZ = Math.min(...bbAll.map(b => b.y)), maxZ = Math.max(...bbAll.map(b => b.y + b.h));
   const centerAll = new THREE.Vector3((minX + maxX) / 2, 0.6, (minZ + maxZ) / 2);
@@ -554,6 +555,7 @@ async function viewTour(pid, roomId = null) {
   if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
   if (tourState.mode === 'final') tourState.mode = 'house';   // режима «Финал» больше нет в переключателе
   if (tourState.mode === 'hd' && !stages.some(s => stageHDModels(s).length)) tourState.mode = 'house';   // моделей нет — к схеме
+  if (!rooms.length && hdStage()) { tourState.mode = 'hd'; tourState.stage = hdStage().id; }   // схемы нет — только 3D-модель
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
   app.innerHTML = `
@@ -576,7 +578,7 @@ async function viewTour(pid, roomId = null) {
       </div>
       <button id="tour-shot" class="tour-shot" title="Снимок 3D — посмотреть, нарисовать поверх, сохранить или отправить" aria-label="Снимок">${ICONS.camera}<span>Фото</span></button>
       <div class="tour-bottom">
-        <div class="tour-modes">
+        <div class="tour-modes ${rooms.length ? '' : 'hidden'}">   <!-- без схемы (только LiDAR-модель) «Объект» и «Внутри» не из чего строить -->
           <span class="seg-thumb" id="seg-thumb"></span>
           <button data-mode="house" class="${tourState.mode === 'house' ? 'active' : ''}">${I('tour')}<span>Объект</span></button>
           <button data-mode="inside" class="${tourState.mode === 'inside' ? 'active' : ''}">${I('person')}<span>Внутри</span></button>
@@ -585,7 +587,7 @@ async function viewTour(pid, roomId = null) {
           ${'' /* кнопка «RoomPlan» (оригинальная модель USDZ, просмотр и AR) убрана по просьбе пользователя 2026-10-09; модели по-прежнему сохраняются */}
         </div>
         <button id="tour-glb" class="tour-ico tour-glb hidden" title="Экспорт 3D-модели (GLB) — для Blender, дизайнеров, сайтов" aria-label="Экспорт GLB">${ICONS.download}<span>GLB</span></button>
-        <div class="tour-plan" id="tour-plan"></div>
+        <div class="tour-plan ${rooms.length ? '' : 'hidden'}" id="tour-plan"></div>
       </div>
       <div class="tour-msg hidden" id="tour-msg"></div>
     </div>
@@ -593,7 +595,8 @@ async function viewTour(pid, roomId = null) {
 
   const msg = $('#tour-msg'), hint = document.createElement('div'); // поясняющий текст на экране не показываем (просьба пользователя)
   const say = t => { msg.textContent = t; msg.classList.toggle('hidden', !t); };
-  if (!rooms.length) { say('Сначала нарисуйте схему — тур строится из комнат и их фото.'); return; }
+  // без схемы открываем только 3D-модели (LiDAR Mode снимает без RoomPlan, схема ему не нужна)
+  if (!rooms.length && !hdStage()) { say('Сначала нарисуйте схему — тур строится из комнат и их фото.'); return; }
 
   let THREE;
   try { THREE = await threeReady(); } catch (err) { say(err.message + '. Проверьте соединение и обновите страницу.'); return; }

@@ -60,7 +60,12 @@ for i, f in enumerate(frames):
     ok &= cosv > 0.25
     r2 = ((u - W / 2) / (W / 2)) ** 2 + ((v - H / 2) / (H / 2)) ** 2
     s = cosv ** 2 * np.clip(1 - 0.5 * r2, 0.1, 1) / np.maximum(z, 0.5)
-    score[:, i] = np.where(ok, s, 0)
+    # мягкие условия (2026-10-26, пакет 0923: 23% треугольников без кадра — серые зубчатые заплатки): центр треугольника
+    # в кадре, вскользь до cos 0,05, допуск глубины шире (или глубины нет). Оценка ×0,001 — строгий кадр всегда главнее.
+    ok2 = (u > 0) & (u < W) & (v > 0) & (v < H) & (z > 0.1) & (z < 8) & (cosv > 0.05) & \
+          ((dd <= 0) | (np.abs(dz - dd) < 0.08 + 0.05 * dz))
+    s2 = 0.001 * np.maximum(cosv, 0) * np.clip(1 - 0.5 * r2, 0.1, 1) / np.maximum(z, 0.5)
+    score[:, i] = np.where(ok, s, np.where(ok2, s2, 0))
 best = score.argmax(1); bests = score.max(1); seen = bests > 0
 print(f'выбор кадров: видно {seen.mean():.1%} треугольников', f'{time.time() - t0:.0f}s', flush=True)
 
@@ -181,19 +186,12 @@ for h, (tx, ty, tb) in enumerate(((tx1, ty1, tb1), (tx2, ty2, tb2))):
     atlas[Y, X] *= G_.reshape(-1, 3)
 # треугольники без кадра — эталонным цветом вершин (или серым)
 uns = np.where(~seen)[0]
-for h, (tx, ty, tb) in enumerate(((tx1, ty1, tb1), (tx2, ty2, tb2))):
-    fs = uns[half[uns] == h]
-    if not len(fs): continue
-    C = np.nan_to_num(rc[fs], nan=170.0)
-    col = np.einsum('tk,fkc->ftc', tb, C)
-    X = (ox[fs][:, None] + tx[None]).ravel(); Y = (oy[fs][:, None] + ty[None]).ravel()
-    atlas[Y, X] = col.reshape(-1, 3)
-print(f'без кадра {len(uns)} треуг. ({len(uns) / nF:.1%})', flush=True)
+print(f'без кадра {len(uns)} треуг. ({len(uns) / nF:.1%}) — в модель не идут (дыры)', flush=True)
 atlas_img = Image.fromarray(np.clip(atlas, 0, 255).astype(np.uint8))
 
 # ---------- GLB: вершины по углам (UV у каждого угла свои), без освещения, не металл, выборка без мип-карт ----------
-pos = V[F].reshape(-1, 3).astype(np.float32)
-uvs = UV.reshape(-1, 2).astype(np.float32)
+pos = V[F[seen]].reshape(-1, 3).astype(np.float32)
+uvs = UV[seen].reshape(-1, 2).astype(np.float32)
 idx = np.arange(len(pos), dtype=np.uint32)
 import io as _io
 jb = _io.BytesIO(); atlas_img.save(jb, 'JPEG', quality=88); jpg = jb.getvalue()

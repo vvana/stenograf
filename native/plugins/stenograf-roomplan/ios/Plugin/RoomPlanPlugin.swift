@@ -14,7 +14,7 @@ import CoreLocation
 /// Мост Fixpoint ↔ Apple RoomPlan.
 /// JS: const RP = Capacitor.registerPlugin('RoomPlan');
 ///   await RP.isSupported()
-///   await RP.scan({ mode: 'measure' | 'walk' | 'multi' | 'final' | 'ghost', frames?: bool, overlay?: {...}, hd?: bool })
+///   await RP.scan({ mode: 'measure' | 'walk' | 'multi' | 'final' | 'ghost' | 'lidar', frames?: bool, overlay?: {...}, hd?: bool })
 ///   await RP.shareFile({ path }) / RP.fileInfo({ path }) / RP.deleteFile({ path }) — файлы в Documents (HD-пакет)
 @objc(RoomPlanPlugin)
 public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -445,6 +445,22 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         let force = call.getBool("force") ?? false
         guard #available(iOS 17.0, *) else {
             call.reject("Нужна iOS 17 или новее")
+            return
+        }
+        if call.getString("mode") == "lidar" {
+            // LiDAR Mode (без RoomPlan): камера + сетка лидара → HD-пакет и модель с текстурой
+            guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) else { call.reject("На этом устройстве нет лидара"); return }
+            DispatchQueue.main.async {
+                let vc = LidarScanViewController { result in
+                    switch result {
+                    case .success(let dict): call.resolve(dict)
+                    case .failure(let err): call.reject(err.localizedDescription)
+                    }
+                }
+                vc.modalPresentationStyle = .fullScreen
+                guard let host = self.bridge?.viewController else { call.reject("Нет окна для сканирования"); return }
+                host.present(vc, animated: true)
+            }
             return
         }
         if !force && !RoomCaptureSession.isSupported {
