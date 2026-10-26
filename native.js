@@ -803,7 +803,7 @@ async function applyApartmentScan(pid, rooms, stageId, scan) {
     });
   }
   const leafN = (scan.rooms || []).reduce((n, sr) => n + doorLeafIds(sr).size, 0);
-  toast(`Квартира: ${results.length} комн.${leafN ? `, створок дверей убрано: ${leafN}` : ''}${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${results.tex ? `, 3D-модель готова (3D → HD)` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
+  toast(`Квартира: ${results.length} комн.${leafN ? `, створок дверей убрано: ${leafN}` : ''}${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${results.tex === 'pending' ? `, 3D-модель собирается…` : results.tex ? `, 3D-модель готова` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
   return results;
 }
 
@@ -861,7 +861,35 @@ async function saveStageHD(stageId, scan, transform, place = '', roomId = null) 
 }
 // модель «как у Polycam», собранная телефоном после HD-обхода (2026-10-23): файл GLB → HD-модель этапа для комнаты
 // (заменяет прежнюю такую же модель этой комнаты; модели с компьютера — сплаты — не трогаются). В 3D — кнопка «HD».
+// Модель собирается в фоне после закрытия сканера (2026-10-26): в результате скана только метка texPending —
+// запоминаем, куда её сохранить; готовую телефон присылает событием fixpointTexModel (texJobs ↔ texReady по метке).
+const texJobs = {}, texReady = {};
 async function saveStageTexModel(stageId, scan, transform, place = '', roomId = null) {
+  if (scan.texPending) {
+    texJobs[scan.texPending] = { stageId, transform, place, roomId };
+    if (texReady[scan.texPending]) await finishTexModel(scan.texPending);
+    return 'pending';
+  }
+  return saveTexModelFile(stageId, scan, transform, place, roomId);
+}
+async function finishTexModel(token) {
+  const job = texJobs[token], info = texReady[token];
+  if (!job || !info) return;
+  delete texJobs[token]; delete texReady[token];
+  if (info.error || !info.texModel) { toast('3D-модель не собралась'); return; }
+  if (await saveTexModelFile(job.stageId, info, job.transform, job.place, job.roomId)) {
+    toast(`3D-модель готова${job.place && job.place !== 'Вся квартира' ? ': ' + job.place : ''} — 3D, список этапов`);
+    if (typeof render === 'function' && location.hash.endsWith('/tour')) render();
+  }
+}
+async function takeTexModels() {
+  if (!Native.isNative || !Native.RP || !Native.RP.takeTexModels) return;
+  let r; try { r = await Native.RP.takeTexModels(); } catch (e) { return; }
+  for (const info of (r && r.items) || []) { texReady[info.token] = info; await finishTexModel(info.token); }
+}
+window.addEventListener('fixpointTexModel', () => takeTexModels());
+
+async function saveTexModelFile(stageId, scan, transform, place = '', roomId = null) {
   if (!scan.texModel) return false;
   const st = await dbGet('stages', stageId);
   let blob = null;
@@ -913,7 +941,7 @@ async function applyWalkScan(pid, room, stageId, scan) {
   await saveStageMesh(stageId, scan, o ? { ang: turn, ox: o[0], oy: o[1] } : null, room.name || '', room.id);
   const unmatched = (scan.walls || []).filter(w => !idMap[w.id]).length;
   const extra = [['f', 'пол'], ['c', 'потолок']].filter(([sf]) => (scan.planes || []).some(o => o.surface === sf)).map(([, t]) => t);
-  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${r.hd ? ` · HD-кадров: ${scan.hdFrames}` : ''}${r.tex ? ` · 3D-модель готова (3D → HD)` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
+  toast(`Обход: ${r.photos} фото на ${r.walls} стен${r.planes && extra.length ? ` + ${extra.join(' и ')}` : ''}${r.hd ? ` · HD-кадров: ${scan.hdFrames}` : ''}${r.tex === 'pending' ? ` · 3D-модель собирается…` : r.tex ? ` · 3D-модель готова` : ''}${unmatched ? ` · ${unmatched} стен не совпали со схемой` : ''}`);
   return r;
 }
 

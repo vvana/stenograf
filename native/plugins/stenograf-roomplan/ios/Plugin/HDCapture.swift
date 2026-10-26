@@ -98,7 +98,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         pending += 1
         let url = dir.appendingPathComponent(name)
         queue.async { [weak self] in
-            if let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.92) { try? data.write(to: url) }
+            if let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.85) { try? data.write(to: url) }   // 4K × 0,85 ≈ 1,5 МБ
             if let d = depthPNG, let self = self { try? d.write(to: self.dir.appendingPathComponent(depthName)) }
             DispatchQueue.main.async { self?.pending -= 1 }
         }
@@ -219,7 +219,8 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
     }
 
     /// Дописывает transforms.json, облако точек и инструкцию, упаковывает в ZIP. Возвращает путь к архиву.
-    func finish(pointsPLY meshPLY: Data?) throws -> URL {
+    /// keepFiles — папку кадров не удалять (по ней ещё собирается 3D-модель в фоне, удалит она)
+    func finish(pointsPLY meshPLY: Data?, keepFiles: Bool = false) throws -> URL {
         queue.sync {}   // дождаться записи всех JPEG
         // облако для старта обучения: сетка лидара, если RoomPlan её отдал, иначе — из глубины HD-кадров
         let pointsPLY = meshPLY ?? cloudPLY()
@@ -254,7 +255,7 @@ final class HDCapture: @unchecked Sendable {   // изменяется толь�
         var files = ["transforms.json", "README.txt"] + entries.map { $0.file } + entries.compactMap { $0.depth }
         if pointsPLY != nil { files.append("points.ply") }
         try StoreZip.write(to: zipURL, base: dir, files: files)
-        try? FileManager.default.removeItem(at: dir)
+        if !keepFiles { try? FileManager.default.removeItem(at: dir) }
         return zipURL
     }
 

@@ -89,6 +89,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     private let crosshair = UILabel()
     private var lastAimOK = Date.distantPast
     private var hiResCount = 0
+    private var video4K = false   // HD-кадры — из видео 4K, без снимков 12 Мп (и без звука затвора)
     private var hiResBusy = false   // снимок 12 Мп в работе — следующий не запрашивать (ARKit делает их по одному)
     // кольцо вокруг перекрестия: заполняется, пока телефон неподвижен; кадр снят — вспышка (просьба пользователя 2026-10-22,
     // вместо текста «Замрите на секунду»)
@@ -150,7 +151,12 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) { cfg.sceneReconstruction = .mesh }
             if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) { cfg.frameSemantics.insert(.sceneDepth) }
             // HD: формат видео, с которым ARKit умеет делать полноразмерные снимки (12 Мп) — captureHighResolutionFrame
-            if hd, let f = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing { cfg.videoFormat = f }
+            // HD (2026-10-26): видео 4K — кадры прямо из видео, беззвучно и на ходу. Снимки 12 Мп (captureHighResolutionFrame)
+            // щёлкали затвором на каждом кадре (пользователь: «постоянно слышен звук затвора»). Нет 4K — прежний формат для 12 Мп.
+            if hd {
+                if let f = ARWorldTrackingConfiguration.recommendedVideoFormatFor4KResolution { cfg.videoFormat = f; video4K = true }
+                else if let f = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing { cfg.videoFormat = f }
+            }
             // продолжение с паузы: карта места — ARKit узнаёт помещение и возвращает прежние координаты
             if resume, let map = ScanJournal.worldMap() { cfg.initialWorldMap = map; waitingReloc = true }
             s.run(cfg)
@@ -1092,9 +1098,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 let meshInput = MeshInput(anchors: anchors, keyFrames: keys)
                 let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in buildColoredMesh(meshInput) }.value
                 for (k, v) in mesh { out[k] = v }
-                await self.buildTexModel(hc, anchors: anchors, into: &out)
                 let ply = (out["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
-                await self.packHD(hc, into: &out, pointsPLY: (out["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
+                let tex = !anchors.isEmpty && hc.count > 0
+                await self.packHD(hc, into: &out, pointsPLY: (out["meshVertices"] as? Int ?? 0) > 0 ? ply : nil, keepFiles: tex)
+                if tex { self.scheduleTexModel(hc, anchors: anchors, into: &out) }
             }
             return out
         }
@@ -1141,34 +1148,36 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 for (k, v) in mesh { dict[k] = v }
             }
             if let hc = hdc {
-                await self.buildTexModel(hc, anchors: anchors, into: &dict)
                 let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
-                await self.packHD(hc, into: &dict, pointsPLY: (dict["meshVertices"] as? Int ?? 0) > 0 ? ply : nil)
+                let tex = !anchors.isEmpty && hc.count > 0
+                await self.packHD(hc, into: &dict, pointsPLY: (dict["meshVertices"] as? Int ?? 0) > 0 ? ply : nil, keepFiles: tex)
+                if tex { self.scheduleTexModel(hc, anchors: anchors, into: &dict) }
             }
             return dict
         }
     }
 
-    /// Модель «как у Polycam» на телефоне: сетка лидара + HD-кадры → GLB в Documents/scan-models (до упаковки пакета — кадры ещё на диске).
-    private func buildTexModel(_ hc: HDCapture, anchors: [ARMeshAnchor], into dict: inout [String: Any]) async {
-        guard !anchors.isEmpty, hc.count > 0 else { return }
-        statusLabel.text = "Собираю 3D-модель с текстурой…"
-        hc.flushJournal()
+    /// Модель «как у Polycam» на телефоне — в фоне, после упаковки HD-пакета (2026-10-26: окно «Сохранить / Отправить» ждало её ~30 с).
+    /// Сканер закрывается сразу, в результат идёт `texPending` (метка задачи); по готовности — уведомление → плагин → JS-событие
+    /// fixpointTexModel, JS забирает готовое через takeTexModels(). Папку кадров удаляет эта задача (packHD её оставил).
+    private func scheduleTexModel(_ hc: HDCapture, anchors: [ARMeshAnchor], into dict: inout [String: Any]) {
+        let token = UUID().uuidString
+        dict["texPending"] = token
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("scan-models", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("Fixpoint-3D-\(Int(Date().timeIntervalSince1970)).glb")
         let input = TexInput(anchors: anchors, frames: hc.texFrames)
-        let label = statusLabel
-        let res = await Task.detached(priority: .userInitiated) { () -> (faces: Int, seen: Int)? in
-            TextureBuilder.build(anchors: input.anchors, frames: input.frames, to: url) { p in
-                DispatchQueue.main.async { label.text = "Собираю 3D-модель с текстурой… \(Int(p * 100))%" }
-            }
-        }.value
-        if let r = res, FileManager.default.fileExists(atPath: url.path) {
-            dict["texModel"] = url.path
-            dict["texFaces"] = r.faces
-            dict["texSeen"] = r.seen
-            dict["texBytes"] = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
+        let hdDir = hc.dir
+        Task.detached(priority: .utility) {
+            let t0 = Date()
+            let res = TextureBuilder.build(anchors: input.anchors, frames: input.frames, to: url)
+            try? FileManager.default.removeItem(at: hdDir)
+            var info: [String: Any] = ["token": token, "seconds": Int(Date().timeIntervalSince(t0))]
+            if let r = res, FileManager.default.fileExists(atPath: url.path) {
+                info["texModel"] = url.path; info["texFaces"] = r.faces; info["texSeen"] = r.seen
+                info["texBytes"] = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
+            } else { info["error"] = "не собралась" }
+            DispatchQueue.main.async { NotificationCenter.default.post(name: .fixpointTexModel, object: nil, userInfo: info) }
         }
     }
 
@@ -1198,11 +1207,11 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
     }
 
     /// HD-пакет (кадры + позы + облако точек лидара points.ply) → ZIP в Documents; в результат — путь, число кадров и размер.
-    private func packHD(_ hc: HDCapture, into dict: inout [String: Any], pointsPLY: Data?) async {
+    private func packHD(_ hc: HDCapture, into dict: inout [String: Any], pointsPLY: Data?, keepFiles: Bool = false) async {
         guard hc.count > 0 else { hc.discard(); return }
         statusLabel.text = "Упаковываю HD-кадры для компьютера…"
         let res = await Task.detached(priority: .userInitiated) { () -> (String?, String?) in
-            do { return (try hc.finish(pointsPLY: pointsPLY).path, nil) } catch { return (nil, error.localizedDescription) }
+            do { return (try hc.finish(pointsPLY: pointsPLY, keepFiles: keepFiles).path, nil) } catch { return (nil, error.localizedDescription) }
         }.value
         if let path = res.0 {
             dict["hdZip"] = path
@@ -1507,7 +1516,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         if let hc = hdCapture, hc.consider(frame: frame, ciContext: ciContext) {
             stillRing.flash()
             // 2026-10-22: HD-кадр — полноразмерный снимок 12 Мп вместо видеокадра 1920×1440 (резче текстура модели)
-            if !hiResBusy, let sess = sharedSession {
+            if !video4K, !hiResBusy, let sess = sharedSession {
                 hiResBusy = true
                 let idx = hc.count - 1, ctx = ciContext
                 sess.captureHighResolutionFrame { [weak self, weak hc] hf, _ in
@@ -1699,7 +1708,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         stillRing.flash()
         // HD: пробуем полноразмерный снимок 12 Мп (ARKit 6) вместо кадра видео 1920×1440 — получится ли внутри сессии RoomPlan,
         // проверяется на устройстве: счётчик «12 Мп» в строке статуса
-        if hd, !hiResBusy, let sess = sharedSession {
+        if hd, !video4K, !hiResBusy, let sess = sharedSession {
             let wid = wall.identifier, pos = camPos
             hiResBusy = true
             sess.captureHighResolutionFrame { [weak self] hf, _ in
@@ -1716,7 +1725,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             }
         }
         let n = frames.values.reduce(0) { $0 + $1.count }
-        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" + ($0.hiRes > 0 ? " (12 Мп: \($0.hiRes))" : "") } ?? "") + (hiResCount > 0 ? " · 12 Мп: \(hiResCount)" : "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
+        statusLabel.text = "Снято кадров: \(n) · стен с фото: \(frames.count)" + (hdCapture.map { " · HD: \($0.count)" + (video4K ? " (4K)" : $0.hiRes > 0 ? " (12 Мп: \($0.hiRes))" : "") } ?? "") + (hiResCount > 0 ? " · 12 Мп: \(hiResCount)" : "") + (isMulti ? " · комнат: \(capturedRooms.count + 1)" : "")
     }
 
     // MARK: AR-призрак

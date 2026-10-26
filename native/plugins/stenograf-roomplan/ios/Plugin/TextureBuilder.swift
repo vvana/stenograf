@@ -11,6 +11,11 @@ import simd
 ///    сглаживание выбора по соседям; 2) атлас: клетка S×S на пару треугольников, треугольник — половина клетки с зазором;
 /// 3) растеризация из выбранного кадра; 4) выравнивание яркости по эталону вершин (среднее по всем кадрам, где видна).
 /// Кадры читаются с диска по одному — память не растёт с их числом.
+extension Notification.Name {
+    /// 3D-модель с текстурой собрана в фоне (userInfo: token, texModel / error, texFaces, texSeen, texBytes, seconds)
+    static let fixpointTexModel = Notification.Name("fixpointTexModel")
+}
+
 /// вход в фоновую задачу (якоря ARKit — классы без Sendable; читаются только на чтение)
 struct TexInput: @unchecked Sendable {
     let anchors: [ARMeshAnchor]

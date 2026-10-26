@@ -24,6 +24,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "isSupported", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pendingScan", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "takeTexModels", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "recoverScan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "discardScan", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deviceInfo", returnType: CAPPluginReturnPromise),
@@ -250,8 +251,23 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     private static let modelExts: Set<String> = ["ply", "spz", "splat", "ksplat"]
     override public func load() {
         NotificationCenter.default.addObserver(self, selector: #selector(onOpenURL(_:)), name: Notification.Name.capacitorOpenURL, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(onTexModel(_:)), name: .fixpointTexModel, object: nil)
         if let url = ApplicationDelegateProxy.shared.lastURL { receive(url) }
     }
+    /// 3D-модели, собранные в фоне после HD-обхода, ждут, пока JS их заберёт (takeTexModels)
+    private var texDone: [[String: Any]] = []
+    @objc private func onTexModel(_ note: Notification) {
+        guard let info = note.userInfo as? [String: Any] else { return }
+        texDone.append(info)
+        bridge?.triggerWindowJSEvent(eventName: "fixpointTexModel")
+    }
+    @objc func takeTexModels(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let list = self.texDone; self.texDone = []
+            call.resolve(["items": list])
+        }
+    }
+
     @objc private func onOpenURL(_ note: Notification) {
         guard let info = note.object as? [String: Any], let url = info["url"] as? URL else { return }
         receive(url)
