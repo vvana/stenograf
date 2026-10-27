@@ -905,7 +905,7 @@ async function viewPlan(pid) {
         ${project.north && rooms.length ? `<div class="plan-north" id="plan-north" title="Север${project.north.true ? '' : ' (магнитный)'} — по компасу при обмере"><svg viewBox="-20 -24 40 44"><path d="M0 -13L5 0H-5z" class="pn-n"/><path d="M0 13L-5 0H5z" class="pn-s"/><text x="0" y="-16" class="pn-t">С</text></svg></div>` : ''}
         ${lidarNow && !planState.edit ? `<!-- с лидаром «Редактор» — стеклянной кнопкой в углу схемы, на одном уровне с «Отправить» (просьба пользователя 2026-10-14) -->
         <button class="plan-glass-edit" id="toggle-edit-in" title="Редактор схемы"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg><span>Редактор</span></button>` : ''}
-        <div class="plan-tools">
+        <div class="plan-tools lg-cap">
           ${SHOT_POINTS && shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool" id="plan-undo" ${planUndo.stack.length ? '' : 'disabled'} title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
           ${rooms.length && !planState.edit ? `<button class="plan-tool plan-shot" id="plan-shot" title="Снимок схемы — нарисовать поверх, сохранить или отправить" aria-label="Снимок схемы">${ICONS.camera}</button>${'' /* без надписи «Фото» — в капсуле только значки (просьба пользователя 2026-10-26) */}` : ''}
@@ -978,7 +978,14 @@ async function viewPlan(pid) {
     });
   };
   const sharePlanBtn = $('#share-plan');
-  if (sharePlanBtn) sharePlanBtn.onclick = () => exportProject(pid, false);
+  // «Отправить»: PDF (печать, мастерам) или файл Fixpoint (коллегам в приложение) — 2026-10-27
+  if (sharePlanBtn) sharePlanBtn.onclick = async () => {
+    const how = await uiActions('Отправить схему', [['pdf', 'PDF'], ['file', 'Файл Fixpoint']]);
+    if (how === 'file') return exportProject(pid, false);
+    if (how !== 'pdf') return;
+    try { await planPdf(project, rooms, $('#plan')); }
+    catch (err) { console.error(err); uiAlert('PDF не получился: ' + (err && err.message || err)); }
+  };
   // «Фото»: снимок схемы как она видна сейчас → тот же редактор, что у снимка 3D (рисовать, сохранить в «Фото», отправить)
   if ($('#plan-shot')) $('#plan-shot').onclick = async () => {
     try { openShotEditor(await planSnapshot($('#plan')), `${project.name} — схема`); }
@@ -3833,8 +3840,8 @@ if (navigator.storage && navigator.storage.persist) {
 render();
 
 /* снимок схемы (SVG → JPEG): стили из app.css переносятся в атрибуты, иначе в картинке схема будет чёрной */
-async function planSnapshot(svg) {
-  const r = svg.getBoundingClientRect(), k = Math.min(3, Math.max(2, devicePixelRatio || 2));
+// копия SVG схемы со стилями прямо в элементах (классы app.css вне страницы не действуют) и фото плана как data URL
+async function planSvgClone(svg) {
   const clone = svg.cloneNode(true);
   const PROPS = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin',
     'opacity', 'display', 'visibility', 'font-family', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'paint-order', 'vector-effect'];
@@ -3844,7 +3851,6 @@ async function planSnapshot(svg) {
     d.removeAttribute('class');
     d.setAttribute('style', PROPS.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';'));
   });
-  clone.setAttribute('width', r.width); clone.setAttribute('height', r.height);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   // фото плана (blob:) в картинку-SVG не загрузится — переводим в data URL
   for (const im of clone.querySelectorAll('image')) {
@@ -3854,6 +3860,13 @@ async function planSnapshot(svg) {
       im.setAttribute('href', await new Promise(ok => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(b); }));
     }
   }
+  return clone;
+}
+
+async function planSnapshot(svg) {
+  const r = svg.getBoundingClientRect(), k = Math.min(3, Math.max(2, devicePixelRatio || 2));
+  const clone = await planSvgClone(svg);
+  clone.setAttribute('width', r.width); clone.setAttribute('height', r.height);
   const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }));
   try {
     const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('схема не отрисовалась')); i.src = url; });
@@ -3862,6 +3875,47 @@ async function planSnapshot(svg) {
     ctx.drawImage(img, 0, 0, c.width, c.height);
     return c.toDataURL('image/jpeg', 0.94);   // весь экран схемы как есть (без кнопок — они не в SVG), на белом; не обрезаем (просьба пользователя)
   } finally { URL.revokeObjectURL(url); }
+}
+
+// PDF схемы: название, дата, вся схема (вектор, вписана по комнатам — не тот кусок, что на экране), таблица помещений
+async function planPdf(project, rooms, svg) {
+  if (!rooms.length) return;
+  const clone = await planSvgClone(svg);
+  const bbs = rooms.map(roomBBox), M = 0.9;   // запас под размеры стен снаружи
+  const x0 = Math.min(...bbs.map(b => b.x)) - M, y0 = Math.min(...bbs.map(b => b.y)) - M;
+  const x1 = Math.max(...bbs.map(b => b.x + b.w)) + M, y1 = Math.max(...bbs.map(b => b.y + b.h)) + M;
+  clone.setAttribute('viewBox', `${x0} ${y0} ${x1 - x0} ${y1 - y0}`);
+  clone.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  clone.removeAttribute('width'); clone.removeAttribute('height');
+  clone.setAttribute('style', (clone.getAttribute('style') || '') + ';width:100%;height:auto;max-height:150mm;display:block');
+  const f = (n, d = 2) => n.toFixed(d).replace('.', ',');
+  let tf = 0, tw = 0;
+  const rows = rooms.map(r => { const a = roomAreas(r); tf += a.floor; tw += a.walls;
+    return `<tr><td>${esc(r.name)}</td><td class="n">${f(a.floor)}</td><td class="n">${f(a.walls)}</td><td class="n">${f(a.perimeter)}</td><td class="n">${f(a.ceil)}</td></tr>`; }).join('');
+  const date = new Date().toLocaleDateString('ru-RU');
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(project.name)} — схема</title><style>
+    @page{size:A4;margin:12mm}body{font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:10.5pt;color:#222;margin:0}
+    h1{font-size:16pt;margin:0 0 2pt}.sub{color:#666;font-size:9.5pt;margin:0 0 8pt}
+    table{width:100%;border-collapse:collapse;margin-top:10pt}th,td{border:0.5pt solid #bbb;padding:3pt 6pt;text-align:left}
+    th{background:#f1f1f1;font-weight:600}td.n,th.n{text-align:right;white-space:nowrap}tr.t td{font-weight:600}.note{color:#666;font-size:8.5pt;margin-top:6pt}
+  </style></head><body>
+    <h1>${esc(project.name)}</h1><p class="sub">Схема · Fixpoint · ${date}</p>
+    ${new XMLSerializer().serializeToString(clone)}
+    <table><tr><th>Помещение</th><th class="n">Пол, м²</th><th class="n">Стены, м²</th><th class="n">Периметр, м</th><th class="n">Высота, м</th></tr>${rows}
+    ${rooms.length > 1 ? `<tr class="t"><td>Итого</td><td class="n">${f(tf)}</td><td class="n">${f(tw)}</td><td></td><td></td></tr>` : ''}</table>
+    <p class="note">Размеры — в метрах. Площадь стен — за вычетом дверей и окон.</p>
+  </body></html>`;
+  const name = `${project.name || 'Объект'} — схема`;
+  if (Native.RP && Native.RP.htmlPdf) {
+    try { await Native.RP.htmlPdf({ html, name }); return; }
+    catch (err) { if (!/not implemented|не реализ|UNIMPLEMENTED/i.test(String(err && (err.code || err.message)))) throw err; }
+  }
+  // браузер: печать скрытой страницы → «Сохранить как PDF»
+  const fr = document.createElement('iframe');
+  fr.style.cssText = 'position:fixed;width:0;height:0;border:0;right:0;bottom:0';
+  document.body.appendChild(fr);
+  fr.srcdoc = html;
+  fr.onload = () => { fr.contentWindow.focus(); fr.contentWindow.print(); setTimeout(() => fr.remove(), 60000); };
 }
 
 // строка версии внизу «Ещё»: сборка iPhone — хеш коммита и дата (version.js пишет native/scripts/www.js), в браузере — «веб-версия»
