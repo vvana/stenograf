@@ -1115,7 +1115,22 @@ async function viewTour(pid, roomId = null) {
 
 /* ---------- редактор снимка 3D (просьба пользователя 2026-10-14, по образцу «Разметки» iOS):
    сверху — назад, отменить, сохранить в «Фото», отправить; снизу — ручка, маркер, выделитель, ластик, цвет ---------- */
+// Снимок схемы / 3D: на телефоне — нативный редактор (ShotEditorViewController, 2026-10-27): сверху наши кнопки «‹», ↶,
+// сохранить в «Фото», «Поделиться»; рисование — палитрой Apple (кружок внизу, как в «Разметке»). Браузер и старые сборки — свой редактор ниже.
 function openShotEditor(dataUrl, title) {
+  if (Native.isNative && Native.RP && Native.RP.markupImage) {
+    const t = new Date(), p2 = n => String(n).padStart(2, '0');
+    const name = `${title} ${p2(t.getHours())}-${p2(t.getMinutes())}-${p2(t.getSeconds())}`;
+    Native.RP.markupImage({ data: String(dataUrl).split(',')[1], name }).catch(err => {
+      if (/not implemented|не реализ|UNIMPLEMENTED/i.test(String(err && (err.code || err.message)))) openShotEditorOwn(dataUrl, title);
+      else uiAlert('Не удалось открыть снимок: ' + (err && err.message || err));
+    });
+    return;
+  }
+  openShotEditorOwn(dataUrl, title);
+}
+
+function openShotEditorOwn(dataUrl, title) {
   // инструменты «как в Разметке» iOS: чёрный корпус с бликом, кончик и поясок; цветной кончик — текущий цвет
   const body = (x, w, y) => `<rect x="${x}" y="${y}" width="${w}" height="${64 - y}" fill="url(#seBody)"/>`;
   const TOOLS = [

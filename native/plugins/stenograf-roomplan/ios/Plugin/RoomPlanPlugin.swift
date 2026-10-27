@@ -34,6 +34,7 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "fileInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deleteFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "htmlPdf", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "markupImage", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveImage", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
@@ -135,10 +136,10 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 let url = dir.appendingPathComponent(name + ".pdf")
                 do { try data.write(to: url, options: .atomic) } catch { call.reject("Не удалось сохранить PDF: \(error.localizedDescription)"); return }
-                let src = ModelPreviewSource(url: url, title: raw)
+                let src = MarkupPreviewSource(url: url, title: raw)
                 self.qlSource = src
                 let ql = QLPreviewController()
-                ql.dataSource = src
+                ql.dataSource = src; ql.delegate = src
                 host.present(ql, animated: true)
                 call.resolve(["path": url.path, "pages": renderer.numberOfPages])
             }
@@ -147,6 +148,21 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
             web.loadHTMLString(html, baseURL: nil)
         }
     }
+    /// Снимок схемы / 3D (base64 JPEG) → свой редактор с палитрой рисования Apple (ShotEditorViewController, 2026-10-27):
+    /// сверху наши кнопки «‹», ↶, сохранить в «Фото», «Поделиться»; внизу — PKToolPicker (кружок, перетаскивание, как в «Разметке»).
+    @objc func markupImage(_ call: CAPPluginCall) {
+        guard let b64 = call.getString("data"), let data = Data(base64Encoded: b64), let img = UIImage(data: data) else { call.reject("Нет картинки"); return }
+        let raw = call.getString("name") ?? "Fixpoint"
+        let name = raw.replacingOccurrences(of: "[/\\:*?\"<>|]", with: "_", options: .regularExpression)
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
+            let vc = ShotEditorViewController(image: img, name: name)
+            vc.modalPresentationStyle = .fullScreen
+            host.present(vc, animated: true)
+            call.resolve()
+        }
+    }
+
     private var pdfWeb: WKWebView?
     private var pdfNav: PdfLoadDelegate?
 
@@ -552,7 +568,7 @@ final class ModelPreviewItem: NSObject, QLPreviewItem {
     }
 }
 
-final class ModelPreviewSource: NSObject, QLPreviewControllerDataSource {
+class ModelPreviewSource: NSObject, QLPreviewControllerDataSource {
     let item: ModelPreviewItem
     init(url: URL, title: String) { item = ModelPreviewItem(url: url, title: title) }
     func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
@@ -623,4 +639,10 @@ final class PdfLoadDelegate: NSObject, WKNavigationDelegate {
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(false) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(false) }
+}
+
+
+/// Просмотр с «Разметкой» Apple: нарисованное сохраняется в сам файл (его и отправляют «Поделиться»)
+final class MarkupPreviewSource: ModelPreviewSource, QLPreviewControllerDelegate {
+    func previewController(_ controller: QLPreviewController, editingModeFor previewItem: QLPreviewItem) -> QLPreviewItemEditingMode { .updateContents }
 }
