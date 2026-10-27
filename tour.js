@@ -272,6 +272,7 @@ function buildTourScene(THREE, rooms) {
   ground.rotation.x = -Math.PI / 2; ground.position.set(centerAll.x, -0.02, centerAll.z); ground.receiveShadow = true;
   scene.add(ground);
   const wallSolid = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x6e6e6e, side: THREE.DoubleSide }); // белые, наружные грани чуть затенены
+  const wallGhost = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x6e6e6e, side: THREE.DoubleSide, transparent: true, opacity: 0.08, depthWrite: false });   // неснятая стена — еле заметна (просьба пользователя)
   // верх стены — белый срез, как на визуализациях планировок (раньше был тёмный «разрез» как на чертеже)
   const wallCap = new THREE.MeshBasicMaterial({ color: 0xf6f5f2 });
   const wallCapTop = new THREE.MeshBasicMaterial({ color: 0xf6f5f2, side: THREE.DoubleSide });
@@ -375,8 +376,10 @@ function buildTourScene(THREE, rooms) {
       const geo = new THREE.ExtrudeGeometry(shape, { depth: WALL_T, bevelEnabled: false, curveSegments: 1 });
       const zOut = (-e.uy * outN[0] + e.ux * outN[1]) > 0;
       geo.translate(0, 0, zOut ? 0.003 : -(WALL_T + 0.003));
-      const wall = new THREE.Mesh(geo, wallSolid);
-      wall.castShadow = true;
+      // не отсканированная стена (дорисована при обмере) — еле заметная, без тени и без «крышки»
+      const ghost = (r.unscanned || []).includes(e.id);
+      const wall = new THREE.Mesh(geo, ghost ? wallGhost : wallSolid);
+      wall.castShadow = !ghost;
       wall.position.set(e.a[0], 0, e.a[1]);
       wall.quaternion.copy(basisQ(e.ux, e.uy));
       scene.add(wall); solidWalls.push(wall);
@@ -417,7 +420,7 @@ function buildTourScene(THREE, rooms) {
           capIdx.push(p, q, p + 2, p + 2, q, q + 2);                 // бортик внутри
         }
       });
-      if (capIdx.length) {
+      if (capIdx.length && !ghost) {
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute(capPos, 3));
         g.setIndex(capIdx); g.computeVertexNormals();
@@ -538,23 +541,25 @@ function buildTourScene(THREE, rooms) {
 }
 
 async function viewTour(pid, roomId = null) {
-  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  const { project, rooms, stages, scans, photos } = await loadProjectData(pid);
   if (!project) return nav('');
+  const hdSrc = [...stages, ...scans];   // у кого бывают 3D-модели: этапы и LiDAR-сканы
   if (roomId && rooms.some(r => r.id === roomId)) { tourState.roomId = roomId; if (tourState.mode === 'house') tourState.mode = 'inside'; }
   if (!tourState.roomId || !rooms.some(r => r.id === tourState.roomId)) tourState.roomId = rooms[0] ? rooms[0].id : null;
   // пункта «Сейчас — последние фото» больше нет (просьба пользователя 2026-10-19): по умолчанию — последний этап, у которого есть фото
   // (на стене — фото этого этапа, а если его нет — последнее с предыдущих, т. е. то же «сейчас»)
-  if (!stages.some(s => s.id === tourState.stage)) {
+  if (!hdSrc.some(s => s.id === tourState.stage)) {
     const withPh = stages.filter(s => photos.some(p => p.stageId === s.id));
     tourState.stage = (withPh[withPh.length - 1] || stages[stages.length - 1] || { id: 'all' }).id;
   }
   // HD-модель — у этапа: выбранный этап, если у него она есть, иначе последний этап с моделью
   // этап с сетками лидара из HD-обхода: выбранный, иначе последний такой
   const meshStage = () => { const ok = stages.filter(s => (s.meshScans || []).some(m => m.blob)); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
-  const hdStage = () => { const ok = stages.filter(s => stageHDModels(s).length); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
+  const hdStage = () => { const ok = hdSrc.filter(s => stageHDModels(s).length); return ok.find(s => s.id === tourState.stage) || ok[ok.length - 1] || null; };
   if (tourState.mode === 'hd' && !hdStage()) tourState.mode = 'house';
   if (tourState.mode === 'final') tourState.mode = 'house';   // режима «Финал» больше нет в переключателе
-  if (tourState.mode === 'hd' && !stages.some(s => stageHDModels(s).length)) tourState.mode = 'house';   // моделей нет — к схеме
+  if (tourState.mode === 'hd' && !hdSrc.some(s => stageHDModels(s).length)) tourState.mode = 'house';   // моделей нет — к схеме
+  if (tourState.mode !== 'hd' && scans.some(s => s.id === tourState.stage)) tourState.stage = (stages[stages.length - 1] || { id: 'all' }).id;   // LiDAR-скан — не этап
   if (!rooms.length && hdStage()) { tourState.mode = 'hd'; tourState.stage = hdStage().id; }   // схемы нет — только 3D-модель
   const orbitMode = () => tourState.mode === 'house' || tourState.mode === 'final' || tourState.mode === 'hd';
 
@@ -572,6 +577,7 @@ async function viewTour(pid, roomId = null) {
           <select class="inp hidden" id="tour-stage" aria-hidden="true">
             ${stages.map(s => `<option value="${s.id}" ${tourState.stage === s.id && tourState.mode !== 'hd' ? 'selected' : ''}>${esc(s.name)}</option>` +
               (stageHDModels(s).length ? `<option value="hd:${s.id}" ${tourState.stage === s.id && tourState.mode === 'hd' ? 'selected' : ''}>3D-модель · ${esc(s.name)}</option>` : '')).join('')}
+            ${scans.filter(s => stageHDModels(s).length).map(s => `<option value="hd:${s.id}" ${tourState.stage === s.id && tourState.mode === 'hd' ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
           </select>
           <button id="tour-photos" class="tour-pic ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах">${I('image')}</button>` : ''}
         </div>
@@ -894,7 +900,7 @@ async function viewTour(pid, roomId = null) {
     const name = ri ? ri.name : '';
     if (tourState.mode === 'house') hint.textContent = 'Крутите пальцем или двумя, щипок — масштаб. Тап по плану — встать в эту точку внутри.';
     else if (tourState.mode === 'inside') hint.textContent = `${name}: осмотритесь пальцем. Ведите точку на плане — чтобы перейти.`;
-    if (tourState.mode === 'hd') hint.textContent = `HD-скан${hdStage() ? ': ' + hdStage().name : ''}. Крутите пальцем, щипок — масштаб.`;
+    if (tourState.mode === 'hd') hint.textContent = `3D-модель${hdStage() ? ': ' + hdStage().name : ''}. Крутите пальцем, щипок — масштаб.`;
     if (tourState.mode === 'final') hint.textContent = `3D-сетка лидара${meshStage() ? ': ' + meshStage().name : ''}${finalVerts ? ' · ' + finalVerts + ' вершин' : ''}. Крутите пальцем, щипок — масштаб.`;
     app.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('active', b.dataset.mode === tourState.mode));
     // стеклянный переключатель режимов: светлая «плашка» переезжает под выбранный режим

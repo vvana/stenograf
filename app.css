@@ -225,6 +225,8 @@ body {
   text-anchor: middle; dominant-baseline: central; pointer-events: none; user-select: none;
 }
 #plan .op-gap { fill: var(--card); stroke: none; pointer-events: none; }
+#plan .wall-unscanned line { stroke: var(--ink); stroke-width: 0.06; stroke-dasharray: 0.18 0.14; pointer-events: none; }
+#plan .wall-unscanned-t { font-size: 0.17px; fill: var(--mut, #8a8178); text-anchor: middle; font-style: italic; pointer-events: none; }
 #plan .op-win { fill: #e6f3fb; stroke: #4f86b3; stroke-width: 0.018; pointer-events: none; }
 #plan .op-win-l { stroke: #4f86b3; stroke-width: 0.014; pointer-events: none; }
 #plan .op-jamb { stroke: var(--ink); stroke-width: 0.03; pointer-events: none; }
@@ -730,7 +732,7 @@ select.inp {
 .plan-actions:has(.pa-spacer:not(.hidden)) #trace-room, .plan-actions #add-vertex { font-size: 13px; }
 .pa-btn.pa-scan { flex: 1; background: var(--acc); border-color: var(--acc); color: #fff; font-size: 13px; }
 .stage-lidar { padding: 10px 0 0; }
-.pa-btn.pa-lidar { flex: 0 0 84px; font-size: 13px; }
+.pa-btn.pa-lidar { flex: 1; font-size: 13px; }   /* «Скан» — той же ширины, что «Обмер» (просьба пользователя 2026-10-26) */
 .pa-btn.pa-scan2 { flex: 1; border-color: var(--acc); color: var(--acc); font-size: 13px; }
 .tour-bottom { justify-content: flex-end; }
 .tour-glb { pointer-events: auto; margin-right: auto; width: auto; gap: 5px; padding: 0 12px; font: 600 13px system-ui, -apple-system, sans-serif; }
@@ -1618,3 +1620,16 @@ body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 168px
 .wall-mosaic { position: relative; margin-top: 10px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); cursor: pointer; background: var(--bg); }
 .wall-mosaic img { display: block; width: 100%; height: auto; max-height: 260px; object-fit: contain; }
 .wall-mosaic + .thumbs { margin-top: 8px; }
+
+/* просмотр схемы: «i», «Фото» и «Отправить» — одна стеклянная капсула вместо трёх кругов (просьба пользователя 2026-10-26).
+   Стекло — у .plan-tools (растянута влево под «i»), сами кнопки прозрачные; «i» лежит поверх левой части капсулы */
+.plan-wrap.full:not(.editing) .plan-tools:has(.plan-tool) { left: 22px; z-index: 2; gap: 0; padding-left: 56px; border-radius: 28px; border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .30);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 16px rgba(30,25,15,.14), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.08); }
+.plan-wrap.full:not(.editing) .plan-tools:has(.plan-tool) .plan-tool, .plan-wrap.full:not(.editing) .plan-tools .plan-tool#share-plan,
+.plan-wrap.full:not(.editing):has(.plan-tools .plan-tool) #view-hint:not([open]) summary {
+  background: none; border: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.plan-wrap.full:not(.editing) .plan-tools:has(.plan-tool) .plan-tool { height: 54px; }
+.plan-wrap.full:not(.editing):has(.plan-tools .plan-tool) #view-hint { top: 17px; left: 23px; z-index: 3; }
+.plan-wrap.full:not(.editing):has(.plan-tools .plan-tool) #view-hint summary { min-height: 54px; min-width: 54px; }

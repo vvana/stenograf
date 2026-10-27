@@ -92,8 +92,34 @@ async function loadProjectData(pid) {
     normalizeRoom(r);
     if (r._migrated) { delete r._migrated; await dbPut('rooms', r); }
   }
+  // LiDAR-сканы (2026-10-26, «этот пакет относится к лидар скану, а не к Исходному состоянию»): отдельные записи в 'stages'
+  // с kind 'lidar' — не этапы; в списках этапов, альбомах и отчёте их нет, в «HD-скан» и 3D — под своим именем
+  const scans = stages.filter(s => s.kind === 'lidar' && !pendingDel.has(s.id));
+  const real = stages.filter(s => s.kind !== 'lidar');
+  if (await migrateLidarScans(pid, real, scans)) return loadProjectData(pid);
   // удалённое, пока идут 3 секунды «Отменить», ещё лежит в базе — не показываем
-  return { project, rooms, stages: stages.filter(s => !pendingDel.has(s.id)), photos: photos.filter(p => !pendingDel.has(p.id)) };
+  return { project, rooms, stages: real.filter(s => !pendingDel.has(s.id)), scans, photos: photos.filter(p => !pendingDel.has(p.id)) };
+}
+
+// первые LiDAR-сканы сохранялись на этап (roomId 'lidar-…') — переносим пакет и модель в свою запись скана
+async function migrateLidarScans(pid, stages, scans) {
+  let moved = false;
+  for (const st of stages) {
+    const caps = stageHDCaps(st), models = stageHDModels(st);
+    const keys = new Set([...caps, ...models].map(x => x.roomId).filter(k => typeof k === 'string' && k.startsWith('lidar-')));
+    for (const key of keys) {
+      if (scans.some(s => s.lidarKey === key)) continue;
+      const c = caps.filter(x => x.roomId === key), m = models.filter(x => x.roomId === key);
+      const first = c[0] || m[0];
+      await dbPut('stages', { id: uid(), projectId: pid, kind: 'lidar', lidarKey: key, name: first.place || 'LiDAR-скан', ord: 1e6, status: 0,
+        created: first.created || Date.now(), hdCaptures: c, hdModels: m });
+      st.hdCaptures = caps.filter(x => x.roomId !== key); st.hdModels = models.filter(x => x.roomId !== key);
+      delete st.hdCapture; delete st.hdTransform; delete st.hdScan;
+      await dbPut('stages', st);
+      moved = true;
+    }
+  }
+  return moved;
 }
 
 /* ---------- сжатие фото ---------- */
@@ -810,7 +836,7 @@ async function viewPlan(pid) {
       <div class="plan-actions">
         ${'' /* лидар уже проверен — кнопки обмера и место под них сразу в разметке, без перестройки ряда после проверки (иначе кнопки дёргаются) */}
         <button class="pa-btn pa-scan ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-apt" title="Комнаты подряд за один сеанс — встанут на схеме на свои места (одна комната — тоже так)">${ICONS.building}<span>Обмер</span></button>
-        <button class="pa-btn pa-lidar ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-mode" title="LiDAR Mode: 3D-модель с текстурой без RoomPlan — водите телефоном, пока синее не исчезнет">${ICONS.scan}<span>Скан</span></button>
+        <button class="pa-btn pa-lidar ${lidarNow && !planState.edit ? '' : 'hidden'}" id="lidar-mode" title="LiDAR Mode: 3D-модель с текстурой без RoomPlan — водите телефоном, пока синее не исчезнет">${ICONS.scan}<span>LiDAR-скан</span></button>
         ${'' /* «Обмер комнаты» убран (2026-10-26, решение пользователя): первый обмер — всегда «Обмер» (квартира, хоть из одной комнаты);
                переобмер одной комнаты — в её меню на схеме («Переобмерить лидаром») */}
         ${planState.edit ? `<button class="pa-btn" id="trace-room" title="Отметьте углы примерно, потом введите длины стен">${ICONS.pen}<span>Создать</span></button><span class="pa-btn pa-spacer ${lidarNow ? '' : 'hidden'}" aria-hidden="true"></span>` : ''}
@@ -854,7 +880,7 @@ async function viewPlan(pid) {
         <div class="plan-tools">
           ${SHOT_POINTS && shotStages.length && !planState.edit ? `<button class="plan-tool ${showShots ? 'active' : ''}" id="toggle-shots" title="Точки съёмки: откуда сняты кадры обхода" aria-label="Точки съёмки">${ICONS.camera}</button>` : ''}
           ${planState.edit ? `<button class="plan-tool" id="plan-undo" ${planUndo.stack.length ? '' : 'disabled'} title="Отменить последнее изменение" aria-label="Отменить">${ICONS.undo}</button>` : ''}
-          ${rooms.length && !planState.edit ? `<button class="plan-tool plan-shot" id="plan-shot" title="Снимок схемы — нарисовать поверх, сохранить или отправить" aria-label="Снимок схемы">${ICONS.camera}<span>Фото</span></button>` : ''}
+          ${rooms.length && !planState.edit ? `<button class="plan-tool plan-shot" id="plan-shot" title="Снимок схемы — нарисовать поверх, сохранить или отправить" aria-label="Снимок схемы">${ICONS.camera}</button>${'' /* без надписи «Фото» — в капсуле только значки (просьба пользователя 2026-10-26) */}` : ''}
           ${rooms.length && !planState.edit ? `<button class="plan-tool" id="share-plan" title="Отправить схему коллегам (без фото)" aria-label="Отправить схему">${ICONS.share}</button>` : ''}
           ${planState.edit && rooms.length ? `<button class="plan-tool danger hidden" id="clear-plan" title="Удалить выбранную комнату" aria-label="Удалить комнату">${ICONS.trash}</button>` : ''}
         </div>
@@ -1283,6 +1309,16 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
         } else if (sel) {
           const ws = planState.sel && planState.sel.type === 'wall' && planState.sel.i === e.i;
           s += `<line class="wall-hit edit ${ws ? 'sel' : ''}" data-edge="${e.i}" x1="${e.a[0]}" y1="${e.a[1]}" x2="${e.b[0]}" y2="${e.b[1]}"/>`;
+        }
+      }
+      // стена, которую не отсканировали (дорисована прямой при обмере), — пунктир и подпись «не снята» внутри комнаты
+      for (const e of edges) {
+        if (!(r.unscanned || []).includes(e.id)) continue;
+        const deg = Math.atan2(e.uy, e.ux) * 180 / Math.PI, flip = deg > 90 || deg < -90;
+        s += `<g class="wall-unscanned" transform="translate(${e.a[0]} ${e.a[1]}) rotate(${deg})"><rect class="op-gap" x="0" y="-0.075" width="${e.len}" height="0.15"/><line x1="0" y1="0" x2="${e.len}" y2="0"/></g>`;
+        if (e.len > 1) {
+          const tx = e.mid[0] + e.nx * (NUM_OFF + 0.24), ty = e.mid[1] + e.ny * (NUM_OFF + 0.24);   // внутри комнаты, за номером стены
+          s += `<text class="wall-unscanned-t" transform="translate(${tx.toFixed(3)} ${ty.toFixed(3)}) rotate(${flip ? deg + 180 : deg})" dy="0.35em">не снята</text>`;
         }
       }
       // проёмы как на архитектурном плане: окно — вставка в стене, дверь — разрыв, полотно и дуга открывания, проход — разрыв
@@ -2220,8 +2256,8 @@ async function stageWalk(pid, stageId = null) {
     const caps = stageHDCaps(await dbGet('stages', st.id)), cap = caps[caps.length - 1];
     if (!cap) return;
     const mb = cap.bytes ? ` · ${(cap.bytes / 1048576).toFixed(0)} МБ` : '';
-    const send = await uiDialog({ text: `HD-пакет готов: ${cap.frames || 0} кадров${mb}.\n(Сохранённые можно отправить позже: «Объект» → «HD-скан»)`, ok: 'Отправить', cancel: 'Сохранить' });
-    if (send) { try { await Native.RP.shareFile({ path: cap.path }); } catch (err) { uiAlert('Не удалось отправить: ' + err.message + '\nПакет сохранён — отправьте позже из «Объект» → «HD-скан».'); } }
+    const send = await uiDialog({ text: `HD-пакет готов: ${cap.frames || 0} кадров${mb}.\n(Сохранённые можно отправить позже: «Объект» → «Результаты сканирования»)`, ok: 'Отправить', cancel: 'Сохранить' });
+    if (send) { try { await Native.RP.shareFile({ path: cap.path }); } catch (err) { uiAlert('Не удалось отправить: ' + err.message + '\nПакет сохранён — отправьте позже из «Объект» → «Результаты сканирования».'); } }
   };
   // схемы ещё нет — обход всей квартиры строит её сам: комнаты обмеряются и встают на схему, кадры стен ложатся на этап
   if (!rooms.length) {
@@ -2255,17 +2291,18 @@ async function stageWalk(pid, stageId = null) {
 // LiDAR Mode (2026-10-26, как у Polycam): скан без RoomPlan — камера + сетка лидара → модель с текстурой и HD-пакет.
 // Схему не трогает; модель ложится на выбранный этап (свой roomId, без привязки к схеме) и сразу открывается в 3D.
 async function lidarModeScan(pid) {
-  const { stages } = await loadProjectData(pid);
-  if (!stages.length) { uiAlert('Сначала добавьте этап — модель сохранится на него'); return; }
-  const stageId = stages.length === 1 ? stages[0].id
-    : await pickSheet('LiDAR-скан', 'На какой этап сохранить модель?', stages.map(x => ({ html: esc(x.name), value: x.id })));
-  if (!stageId) return;
   let scan;
   try { scan = await Native.RP.scan({ mode: 'lidar' }); }
   catch (err) { if (String(err && err.message).includes('cancelled')) return; uiAlert('LiDAR-скан не удался: ' + err.message); return; }
   const key = 'lidar-' + uid(), place = 'LiDAR-скан ' + new Date().toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  // своя запись скана (не этап): в ней пакет и модель
+  const stageId = uid();
+  await dbPut('stages', { id: stageId, projectId: pid, kind: 'lidar', lidarKey: key, name: place, ord: 1e6, status: 0, created: Date.now() });
   await saveStageHD(stageId, scan, null, place, key);
-  if (!await saveTexModelFile(stageId, scan, null, place, key)) { uiAlert('3D-модель не собралась' + (scan.hdZip ? ' — HD-пакет сохранён («Объект» → «HD-скан»)' : '')); render(); return; }
+  if (!await saveTexModelFile(stageId, scan, null, place, key)) {
+    if (!scan.hdZip) await dbDel('stages', stageId);   // ни пакета, ни модели — пустую запись не оставляем
+    uiAlert('3D-модель не собралась' + (scan.hdZip ? ' — HD-пакет сохранён («Объект» → «Результаты сканирования»)' : '')); render(); return;
+  }
   const st = await dbGet('stages', stageId), m = stageHDModels(st).find(x => x.roomId === key);
   tourState.mode = 'hd'; tourState.stage = stageId; tourState.hdModel = m ? m.id : null;
   nav(`#/p/${pid}/tour`);
@@ -2371,15 +2408,16 @@ window.addEventListener('fixpointIncoming', () => takeIncomingModel());
 setTimeout(takeIncomingModel, 1500);   // приложение запущено файлом — забрать после старта
 
 async function viewHD(pid, stageId = null) {
-  const { project, stages } = await loadProjectData(pid);
+  const { project, stages: realStages, scans } = await loadProjectData(pid);
+  const stages = [...realStages, ...scans];   // в выборе — и этапы, и LiDAR-сканы
   if (!project) return nav('');
   // HD-скан — у этапа: показываем выбранный, иначе последний этап, где он есть
   const withHD = stages.filter(s => stageHDCaps(s).length || stageHDModels(s).length);
   const st = stages.find(s => s.id === stageId) || withHD[withHD.length - 1] || stages[0];
-  if (!st) { app.innerHTML = `${header('HD-скан', `#/p/${pid}/more`)}<div class="pad"><p class="mut">Сначала добавьте этап — HD-скан снимается обходом этапа.</p></div>${bottomNav(pid, 'more')}`; return; }
+  if (!st) { app.innerHTML = `${header('Результаты сканирования', `#/p/${pid}/more`)}<div class="pad"><p class="mut">Результатов пока нет: их дают обходы этапов и «LiDAR-скан» на схеме.</p></div>${bottomNav(pid, 'more')}`; return; }
   const caps = stageHDCaps(st), models = stageHDModels(st);
   const rooms = await dbAll('rooms', 'projectId', pid);
-  const roomTitle = id => id === '*' ? 'Вся квартира' : id ? ((rooms.find(r => r.id === id) || {}).name || 'Комната удалена') : 'Комната не указана';
+  const roomTitle = id => id === '*' ? 'Вся квартира' : typeof id === 'string' && id.startsWith('lidar-') ? 'Модель LiDAR-скана' : id ? ((rooms.find(r => r.id === id) || {}).name || 'Комната удалена') : 'Комната не указана';
   // модель пакета: по capId, иначе по комнате
   const modelOf = c => models.find(m => m.capId === c.id) || (c.roomId ? models.find(m => m.roomId === c.roomId) : null);
   // какие пакеты ещё лежат на телефоне
@@ -2399,13 +2437,13 @@ async function viewHD(pid, stageId = null) {
       </div>
     </div>`;
   app.innerHTML = `
-    ${header('HD-скан', `#/p/${pid}/more`)}
+    ${header('Результаты сканирования', `#/p/${pid}/more`)}
     <div class="pad"><div class="cards">
       <select class="inp" id="hd-stage">${stages.map(s => { const n = stageHDCaps(s).length, k = stageHDModels(s).length; return `<option value="${s.id}" ${s.id === st.id ? 'selected' : ''}>${esc(s.name)}${n ? ` · пакетов: ${n}` : ''}${k ? ` · моделей: ${k}` : ''}</option>`; }).join('')}</select>
       <div class="card">
         <div class="team-head"><b>1. Пакеты для компьютера</b>
           <button type="button" class="hint-i hd-train-i" id="hd-send-i" title="Как перенести на компьютер" aria-label="Как перенести на компьютер">${ICONS.info}</button></div>
-        ${caps.length ? caps.map(capRow).join('') : `<p class="mut small">Пакетов пока нет. Снимите их: «Этапы» → обход этого этапа → «HD — с обработкой на компьютере». Каждый HD-обход (комната или вся квартира) — отдельный пакет.</p>`}
+        ${caps.length ? caps.map(capRow).join('') : st.kind === 'lidar' ? `<p class="mut small">Пакета нет.</p>` : `<p class="mut small">Пакетов пока нет. Пакет для компьютера даёт «LiDAR-скан» на схеме.</p>`}
         <p class="mut small hd-train hidden" id="hd-send">Перенести можно через «Отправить» (Telegram, облако, AirDrop), по кабелю — Windows-приложение Apple Devices → Файлы → Fixpoint, или «Файлы» → «На iPhone» → Fixpoint.</p>
       </div>
       <div class="card">
@@ -2421,22 +2459,26 @@ async function viewHD(pid, stageId = null) {
         </div>
       </div>
       <div class="card">
-        <b>3. Модели по комнатам</b>
+        <div class="team-head"><b>3. ${st.kind === 'lidar' ? 'Модель' : 'Модели по комнатам'}</b>
+          <button type="button" class="hint-i hd-train-i" id="hd-load-i" title="Откуда загрузить и где хранятся" aria-label="Откуда загрузить и где хранятся">${ICONS.info}</button></div>
         ${models.length ? models.map(modelRow).join('') : `<p class="mut small">Моделей пока нет. У каждой комнаты этапа — своя модель.</p>`}
         ${models.length > 1 ? `<button class="btn primary wide" id="hd-view">${I('tour')}Смотреть все в 3D</button>` : ''}
         <button class="btn wide" id="hd-load">${I('download')}Загрузить модель (.ply / .spz)</button>
         <input type="file" id="hd-file" accept=".ply,.spz,.splat,.ksplat" class="hidden-input">
-        <p class="mut small">${Native.isNative ? 'Файл можно выбрать прямо с Google Диска или iCloud, или прислать в Fixpoint из Telegram и других приложений («Поделиться»). ' : ''}Модели хранятся только на этом телефоне и в резервную копию не попадают — слишком большие.</p>
+        <p class="mut small hd-train hidden" id="hd-load-note">${Native.isNative ? 'Файл можно выбрать прямо с Google Диска или iCloud, или прислать в Fixpoint из Telegram и других приложений («Поделиться»). ' : ''}Модели хранятся только на этом телефоне и в резервную копию не попадают — слишком большие.</p>
       </div>
     </div></div>
     ${bottomNav(pid, 'more')}`;
   const on = (id, f) => { const el = $(id); if (el) el.onclick = f; };
   // шаги обучения — под раскрывающейся «i» (просьба пользователя 2026-10-19)
   on('#hd-send-i', () => { $('#hd-send').classList.toggle('hidden'); $('#hd-send-i').classList.toggle('on'); });
+  on('#hd-load-i', () => { $('#hd-load-note').classList.toggle('hidden'); $('#hd-load-i').classList.toggle('on'); });   // под «i» (просьба пользователя 2026-10-26)
   on('#hd-train-i', () => { $('#hd-train').classList.toggle('hidden'); $('#hd-train-i').classList.toggle('on'); });
-  const saveCaps = async list => { st.hdCaptures = list; delete st.hdCapture; delete st.hdTransform; await dbPut('stages', st); };
+  // LiDAR-скан без пакета и модели больше не нужен — запись удаляем
+  const dropEmptyScan = async () => { if (st.kind === 'lidar' && !stageHDCaps(st).length && !stageHDModels(st).length) { await dbDel('stages', st.id); nav(`#/p/${pid}/hd`); return true; } return false; };
+  const saveCaps = async list => { st.hdCaptures = list; delete st.hdCapture; delete st.hdTransform; await dbPut('stages', st); await dropEmptyScan(); };
   // правка списка моделей; старая модель этапа (hdScan) при первой правке переезжает в список
-  const saveModels = async list => { st.hdModels = list.map(m => m.id === 'legacy' ? { ...m, id: uid() } : m); delete st.hdScan; await dbPut('stages', st); };
+  const saveModels = async list => { st.hdModels = list.map(m => m.id === 'legacy' ? { ...m, id: uid() } : m); delete st.hdScan; await dbPut('stages', st); await dropEmptyScan(); };
   app.querySelectorAll('[data-cap-share]').forEach(b => b.onclick = async () => {
     const c = caps.find(x => x.id === b.dataset.capShare);
     try { await Native.RP.shareFile({ path: c.path }); } catch (err) { uiAlert('Не удалось отправить: ' + err.message); }
@@ -2445,7 +2487,7 @@ async function viewHD(pid, stageId = null) {
     const c = caps.find(x => x.id === b.dataset.capDel);
     // подтверждение всегда — защита от случайного нажатия (просьба пользователя 2026-10-20)
     if (!await uiConfirm(have[c.id]
-      ? `Удалить пакет «${c.place || 'Пакет'}» с телефона? Если модель по нему ещё не обучена и копии на компьютере нет, этот HD-скан придётся снимать заново.`
+      ? `Удалить пакет «${c.place || 'Пакет'}» с телефона? Если модель по нему ещё не обучена и копии на компьютере нет, этот скан придётся снимать заново.`
       : `Убрать пакет «${c.place || 'Пакет'}» из списка? Файла на телефоне уже нет — это только запись о нём.`)) return;
     if (have[c.id]) { try { await Native.RP.deleteFile({ path: c.path }); } catch {} }
     await saveCaps(caps.filter(x => x.id !== c.id)); render();
@@ -2453,7 +2495,7 @@ async function viewHD(pid, stageId = null) {
   app.querySelectorAll('[data-model-view]').forEach(b => b.onclick = () => { tourState.mode = 'hd'; tourState.stage = st.id; tourState.hdModel = b.dataset.modelView; nav(`#/p/${pid}/tour`); });
   app.querySelectorAll('[data-model-del]').forEach(b => b.onclick = async () => {
     const m = models.find(x => x.id === b.dataset.modelDel);
-    if (!await uiConfirm(`Удалить модель комнаты «${roomTitle(m.roomId)}» с телефона?`)) return;
+    if (!await uiConfirm(st.kind === 'lidar' ? `Удалить модель «${st.name}» с телефона?` : `Удалить модель комнаты «${roomTitle(m.roomId)}» с телефона?`)) return;
     await saveModels(models.filter(x => x !== m));
     if (tourState.hdModel === m.id) tourState.hdModel = null;
     render();
@@ -2573,7 +2615,7 @@ async function viewStages(pid) {
       for (const p of ph) await dbDel('photos', p.id);
       if (Native.RP && Native.RP.deleteFile) for (const c of caps) Native.RP.deleteFile({ path: c.path }).catch(() => {});
       await dbDel('stages', id);
-      const rest = (await dbAll('stages', 'projectId', pid)).sort((a, b) => a.ord - b.ord);
+      const rest = (await dbAll('stages', 'projectId', pid)).filter(x => x.kind !== 'lidar').sort((a, b) => a.ord - b.ord);
       for (let k = 0; k < rest.length; k++) if (rest[k].ord !== k) { rest[k].ord = k; await dbPut('stages', rest[k]); }
     };
     // этап с фото или HD-пакетами — 3 секунды на отмену (до их конца этап только спрятан); пустой удаляется сразу
@@ -3245,7 +3287,7 @@ async function viewCompare(pid, wallKey) {
 /* ---------- экран: ещё ---------- */
 
 async function viewMore(pid) {
-  const { project, rooms, stages, photos } = await loadProjectData(pid);
+  const { project, rooms, stages, scans, photos } = await loadProjectData(pid);
   if (!project) return nav('');
 
   app.innerHTML = `
@@ -3254,7 +3296,7 @@ async function viewMore(pid) {
       <div class="cards">
         <button class="btn wide" data-nav="#/p/${pid}/calc">${I('calc')}Площади и материалы</button>
         <button class="btn wide accent-border" data-nav="#/p/${pid}/team">${I('user')}Команда и задания${(project.team || []).length ? ` <span class="mut small">· ${(project.team || []).length}</span>` : ''}</button>
-        ${stages.some(s => stageHDCaps(s).length || stageHDModels(s).length) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}HD-скан — обработка на компьютере</button>` : ''}
+        ${scans.length || stages.some(s => stageHDCaps(s).length || stageHDModels(s).length) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}Результаты сканирования</button>` : ''}
         <button class="btn wide" id="obj-backup" title="Схема, этапы, фото и команда этого объекта — одним файлом">${I('download')}Резервная копия объекта</button>
         <button class="btn wide" id="obj-import" title="Копия этого объекта или файл от коллеги — сольётся без дублей">${I('upload')}Импорт в объект</button>
         <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
@@ -3536,7 +3578,7 @@ async function buildExport(kind, projects, rooms, stages, photos) {
     const { usdz, ...rest } = r;
     roomsOut.push(usdz ? { ...rest, usdzData: await blobToDataURL(usdz) } : rest);
   }
-  const payload = { app: 'fixpoint', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages: stages.map(({ hdScan, hdModels, meshScans, hdCapture, hdCaptures, hdTransform, ...s }) => s), photos: photosOut };
+  const payload = { app: 'fixpoint', version: 2, kind, exported: Date.now(), by: userName(), projects: projectsOut, rooms: roomsOut, stages: stages.filter(s => s.kind !== 'lidar').map(({ hdScan, hdModels, meshScans, hdCapture, hdCaptures, hdTransform, ...s }) => s), photos: photosOut };
   return new Blob([JSON.stringify(payload)], { type: 'application/json' });
 }
 

@@ -23,6 +23,11 @@ final class LidarScanViewController: UIViewController, ARSCNViewDelegate {
     private var nodeVersion: [UUID: Int] = [:]
     private let voxel: Float = 0.08
     private var lastRecolor: TimeInterval = 0
+    // сетка лидара поверх камеры — как в «Обмере» (meshWirePath в фоне, тот же вид; просьба пользователя 2026-10-26)
+    private let wireLayer = CAShapeLayer()
+    private var wireLink: CADisplayLink?
+    private var wireBusy = false
+    private let wireQueue = DispatchQueue(label: "fixpoint.lidar.wire", qos: .userInitiated)
 
     init(completion: @escaping (Result<[String: Any], Error>) -> Void) {
         self.completion = completion
@@ -42,6 +47,11 @@ final class LidarScanViewController: UIViewController, ARSCNViewDelegate {
         sceneView.automaticallyUpdatesLighting = false
         sceneView.rendersCameraGrain = false
         view.addSubview(sceneView)
+        wireLayer.strokeColor = UIColor(white: 1, alpha: 0.2).cgColor
+        wireLayer.fillColor = nil
+        wireLayer.lineWidth = 0.6
+        wireLayer.frame = view.bounds
+        view.layer.addSublayer(wireLayer)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.textColor = .white
@@ -86,6 +96,37 @@ final class LidarScanViewController: UIViewController, ARSCNViewDelegate {
         HDCapture.setCameraLocked(false)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in if self?.finished == false { HDCapture.setCameraLocked(true) } }
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in self?.poll() }
+        let link = CADisplayLink(target: self, selector: #selector(wireTick))
+        link.preferredFramesPerSecond = 15
+        link.add(to: .main, forMode: .common)
+        wireLink = link
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        wireLayer.frame = view.bounds
+    }
+
+    /// рёбра сетки — в фоне, по одному расчёту за раз (как cloudTick в RoomScanViewController)
+    @objc private func wireTick() {
+        guard !finished, !wireBusy, let frame = sceneView.session.currentFrame else { return }
+        let anchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
+        guard !anchors.isEmpty else { return }
+        let size = view.bounds.size, cam = frame.camera
+        let vp = cam.projectionMatrix(for: .portrait, viewportSize: size, zNear: 0.1, zFar: 20) * cam.viewMatrix(for: .portrait)
+        let camPos = simd_float3(cam.transform.columns.3.x, cam.transform.columns.3.y, cam.transform.columns.3.z)
+        wireBusy = true
+        wireQueue.async { [weak self] in
+            let path = meshWirePath(anchors: anchors, viewProj: vp, camPos: camPos, size: size)
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.wireBusy = false
+                if self.finished { return }
+                CATransaction.begin(); CATransaction.setDisableActions(true)
+                self.wireLayer.path = path
+                CATransaction.commit()
+            }
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -93,6 +134,7 @@ final class LidarScanViewController: UIViewController, ARSCNViewDelegate {
         UIApplication.shared.isIdleTimerDisabled = false
         HDCapture.setCameraLocked(false)
         timer?.invalidate(); timer = nil
+        wireLink?.invalidate(); wireLink = nil
     }
 
     // MARK: съёмка
@@ -219,6 +261,7 @@ final class LidarScanViewController: UIViewController, ARSCNViewDelegate {
         }
         finished = true
         timer?.invalidate()
+        wireLink?.invalidate(); wireLink = nil; wireLayer.path = nil
         let anchors = sceneView.session.currentFrame?.anchors.compactMap { $0 as? ARMeshAnchor } ?? []
         sceneView.session.pause()
         statusLabel.text = "  Упаковываю HD-кадры…  "

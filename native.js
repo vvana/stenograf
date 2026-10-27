@@ -409,6 +409,10 @@ async function applyScan(pid, rooms, room, scan, name, opts = {}) {
     if (pr.some(([, h]) => Math.abs(h - room.ceil) > 0.02)) tops[e.id] = pr;
   });
   room.wallTop = tops;
+  // стена, дорисованная прямой между свободными концами (сторону не отсканировали), — помечаем: на схеме пунктир «не снята»,
+  // в 3D полупрозрачная (2026-10-26, просьба пользователя). Переобмер пересчитывает пометку заново.
+  const unscanned = res.chain.filter(c => c.virtual).map(c => idMap[c.id]).filter(Boolean);
+  if (unscanned.length) room.unscanned = unscanned; else delete room.unscanned;
   await dbPut('rooms', room);
   return { room, idMap, toPlan, turn };
 }
@@ -758,7 +762,7 @@ async function lidarMeasure(pid, rooms, room) {
   if (scan.usdz) { r.usdz = await b64Blob(scan.usdz, 'model/vnd.usdz+zip'); r.usdzAt = Date.now(); await dbPut('rooms', r); }
   const open = (scanToPolygon(scan) || {}).open;
   const leafN = doorLeafIds(scan).size;
-  toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м${open ? ' · одна сторона не отсканирована — замкнута прямой' : ''}${leafN ? ` · створок дверей убрано: ${leafN}` : ''}`);
+  toast(`Обмер: ${r.pts.length} стен, ${roomHeightText(r).replace('h ', 'потолок ')} м${open ? ' · одна сторона не снята — дорисована пунктиром' : ''}${leafN ? ` · створок дверей убрано: ${leafN}` : ''}`);
   const res = scanToPolygon(scan);
   if (res) await proposeMirrors(r, scan, res, idMap);
   return r;
@@ -803,7 +807,8 @@ async function applyApartmentScan(pid, rooms, stageId, scan) {
     });
   }
   const leafN = (scan.rooms || []).reduce((n, sr) => n + doorLeafIds(sr).size, 0);
-  toast(`Квартира: ${results.length} комн.${leafN ? `, створок дверей убрано: ${leafN}` : ''}${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${results.tex === 'pending' ? `, 3D-модель собирается…` : results.tex ? `, 3D-модель готова` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
+  const openN = results.filter(r => r.res && r.res.open).length;
+  toast(`Квартира: ${results.length} комн.${openN ? ` (${openN === 1 ? 'в одной' : `в ${openN}`} одна сторона не снята — дорисована пунктиром)` : ''}${leafN ? `, створок дверей убрано: ${leafN}` : ''}${photos ? `, ${photos} фото` : ''}${results.hd ? `, HD-кадров: ${scan.hdFrames}` : ''}${results.tex === 'pending' ? `, 3D-модель собирается…` : results.tex ? `, 3D-модель готова` : ''}${mirrors ? `, зеркал: ${mirrors}` : ''}`);
   return results;
 }
 
