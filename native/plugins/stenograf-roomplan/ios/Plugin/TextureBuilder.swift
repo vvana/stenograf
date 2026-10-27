@@ -35,7 +35,24 @@ enum TextureBuilder {
     static let atlasSize = 4096
     static let longSide = 1536      // кадры для текстуры — до 1536 по длинной стороне
 
-    /// Собрать GLB; nil — нечего (нет сетки или кадров). progress — доля 0…1 (на главном потоке не вызывается).
+    /// Сетка — из глубины лидара кадров (DepthMesher, как на компьютере), не вышло — сетка ARKit (якоря). Затем текстура.
+    /// voxel: 0,02 — LiDAR-скан (предметы), 0,03 — обход комнаты. progress 0…1: сетка — первые 40 %.
+    static func buildBest(anchors: [ARMeshAnchor], frames: [TexFrame], voxel: Float, to url: URL, progress: ((Float) -> Void)? = nil) -> (faces: Int, seen: Int, depthMesh: Bool)? {
+        var mesh = DepthMesher.build(frames: frames, voxel: voxel, progress: { progress?(0.2 * $0) })
+        // больше 300 тыс. треугольников (как предел на компьютере) — клетки атласа мельчают, текстура мутнеет: кубик в 1,5 раза крупнее
+        if let m = mesh, m.F.count > 300_000 {
+            mesh = DepthMesher.build(frames: frames, voxel: voxel * 1.5, progress: { progress?(0.2 + 0.2 * $0) }) ?? m
+        }
+        progress?(0.4)
+        if let m = mesh,
+           let r = build(V: m.V, F: m.F, frames: frames, to: url, progress: { progress?(0.4 + 0.6 * $0) }) {
+            return (r.faces, r.seen, true)
+        }
+        guard let r = build(anchors: anchors, frames: frames, to: url, progress: progress) else { return nil }
+        return (r.faces, r.seen, false)
+    }
+
+    /// Собрать GLB по сетке ARKit; nil — нечего (нет сетки или кадров). progress — доля 0…1 (на главном потоке не вызывается).
     static func build(anchors: [ARMeshAnchor], frames: [TexFrame], to url: URL, progress: ((Float) -> Void)? = nil) -> (faces: Int, seen: Int)? {
         // ---------- сетка в мировых координатах ----------
         var V: [simd_float3] = []
@@ -62,6 +79,11 @@ enum TextureBuilder {
                 }
             }
         }
+        return build(V: V, F: F, frames: frames, to: url, progress: progress)
+    }
+
+    /// Текстура на готовую сетку (мировые координаты, нормали треугольников — к камере) → GLB.
+    static func build(V: [simd_float3], F: [SIMD3<Int32>], frames: [TexFrame], to url: URL, progress: ((Float) -> Void)? = nil) -> (faces: Int, seen: Int)? {
         let nF = F.count, nV = V.count, nI = frames.count
         guard nF > 0, nI > 0 else { return nil }
         var fn = [simd_float3](repeating: .zero, count: nF), fc = [simd_float3](repeating: .zero, count: nF)

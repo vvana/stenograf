@@ -425,6 +425,9 @@ async function deleteProject(pid) {
   undoBar(`Объект «${project.name}» удалён`, null, 3000, { hide: [pid], commit: async () => {
     await dbDelWhere('photos', 'projectId', pid);
     await dbDelWhere('rooms', 'projectId', pid);
+    // пакеты для компьютера (ZIP в папке приложения) этапов и LiDAR-сканов объекта — стираем и файлы, иначе остаются
+    // занимать память (2026-10-27, просьба пользователя); после «Отменить» сюда не доходим — файлы целы
+    if (Native.RP && Native.RP.deleteFile) for (const st of await dbAll('stages', 'projectId', pid)) for (const c of stageHDCaps(st)) if (c.path) await Native.RP.deleteFile({ path: c.path }).catch(() => {});
     await dbDelWhere('stages', 'projectId', pid);
     await dbDel('projects', pid);
   } });

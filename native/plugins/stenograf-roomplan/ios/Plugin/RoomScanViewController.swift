@@ -1099,7 +1099,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
             await self.addSurfaces(to: &out, rooms: [room])
             if let hc = hdc, texOnly {
                 // обычный обход: только модель с текстурой (в фоне), без HD-пакета и окрашенной сетки
-                if !anchors.isEmpty && hc.count > 0 { self.scheduleTexModel(hc, anchors: anchors, into: &out) } else { hc.discard() }
+                if hc.count > 0 { self.scheduleTexModel(hc, anchors: anchors, into: &out) } else { hc.discard() }
             } else if let hc = hdc {
                 // как в финальном скане: окрашенная сетка лидара (смотреть в 3D) и она же — облако точек для старта обучения
                 self.statusLabel.text = "Собираю 3D-сетку лидара…"
@@ -1107,7 +1107,7 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 let mesh = await Task.detached(priority: .userInitiated) { () -> [String: Any] in buildColoredMesh(meshInput) }.value
                 for (k, v) in mesh { out[k] = v }
                 let ply = (out["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
-                let tex = !anchors.isEmpty && hc.count > 0
+                let tex = hc.count > 0
                 await self.packHD(hc, into: &out, pointsPLY: (out["meshVertices"] as? Int ?? 0) > 0 ? ply : nil, keepFiles: tex)
                 if tex { self.scheduleTexModel(hc, anchors: anchors, into: &out) }
             }
@@ -1156,10 +1156,10 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
                 for (k, v) in mesh { dict[k] = v }
             }
             if let hc = hdc, texOnly {
-                if !anchors.isEmpty && hc.count > 0 { self.scheduleTexModel(hc, anchors: anchors, into: &dict) } else { hc.discard() }
+                if hc.count > 0 { self.scheduleTexModel(hc, anchors: anchors, into: &dict) } else { hc.discard() }
             } else if let hc = hdc {
                 let ply = (dict["mesh"] as? String).flatMap { Data(base64Encoded: $0) }
-                let tex = !anchors.isEmpty && hc.count > 0
+                let tex = hc.count > 0
                 await self.packHD(hc, into: &dict, pointsPLY: (dict["meshVertices"] as? Int ?? 0) > 0 ? ply : nil, keepFiles: tex)
                 if tex { self.scheduleTexModel(hc, anchors: anchors, into: &dict) }
             }
@@ -1180,7 +1180,8 @@ final class RoomScanViewController: UIViewController, RoomCaptureViewDelegate, R
         let hdDir = hc.dir
         Task.detached(priority: .utility) {
             let t0 = Date()
-            let res = TextureBuilder.build(anchors: input.anchors, frames: input.frames, to: url)
+            // сетка из глубины кадров (3 см — комната), без глубины — сетка ARKit
+            let res = TextureBuilder.buildBest(anchors: input.anchors, frames: input.frames, voxel: 0.03, to: url)
             try? FileManager.default.removeItem(at: hdDir)
             var info: [String: Any] = ["token": token, "seconds": Int(Date().timeIntervalSince(t0))]
             if let r = res, FileManager.default.fileExists(atPath: url.path) {

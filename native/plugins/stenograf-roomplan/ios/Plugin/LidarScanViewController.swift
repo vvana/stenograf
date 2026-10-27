@@ -280,21 +280,21 @@ final class LidarScanViewController: UIViewController, ARSCNViewDelegate {
                 out["hdZip"] = path; out["hdFrames"] = hd.count
                 out["hdBytes"] = ((try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? NSNumber)?.intValue ?? 0
             } else if let e = packed.1 { out["hdError"] = e }
-            if !anchors.isEmpty {
+            if hd.count > 0 {   // сетка — из глубины кадров (DepthMesher, 2 см); без глубины — сетка ARKit
                 label.text = "  Собираю 3D-модель…  "
                 let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("scan-models", isDirectory: true)
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 let url = dir.appendingPathComponent("Fixpoint-LiDAR-\(Int(Date().timeIntervalSince1970)).glb")
                 let input = TexInput(anchors: anchors, frames: hd.texFrames)
                 let t0 = Date()
-                let res = await Task.detached(priority: .userInitiated) { () -> (faces: Int, seen: Int)? in
-                    TextureBuilder.build(anchors: input.anchors, frames: input.frames, to: url) { p in
+                let res = await Task.detached(priority: .userInitiated) { () -> (faces: Int, seen: Int, depthMesh: Bool)? in
+                    TextureBuilder.buildBest(anchors: input.anchors, frames: input.frames, voxel: 0.02, to: url) { p in
                         DispatchQueue.main.async { label.text = "  Собираю 3D-модель… \(Int(p * 100))%  " }
                     }
                 }.value
                 if let r = res, FileManager.default.fileExists(atPath: url.path) {
                     out["texModel"] = url.path; out["texFaces"] = r.faces; out["texSeen"] = r.seen
-                    out["texSeconds"] = Int(Date().timeIntervalSince(t0))
+                    out["texSeconds"] = Int(Date().timeIntervalSince(t0)); out["texDepthMesh"] = r.depthMesh
                 }
             }
             try? FileManager.default.removeItem(at: hd.dir)
