@@ -1660,3 +1660,14 @@ body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 122px
 
 /* кнопки внутри групп (3D «Объект · Внутри», панель снимка, переключатели диалогов) сами не сжимаются — вспухает группа (2026-10-27) */
 .tour-modes [data-mode]:active, .se-pill .se-btn:active, .ui-seg button:active { transform: none !important; }
+
+/* схема: подписи на стеклянных кнопках крупнее — 15 px вместо 13 (просьба пользователя 2026-10-27) */
+.plan-wrap.full .plan-actions .pa-btn, .plan-wrap.full .plan-actions .btn, .plan-wrap.full .plan-glass-edit,
+.plan-wrap.full .plan-actions #trace-room, .plan-wrap.full .plan-actions #add-vertex, .plan-wrap.full.editing #room-tools .btn { font-size: 15px; }
+/* значок фотоаппарата нарисован мельче соседей (корпус 16 из 24) — в капсулах крупнее, чтобы визуально совпадал с «i» и «Отправить» (2026-10-27) */
+.plan-wrap.full:not(.editing) .plan-tools #plan-shot svg { width: 31px; height: 31px; }
+.plan-wrap.full:not(.editing) .plan-tools #share-plan svg { width: 26px; height: 26px; }
+#tour-shot svg { width: 29px; height: 29px; }
+#tour-send svg { width: 25px; height: 25px; }
+/* 3D: подписи «Объект» / «Внутри» крупнее — 13 px вместо 11 (как на схеме +2, 2026-10-27) */
+.tour-modes button { font-size: 13px; }

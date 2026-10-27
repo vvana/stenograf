@@ -136,11 +136,18 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 let url = dir.appendingPathComponent(name + ".pdf")
                 do { try data.write(to: url, options: .atomic) } catch { call.reject("Не удалось сохранить PDF: \(error.localizedDescription)"); return }
-                let src = MarkupPreviewSource(url: url, title: raw)
-                self.qlSource = src
-                let ql = QLPreviewController()
-                ql.dataSource = src; ql.delegate = src
-                host.present(ql, animated: true)
+                // свой просмотр с панелью как у снимка (iOS 16+); раньше — системный просмотр с «Разметкой»
+                if #available(iOS 16.0, *) {
+                    let vc = PdfEditorViewController(url: url, name: name)
+                    vc.modalPresentationStyle = .fullScreen
+                    host.present(vc, animated: true)
+                } else {
+                    let src = MarkupPreviewSource(url: url, title: raw)
+                    self.qlSource = src
+                    let ql = QLPreviewController()
+                    ql.dataSource = src; ql.delegate = src
+                    host.present(ql, animated: true)
+                }
                 call.resolve(["path": url.path, "pages": renderer.numberOfPages])
             }
             web.navigationDelegate = nav
