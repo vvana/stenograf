@@ -1480,6 +1480,14 @@ html:has(.plan-wrap.full), body:has(.plan-wrap.full), #app:has(.plan-wrap.full) 
 .wall-arrow svg { filter: drop-shadow(0 1px 2px rgba(30,25,15,.35)); }
 /* 3D: кнопка «Фото» — слева вверху, под полем выбора этапа (просьба пользователя 2026-10-15) */
 .tour-shot { top: calc(10px + 42px + 12px); bottom: auto; right: auto; left: 12px; }
+/* «Фото» + «Отправить» (режим 3D-модели) — одна капсула; позицию держит обёртка, кнопки внутри прозрачные (2026-10-27) */
+.tour-shotcap { position: absolute; z-index: 5; top: calc(10px + 42px + 12px); left: 12px; display: flex; pointer-events: auto; border-radius: 28px; }
+.tour-shotcap .tour-shot { position: static; }
+.tour-shotcap:has(#tour-send:not(.hidden)) { border: 1px solid rgba(255,255,255,.55);
+  background: radial-gradient(120% 90% at 30% 0%, rgba(255,255,255,.30) 0%, rgba(255,255,255,0) 55%), rgba(74, 64, 54, .17);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5); backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: 0 6px 18px rgba(30,25,15,.12), inset 0 1px 1px rgba(255,255,255,.6), inset 0 -4px 8px rgba(30,25,15,.06); }
+.tour-shotcap:has(#tour-send:not(.hidden)) .tour-shot { background: none; border: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; height: 54px; width: 56px; }
 
 /* окно «3D-модель готова» — жидким стеклом, кнопки-значки */
 .glb-dlg .sh-title { font-weight: 700; font-size: 17px; text-align: center; }
@@ -1591,7 +1599,7 @@ button.team-call { border: 0; padding: 0; cursor: pointer; flex: none; }
   box-shadow: inset 0 1px 1px rgba(255,255,255,.4); }
 .undo-bar button:active { transform: scale(.95); }
 .undo-bar i { height: 2px; left: 16px; right: 16px; width: auto; bottom: 4px; border-radius: 2px; background: rgba(217, 95, 24, .55); }
-body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 168px); }
+body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 122px); }   /* 50 px над «+ Новый объект» (16 отступ + 56 кнопка + 50), 2026-10-27 */
 .undo-bar { border: 1.5px solid rgba(217, 95, 24, .75); }
 /* конус взгляда на мини-плане в 3D — белый полупрозрачный (2026-10-23: оранжевый на оранжевой комнате почти не виден; синий пользователь отклонил) */
 .tour-plan .tp-cone { fill: rgba(255, 255, 255, .6); stroke: none; }
@@ -1633,3 +1641,13 @@ body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 168px
 .plan-wrap.full:not(.editing) .plan-tools:has(.plan-tool) .plan-tool { height: 54px; }
 .plan-wrap.full:not(.editing):has(.plan-tools .plan-tool) #view-hint { top: 17px; left: 23px; z-index: 3; }
 .plan-wrap.full:not(.editing):has(.plan-tools .plan-tool) #view-hint summary { min-height: 54px; min-width: 54px; }
+
+/* нажатие на кнопки жидкого стекла на схеме (2026-10-27, по видео пользователя): вспухает, светлое пятно под пальцем, упругий возврат.
+   Класс ставит app.js (lgEl); !important — поверх прежних :active scale(.92) */
+:where(.lg-glow) { position: relative; }   /* только тем, у кого позиции нет: «Редактор» и капсула стоят absolute — их не трогаем */
+.lg-glow { transition: transform .5s cubic-bezier(.25,1.9,.4,1) !important; }
+.lg-glow::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 1;
+  background: radial-gradient(circle at var(--px, 50%) var(--py, 50%), rgba(255,255,255,.9) 0, rgba(255,255,255,.45) 30px, rgba(255,255,255,0) 80px);
+  opacity: 0; transition: opacity .45s ease-out; }
+.lg-glow.lg-on { transform: scale(1.08) !important; transition: transform .22s cubic-bezier(.3,1.4,.5,1) !important; }
+.lg-glow.lg-on::after { opacity: 1; transition: opacity .1s ease-out; }

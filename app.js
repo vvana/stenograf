@@ -418,6 +418,32 @@ function undoBar(text, onUndo, ms = 3000, { hide = [], commit = null } = {}) {
   };
 }
 
+// Нажатие на кнопки жидкого стекла на схеме — как у Apple (видео пользователя, 2026-10-27): кнопка не вдавливается,
+// а чуть «вспухает», под пальцем загорается светлое пятно и ползёт за пальцем; отпустили — возврат с упругим отскоком.
+// Кнопки в капсуле («i» · снимок · «Отправить») — светится и вспухает вся капсула. Вид — в app.css (.lg-glow / .lg-on).
+const LG_SEL = '.plan-wrap.full .pa-btn, .plan-wrap.full .pa-round, .plan-wrap.full .plan-tool, .plan-wrap.full .plan-actions .btn, .plan-wrap.full .plan-glass-edit, .plan-wrap.full .ihint summary, .tour-shot';
+let lgEl = null;
+function lgSpot(e) {
+  const r = lgEl.getBoundingClientRect();
+  lgEl.style.setProperty('--px', `${e.clientX - r.left}px`); lgEl.style.setProperty('--py', `${e.clientY - r.top}px`);
+}
+function lgOff() { if (lgEl) { lgEl.classList.remove('lg-on'); lgEl = null; } }
+document.addEventListener('pointerdown', e => {
+  const btn = e.target.closest && e.target.closest(LG_SEL);
+  if (!btn || btn.disabled) return;
+  // капсула (две кнопки и больше): схема — «i» · снимок · «Отправить» («i» лежит поверх неё), 3D — «Фото» · «Отправить»
+  const wrap = btn.closest('.plan-wrap');
+  let cap = btn.closest('.lg-cap') || (btn.closest('#view-hint') && wrap && wrap.querySelector('.plan-tools'));
+  if (cap && (cap.closest('.plan-wrap.editing') || !cap.querySelector('.plan-tool, #tour-send:not(.hidden)'))) cap = null;
+  lgOff();
+  lgEl = cap || btn;
+  lgEl.classList.add('lg-glow');
+  lgSpot(e);
+  lgEl.classList.add('lg-on');
+}, true);
+document.addEventListener('pointermove', e => { if (lgEl) lgSpot(e); }, { passive: true });
+for (const t of ['pointerup', 'pointercancel']) document.addEventListener(t, lgOff, true);
+
 // удаление объекта: без вопроса, но 3 секунды на отмену (всё держим в памяти и при отмене пишем обратно)
 async function deleteProject(pid) {
   const project = await dbGet('projects', pid);
@@ -495,11 +521,9 @@ async function viewProjects() {
     if (how !== 'new') return;
     const name = await uiPrompt('Название объекта (например, «Квартира на Ленина»):');
     if (!name || !name.trim()) return;
-    // без выбора шаблона: один этап «Исходное состояние», дальше пользователь добавляет свои
+    // без выбора шаблона и без этапов: этапы пользователь добавляет сам (этап «Исходное состояние» больше не создаётся, просьба 2026-10-27)
     const p = { id: uid(), name: name.trim(), created: Date.now(), template: 'custom' };
     await dbPut('projects', p);
-    const first = STAGE_TEMPLATES[0].stages[0];
-    await dbPut('stages', { id: uid(), projectId: p.id, name: first[0], ord: 0, status: 0, hint: first[1] });
     render();   // объект не открываем — остаёмся в списке (просьба пользователя 2026-10-23)
   };
   const list = app.querySelector('.cards');
@@ -814,6 +838,7 @@ function roomPath(r) {
 }
 
 const SHOT_POINTS = false;
+const SHOW_WALL_BADGES = false;   // счётчики фото у стен на схеме (выключены 2026-10-27)
 async function viewPlan(pid) {
   const { project, rooms, stages, photos } = await loadProjectData(pid);
   if (!project) return nav('');
@@ -1300,7 +1325,8 @@ function setupPlan(pid, rooms, counts, points = {}, project = null, shots = [], 
           if (showNums) {
             dims.push({ cls: 'wall-num', fs: 0.2, x: e.mid[0] + e.nx * NUM_OFF, y: e.mid[1] + e.ny * NUM_OFF, deg: 0, txt: String(e.i + 1), ux: e.ux, uy: e.uy, nx: e.nx, ny: e.ny, slide: Math.max(0, e.len / 2 - 0.1) });
           }
-          if (cnt > 0 && !shots.length) { // в режиме точек съёмки счётчики не мешают конусам
+          // кружки с числом фото и «⚡» точек у стен убраны (2026-10-27, просьба пользователя); тап по стене открывает её фото как раньше
+          if (SHOW_WALL_BADGES && cnt > 0 && !shots.length) { // в режиме точек съёмки счётчики не мешают конусам
             const off = showNums ? 0.6 : 0.45;
             const bx = e.mid[0] + e.nx * off, by = e.mid[1] + e.ny * off;
             s += `<g class="badge" data-wall="${key}"><circle cx="${bx}" cy="${by}" r="0.32"/><text x="${bx}" y="${by}">${cnt}</text></g>`;
@@ -2590,7 +2616,7 @@ async function viewStages(pid) {
             </div>
           </div>`).join('')}
       </div>
-      ${stages.length ? '' : '<p class="mut center">Этапов пока нет. Нажмите «Добавить».</p>'}
+      ${stages.length ? '' : '<p class="mut center">Этапов пока нет. Добавьте первый кнопкой «+» внизу.</p>'}
     </div>
     <button class="glass-fab" id="add-stage" title="Добавить этап" aria-label="Добавить этап"><svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg></button>
     ${bottomNav(pid, 'stages')}`;

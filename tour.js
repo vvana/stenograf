@@ -582,7 +582,11 @@ async function viewTour(pid, roomId = null) {
           <button id="tour-photos" class="tour-pic ${tourState.photos ? 'active' : ''}" title="Фото выбранного этапа на стенах" aria-label="Фото этапа на стенах">${I('image')}</button>` : ''}
         </div>
       </div>
-      <button id="tour-shot" class="tour-shot" title="Снимок 3D — посмотреть, нарисовать поверх, сохранить или отправить" aria-label="Снимок">${ICONS.camera}<span>Фото</span></button>
+      <!-- «Фото» и (в режиме 3D-модели) «Отправить» модель — одной стеклянной капсулой (2026-10-27, просьба пользователя) -->
+      <div class="tour-shotcap lg-cap" id="tour-shotcap">
+        <button id="tour-shot" class="tour-shot" title="Снимок 3D — посмотреть, нарисовать поверх, сохранить или отправить" aria-label="Снимок">${ICONS.camera}</button>
+        <button id="tour-send" class="tour-shot hidden" title="Отправить файл 3D-модели (GLB)" aria-label="Отправить модель">${ICONS.share}</button>${'' /* без надписей — только значки (просьба пользователя 2026-10-27) */}
+      </div>
       <div class="tour-bottom">
         <div class="tour-modes ${rooms.length ? '' : 'hidden'}">   <!-- без схемы (только LiDAR-модель) «Объект» и «Внутри» не из чего строить -->
           <span class="seg-thumb" id="seg-thumb"></span>
@@ -617,6 +621,8 @@ async function viewTour(pid, roomId = null) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 500);
   const { scene, bbAll, minX, maxX, minZ, maxZ, centerAll, span, sun, ground, wallSolid, wallCap, wallCapTop, doorMat, glassMat, plainFloors, solidWalls, greyMat, floorMat, ceilMat, lineMat, FM, floorTex, surfaces, ceilings, mirrors, roomInfo, furniture } = buildTourScene(THREE, rooms);
+  const schemaExtras = [...furniture, ...mirrors];
+  scene.traverse(o => { if (o.isLineSegments && o.material === lineMat) schemaExtras.push(o); });   // контур комнат
 
   /* ---------- текстуры по этапу ---------- */
   const texCache = new Map();
@@ -917,11 +923,21 @@ async function viewTour(pid, roomId = null) {
     for (const w of solidWalls) w.visible = !isFinal;
     if (finalMesh) finalMesh.visible = tourState.mode === 'final';
     for (const v of hdViewers) v.visible = isHD;
+    // 3D-модель (скан) — только она: контур комнат, мебель и зеркала схемы прячем (2026-10-27, «должен быть только скан»)
+    for (const o of schemaExtras) o.visible = !isHD;
+    const sendBtn = $('#tour-send'); if (sendBtn) sendBtn.classList.toggle('hidden', !isHD);
   }
   function setMode(m) {
     tourState.mode = m;
     const sel = $('#tour-stage');
     if (sel && m !== 'hd' && sel.value.startsWith('hd:')) sel.value = sel.value.slice(3);
+    // из модели LiDAR-скана — к схеме: скан не этап, выбираем последний этап (иначе список сверху пустой)
+    if (m !== 'hd' && scans.some(x => x.id === tourState.stage)) {
+      tourState.stage = (stages[stages.length - 1] || { id: 'all' }).id;
+      if (sel) sel.value = tourState.stage;
+      applyStage();
+    }
+    syncDD();
     resize();   // сдвиг картинки вверх нужен только в «Объекте»
     if (m === 'final') loadFinal().then(updateHint);
     if (m === 'hd') loadHD().then(updateHint);
@@ -976,6 +992,21 @@ async function viewTour(pid, roomId = null) {
     host.querySelectorAll('[data-rp]').forEach(b => b.onclick = () => { host.remove(); if (b.dataset.rp !== 'x') open(list[+b.dataset.rp]); });
   };
   // «Фото»: снимок текущего вида 3D → редактор (нарисовать поверх, сохранить в «Фото», отправить)
+  // отправить файл модели, которая на экране (несколько — спросить какую)
+  $('#tour-send').onclick = async () => {
+    const hs = hdStage(); if (!hs) return;
+    const all = stageHDModels(hs), list = tourState.hdModel ? all.filter(m => m.id === tourState.hdModel) : all;
+    let m = list[0];
+    if (list.length > 1) {
+      const id = await pickSheet('Какую модель отправить?', '', list.map(x => ({ html: esc(x.place || x.name || 'Модель'), value: x.id })));
+      if (!id) return;
+      m = list.find(x => x.id === id);
+    }
+    if (!m || !m.blob) return;
+    const ext = m.format || ((m.name || '').split('.').pop()) || 'glb';
+    try { await deliverFile(m.blob, `${slug(m.place || hs.name)}.${ext}`, m.place || hs.name); }
+    catch (err) { uiAlert('Не удалось отправить: ' + (err && err.message || err)); }
+  };
   $('#tour-shot').onclick = () => {
     renderer.render(scene, camera);                       // кадр рисуем прямо сейчас — буфер холста ещё не очищен
     const url = canvas.toDataURL('image/jpeg', 0.94);
