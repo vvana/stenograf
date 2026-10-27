@@ -5,6 +5,7 @@ import RoomPlan
 import ARKit
 import AVFoundation
 import QuickLook
+import WebKit
 import Photos
 import Contacts
 import ContactsUI
@@ -101,40 +102,53 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     /// HTML → PDF (A4, поля 15 мм) средствами iOS и меню «Поделиться». window.print() во WKWebView не работает.
+    /// HTML → PDF (A4) → документ открывается в просмотре iPhone, отправить / сохранить / напечатать — его кнопкой «Поделиться»
+    /// (2026-10-27, просьба пользователя: «документ должен открыться, а уже в нём отправить или сохранить»).
+    /// Отрисовка — WebKit (WKWebView.viewPrintFormatter): векторная схема (inline SVG) рисуется как в Safari;
+    /// прежний UIMarkupTextPrintFormatter мог её не нарисовать.
     @objc func htmlPdf(_ call: CAPPluginCall) {
         guard let html = call.getString("html") else { call.reject("Нет html"); return }
         let raw = call.getString("name") ?? "Fixpoint"
         let name = raw.replacingOccurrences(of: "[/\\:*?\"<>|]", with: "_", options: .regularExpression)
         DispatchQueue.main.async {
             guard let host = self.bridge?.viewController else { call.reject("Нет окна"); return }
-            let fmt = UIMarkupTextPrintFormatter(markupText: html)
-            let renderer = UIPrintPageRenderer()
-            renderer.addPrintFormatter(fmt, startingAtPageAt: 0)
-            let page = CGRect(x: 0, y: 0, width: 595.2, height: 841.8)          // A4 в пунктах
-            let margin: CGFloat = 42.5                                            // 15 мм
-            renderer.setValue(NSValue(cgRect: page), forKey: "paperRect")
-            renderer.setValue(NSValue(cgRect: page.insetBy(dx: margin, dy: margin)), forKey: "printableRect")
-            let data = NSMutableData()
-            UIGraphicsBeginPDFContextToData(data, page, nil)
-            renderer.prepare(forDrawingPages: NSRange(location: 0, length: renderer.numberOfPages))
-            for i in 0..<renderer.numberOfPages {
-                UIGraphicsBeginPDFPage()
-                renderer.drawPage(at: i, in: UIGraphicsGetPDFContextBounds())
+            let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 595, height: 842))
+            let nav = PdfLoadDelegate { [weak self] ok in
+                guard let self = self else { return }
+                defer { self.pdfWeb = nil; self.pdfNav = nil }
+                guard ok else { call.reject("Страница PDF не загрузилась"); return }
+                let renderer = UIPrintPageRenderer()
+                renderer.addPrintFormatter(web.viewPrintFormatter(), startingAtPageAt: 0)
+                let page = CGRect(x: 0, y: 0, width: 595.2, height: 841.8)          // A4 в пунктах
+                let margin: CGFloat = 34                                              // 12 мм
+                renderer.setValue(NSValue(cgRect: page), forKey: "paperRect")
+                renderer.setValue(NSValue(cgRect: page.insetBy(dx: margin, dy: margin)), forKey: "printableRect")
+                let data = NSMutableData()
+                UIGraphicsBeginPDFContextToData(data, page, nil)
+                renderer.prepare(forDrawingPages: NSRange(location: 0, length: renderer.numberOfPages))
+                for i in 0..<renderer.numberOfPages {
+                    UIGraphicsBeginPDFPage()
+                    renderer.drawPage(at: i, in: UIGraphicsGetPDFContextBounds())
+                }
+                UIGraphicsEndPDFContext()
+                let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("exports", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let url = dir.appendingPathComponent(name + ".pdf")
+                do { try data.write(to: url, options: .atomic) } catch { call.reject("Не удалось сохранить PDF: \(error.localizedDescription)"); return }
+                let src = ModelPreviewSource(url: url, title: raw)
+                self.qlSource = src
+                let ql = QLPreviewController()
+                ql.dataSource = src
+                host.present(ql, animated: true)
+                call.resolve(["path": url.path, "pages": renderer.numberOfPages])
             }
-            UIGraphicsEndPDFContext()
-            let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("exports", isDirectory: true)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let url = dir.appendingPathComponent(name + ".pdf")
-            do { try data.write(to: url, options: .atomic) } catch { call.reject("Не удалось сохранить PDF: \(error.localizedDescription)"); return }
-            let ac = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-            if let pop = ac.popoverPresentationController {   // iPad
-                pop.sourceView = host.view
-                pop.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.maxY - 40, width: 1, height: 1)
-            }
-            ac.completionWithItemsHandler = { _, completed, _, _ in call.resolve(["path": url.path, "pages": renderer.numberOfPages, "completed": completed]) }
-            host.present(ac, animated: true)
+            web.navigationDelegate = nav
+            self.pdfWeb = web; self.pdfNav = nav           // держим до конца загрузки
+            web.loadHTMLString(html, baseURL: nil)
         }
     }
+    private var pdfWeb: WKWebView?
+    private var pdfNav: PdfLoadDelegate?
 
     /// Картинка (base64 JPEG/PNG) → приложение «Фото». Нужен только доступ «добавлять» (NSPhotoLibraryAddUsageDescription).
     @objc func saveImage(_ call: CAPPluginCall) {
@@ -595,4 +609,18 @@ final class ContactPickerDelegate: NSObject, CNContactPickerDelegate {
     init(_ done: @escaping (CNContact?) -> Void) { self.done = done }
     func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) { done(contact) }
     func contactPickerDidCancel(_ picker: CNContactPickerViewController) { done(nil) }
+}
+
+
+/// Загрузка страницы для PDF: готово (или ошибка) — один вызов
+final class PdfLoadDelegate: NSObject, WKNavigationDelegate {
+    private var done: ((Bool) -> Void)?
+    init(_ done: @escaping (Bool) -> Void) { self.done = done }
+    private func finish(_ ok: Bool) { let d = done; done = nil; d?(ok) }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // дать WebKit дорисовать (шрифты, SVG) перед печатью
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.finish(true) }
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(false) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(false) }
 }

@@ -1657,3 +1657,6 @@ body:has(.home-pad) .undo-bar { bottom: calc(env(safe-area-inset-bottom) + 122px
 .plan-wrap.full:not(.editing) .lg-cap .plan-tool:active, .lg-cap .tour-shot:active,
 .plan-wrap.full:not(.editing):has(.plan-tools .plan-tool) #view-hint summary:active { transform: none !important; }
 .plan-wrap.full:not(.editing) .lg-cap .plan-tool:active { background: none !important; }
+
+/* кнопки внутри групп (3D «Объект · Внутри», панель снимка, переключатели диалогов) сами не сжимаются — вспухает группа (2026-10-27) */
+.tour-modes [data-mode]:active, .se-pill .se-btn:active, .ui-seg button:active { transform: none !important; }

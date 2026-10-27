@@ -421,7 +421,12 @@ function undoBar(text, onUndo, ms = 3000, { hide = [], commit = null } = {}) {
 // Нажатие на кнопки жидкого стекла на схеме — как у Apple (видео пользователя, 2026-10-27): кнопка не вдавливается,
 // а чуть «вспухает», под пальцем загорается светлое пятно и ползёт за пальцем; отпустили — возврат с упругим отскоком.
 // Кнопки в капсуле («i» · снимок · «Отправить») — светится и вспухает вся капсула. Вид — в app.css (.lg-glow / .lg-on).
-const LG_SEL = '.plan-wrap.full .pa-btn, .plan-wrap.full .pa-round, .plan-wrap.full .plan-tool, .plan-wrap.full .plan-actions .btn, .plan-wrap.full .plan-glass-edit, .plan-wrap.full .ihint summary, .tour-shot';
+// 2026-10-27: и все остальные стеклянные кнопки приложения (кроме перетаскиваемых — кружок панели снимка .se-mini)
+const LG_SEL = ['.plan-wrap.full .pa-btn', '.plan-wrap.full .pa-round', '.plan-wrap.full .plan-tool', '.plan-wrap.full .plan-actions .btn',
+  '.plan-wrap.full .plan-glass-edit', '.plan-wrap.full .ihint summary', '.tour-shot', '.glass-fab', '.round-btn', '.tour-pic', '.tour-modes [data-mode]',
+  '.se-btn', '.ui-seg button', '.home-bottom #add-project', '.home-bottom .backup-row .btn', '.home-hint summary', '.walk-tile',
+  '.swipe-del', '.swipe-send', '.wall-arrow', '.glass-pill', '.undo-bar button'].join(', ');
+const LG_CAPS = '.lg-cap, .tour-modes, .se-pill, .ui-seg';   // группы кнопок — анимируется вся капсула
 let lgEl = null;
 function lgSpot(e) {
   const r = lgEl.getBoundingClientRect();
@@ -433,8 +438,8 @@ document.addEventListener('pointerdown', e => {
   if (!btn || btn.disabled) return;
   // капсула (две кнопки и больше): схема — «i» · снимок · «Отправить» («i» лежит поверх неё), 3D — «Фото» · «Отправить»
   const wrap = btn.closest('.plan-wrap');
-  let cap = btn.closest('.lg-cap') || (btn.closest('#view-hint') && wrap && wrap.querySelector('.plan-tools'));
-  if (cap && (cap.closest('.plan-wrap.editing') || !cap.querySelector('.plan-tool, #tour-send:not(.hidden)'))) cap = null;
+  let cap = btn.closest(LG_CAPS) || (btn.closest('#view-hint') && wrap && wrap.querySelector('.plan-tools'));
+  if (cap && cap.classList.contains('lg-cap') && (cap.closest('.plan-wrap.editing') || !cap.querySelector('.plan-tool, #tour-send:not(.hidden)'))) cap = null;
   lgOff();
   lgEl = cap || btn;
   lgEl.classList.add('lg-glow');
@@ -3335,7 +3340,7 @@ async function viewMore(pid) {
         ${scans.length || stages.some(s => stageHDCaps(s).length || stageHDModels(s).length) || Native.isNative ? `<button class="btn wide" data-nav="#/p/${pid}/hd">${I('flag')}Результаты сканирования</button>` : ''}
         <button class="btn wide" id="obj-backup" title="Схема, этапы, фото и команда этого объекта — одним файлом">${I('download')}Резервная копия объекта</button>
         <button class="btn wide" id="obj-import" title="Копия этого объекта или файл от коллеги — сольётся без дублей">${I('upload')}Импорт в объект</button>
-        <button class="btn wide" id="export-glb" title="Для Blender, SketchUp, дизайнеров и сайтов">${I('download')}3D-модель (GLB)</button>
+        ${'' /* «3D-модель (GLB)» переехала в 3D — кнопка «Отправить» рядом со снимком (2026-10-27) */}
         <button class="btn wide" data-nav="#/">${I('objects')}Все объекты</button>
       </div>
       ${Native.isNative ? `<label class="leaf-row"><span><b>Убирать створки дверей</b><span class="mut small">при обмере и обходе лидаром</span></span>
@@ -3348,14 +3353,6 @@ async function viewMore(pid) {
   const lf = $('#leaf-filter'); if (lf) lf.onchange = () => { setDoorLeafFilter(lf.checked); toast(lf.checked ? 'Створки дверей будут убираться' : 'Фильтр створок выключен'); };
   $('#obj-backup').onclick = () => exportObjectBackup(pid);
   $('#obj-import').onclick = () => pickJson(data => importIntoProject(pid, data));
-  // экспорт GLB — прямо отсюда, без экрана 3D и без фото (модель собирается «за кадром»)
-  $('#export-glb').onclick = async () => {
-    const b = $('#export-glb'); if (b.disabled) return;
-    b.disabled = true; const label = b.innerHTML; b.innerHTML = `${I('download')}Собираю 3D-модель…`;
-    try { const r = await exportGlbModel(pid); if (r) showGlbDialog(r.blob, r.file); }
-    catch (err) { console.error(err); uiAlert('Не удалось собрать модель: ' + (err && err.message || err)); }
-    finally { b.disabled = false; b.innerHTML = label; }
-  };
 }
 
 /* ---------- команда объекта: исполнители (просьба пользователя 2026-10-15) ---------- */
