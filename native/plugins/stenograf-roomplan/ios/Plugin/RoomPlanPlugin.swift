@@ -81,7 +81,14 @@ public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
         guard let path = call.getString("path") else { return nil }
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].standardizedFileURL.path
         let url = URL(fileURLWithPath: path).standardizedFileURL
-        return url.path.hasPrefix(docs + "/") ? url : nil
+        if url.path.hasPrefix(docs + "/") { return url }
+        // путь записан до переустановки приложения: у iOS новая папка контейнера (другой UUID), файл на месте —
+        // берём часть после «/Documents/» и ищем в текущей папке (2026-10-28: пакеты показывались «удалён с телефона»)
+        if let r = path.range(of: "/Documents/") {
+            let moved = URL(fileURLWithPath: docs).appendingPathComponent(String(path[r.upperBound...])).standardizedFileURL
+            if moved.path.hasPrefix(docs + "/") { return moved }
+        }
+        return nil
     }
 
     /// Системное меню «Поделиться» для файла (HD-пакет большой — через мост его не гоняем).

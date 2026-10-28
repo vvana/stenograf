@@ -425,7 +425,7 @@ function undoBar(text, onUndo, ms = 3000, { hide = [], commit = null } = {}) {
 const LG_SEL = ['.plan-wrap.full .pa-btn', '.plan-wrap.full .pa-round', '.plan-wrap.full .plan-tool', '.plan-wrap.full .plan-actions .btn',
   '.plan-wrap.full .plan-glass-edit', '.plan-wrap.full .ihint summary', '.tour-shot', '.glass-fab', '.round-btn', '.tour-pic', '.tour-modes [data-mode]',
   '.se-btn', '.ui-seg button', '.home-bottom #add-project', '.home-bottom .backup-row .btn', '.home-hint summary', '.walk-tile',
-  '.swipe-del', '.swipe-send', '.wall-arrow', '.glass-pill', '.undo-bar button'].join(', ');
+  '.swipe-del', '.swipe-send', '.wall-arrow', '.glass-pill', '.undo-bar button', '.ui-dlg-btn'].join(', ');   // .ui-dlg-btn — кнопки стеклянных диалогов
 const LG_CAPS = '.lg-cap, .tour-modes, .se-pill, .ui-seg';   // группы кнопок — анимируется вся капсула
 let lgEl = null;
 function lgSpot(e) {
@@ -2500,7 +2500,7 @@ async function viewHD(pid, stageId = null) {
         </div>
       </div>
       <div class="card">
-        <div class="team-head"><b>3. ${st.kind === 'lidar' ? 'Модель' : 'Модели по комнатам'}</b>
+        <div class="team-head"><b>3. ${st.kind === 'lidar' ? 'Модель 3D' : 'Модели по комнатам'}</b>
           <button type="button" class="hint-i hd-train-i" id="hd-load-i" title="Откуда загрузить и где хранятся" aria-label="Откуда загрузить и где хранятся">${ICONS.info}</button></div>
         ${models.length ? models.map(modelRow).join('') : `<p class="mut small">Моделей пока нет. У каждой комнаты этапа — своя модель.</p>`}
         ${models.length > 1 ? `<button class="btn primary wide" id="hd-view">${I('tour')}Смотреть все в 3D</button>` : ''}

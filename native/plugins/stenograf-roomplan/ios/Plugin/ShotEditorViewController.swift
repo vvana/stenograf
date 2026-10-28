@@ -177,8 +177,9 @@ final class SmallGlassButton: UIButton {
             layer.masksToBounds = true
         }
         tintColor = .white
-        setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)), for: .normal)
-        widthAnchor.constraint(equalToConstant: Self.side).isActive = true
+        // в капсуле — без своего круга, поэтому шире и значок крупнее: рядом с отдельными кружками не выглядит мельче (2026-10-27)
+        setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: plain ? 20 : 18, weight: .semibold)), for: .normal)
+        widthAnchor.constraint(equalToConstant: plain ? 52 : Self.side).isActive = true
         heightAnchor.constraint(equalToConstant: Self.side).isActive = true
         accessibilityLabel = label
     }
