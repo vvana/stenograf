@@ -676,7 +676,7 @@ async function viewTour(pid, roomId = null) {
 
   /* ---------- HD-скан: Gaussian splatting, обученный на компьютере по HD-пакету ---------- */
   // модели этапа по комнатам (с 2026-10-20): каждая — свой DropInViewer со своим трансформом пакета
-  let hdViewers = [], hdCenter = null, hdLoading = null, hdOf = null;
+  let hdViewers = [], hdCenter = null, hdLoading = null, hdOf = null, hdBox = null;
   let hdViewer = null;   // первый из загруженных — признак «HD уже на сцене» для остального кода
   function loadHD() {
     const hs = hdStage();
@@ -731,6 +731,9 @@ async function viewTour(pid, roomId = null) {
         }
         const med = a => { a.sort((x, y) => x - y); return a[Math.floor(a.length / 2)] || 0; };
         if (xs.length) hdCenter = new THREE.Vector3(med(xs), med(ys), med(zs));
+        // рамка модели (без 2 % крайних точек) — где на экране «модель» для касаний (вращать или листать вкладки)
+        const pc = (a, q) => { const b = a.slice().sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(b.length * q))]; };
+        hdBox = xs.length ? new THREE.Box3(new THREE.Vector3(pc(xs, 0.02), pc(ys, 0.02), pc(zs, 0.02)), new THREE.Vector3(pc(xs, 0.98), pc(ys, 0.98), pc(zs, 0.98))) : null;
         hdViewer = hdViewers[0] || null;
         say(failed ? `Не открылось моделей: ${failed} из ${pick.length} (мало памяти?)` : '');
       } catch (err) { console.error(err); say('Не удалось открыть HD-модель: ' + err.message); }
@@ -794,7 +797,37 @@ async function viewTour(pid, roomId = null) {
   }
   const pointers = new Map();
   let lastPinch = 0, lastAng = null;
-  canvas.addEventListener('pointerdown', e => { pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); try { canvas.setPointerCapture(e.pointerId); } catch {} });
+  // Касание вне модели (2026-10-28, просьба пользователя): в «Объекте» и на 3D-модели один палец вращает, только если коснулся
+  // модели или рядом (запас 40 px); на пустом месте — не вращаем, и свайп листает вкладки (swipeNav в app.js спрашивает tourHitTest).
+  // Два пальца (масштаб, поворот) — где угодно. «Внутри» — как раньше (вокруг сплошная комната).
+  const modelRect = () => {
+    let box;
+    if (tourState.mode === 'hd') box = hdBox;
+    else box = new THREE.Box3(new THREE.Vector3(minX, 0, minZ), new THREE.Vector3(maxX, Math.max(...rooms.map(r => roomCeil(r) || 2.7)), maxZ));
+    if (!box) return null;
+    const r = canvas.getBoundingClientRect();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const v = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(camera);
+      if (v.z > 1) return null;   // часть модели за камерой — считаем, что модель везде
+      const sx = r.left + (v.x + 1) / 2 * r.width, sy = r.top + (1 - v.y) / 2 * r.height;
+      x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+    }
+    return { x0: x0 - 40, y0: y0 - 40, x1: x1 + 40, y1: y1 + 40 };
+  };
+  const onModel = (x, y) => {
+    if (!orbitMode()) return true;
+    const m = modelRect();
+    return !m || (x >= m.x0 && x <= m.x1 && y >= m.y0 && y <= m.y1);
+  };
+  window.tourHitTest = onModel;
+  const waiting = new Map();   // пальцы, поставленные вне модели: вращать не будем, но со вторым пальцем — масштаб
+  canvas.addEventListener('pointerdown', e => {
+    if (!pointers.size && !waiting.size && e.isPrimary && !onModel(e.clientX, e.clientY)) { waiting.set(e.pointerId, { x: e.clientX, y: e.clientY }); return; }
+    for (const [id, p] of waiting) pointers.set(id, p);
+    waiting.clear();
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); try { canvas.setPointerCapture(e.pointerId); } catch {}
+  });
   canvas.addEventListener('pointermove', e => {
     const p = pointers.get(e.pointerId); if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
@@ -822,7 +855,7 @@ async function viewTour(pid, roomId = null) {
       look.yaw += dx * 0.005; look.pitch = Math.max(-1.3, Math.min(1.3, look.pitch + dy * 0.005));
     }
   });
-  const up = e => { pointers.delete(e.pointerId); if (pointers.size < 2) { lastPinch = 0; lastAng = null; } };
+  const up = e => { pointers.delete(e.pointerId); waiting.delete(e.pointerId); if (pointers.size < 2) { lastPinch = 0; lastAng = null; } };
   canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('wheel', e => {
     e.preventDefault();

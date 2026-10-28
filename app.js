@@ -265,7 +265,9 @@ const swipeNav = { dir: 0 };
     const edge = x < EDGE || x > innerWidth - EDGE;
     // полноэкранная схема в просмотре: пустое место вокруг схемы — как свободное место экрана (свайп листает вкладки)
     const planEmpty = target.closest && target.closest('.plan-wrap.full:not(.editing) #plan-box') && !target.closest('.plan-view');
-    if (!edge && !planEmpty && target.closest && target.closest(BUSY)) return;
+    // 3D: пустое место вокруг модели — тоже свободное (tourHitTest ставит tour.js; 2026-10-28)
+    const tourEmpty = target.closest && target.closest('.tour canvas') && typeof window.tourHitTest === 'function' && !window.tourHitTest(x, y);
+    if (!edge && !planEmpty && !tourEmpty && target.closest && target.closest(BUSY)) return;
     st = { x, y, t: Date.now() };
   };
   const end = (x, y) => {
