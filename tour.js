@@ -691,6 +691,7 @@ async function viewTour(pid, roomId = null) {
     hdOf = key;
     hdLoading = (async () => {
       const xs = [], ys = [], zs = [], p = new THREE.Vector3();
+      const glbBox = new THREE.Box3();   // модели GLB (сканы) — их коробки целиком: по центру одному рамка выходила точкой (2026-10-28)
       let failed = 0;
       try {
         const GS = await import('./vendor/gaussian-splats-3d.module.js');
@@ -710,6 +711,7 @@ async function viewTour(pid, roomId = null) {
               scene.add(g); g.updateMatrixWorld(true);
               hdViewers.push(g);
               const box = new THREE.Box3().setFromObject(g), c = box.getCenter(new THREE.Vector3());
+              glbBox.union(box);
               xs.push(c.x); ys.push(c.y); zs.push(c.z);
               continue;
             }
@@ -734,6 +736,7 @@ async function viewTour(pid, roomId = null) {
         // рамка модели (без 2 % крайних точек) — где на экране «модель» для касаний (вращать или листать вкладки)
         const pc = (a, q) => { const b = a.slice().sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(b.length * q))]; };
         hdBox = xs.length ? new THREE.Box3(new THREE.Vector3(pc(xs, 0.02), pc(ys, 0.02), pc(zs, 0.02)), new THREE.Vector3(pc(xs, 0.98), pc(ys, 0.98), pc(zs, 0.98))) : null;
+        if (!glbBox.isEmpty()) hdBox = hdBox ? hdBox.union(glbBox) : glbBox;
         hdViewer = hdViewers[0] || null;
         say(failed ? `Не открылось моделей: ${failed} из ${pick.length} (мало памяти?)` : '');
       } catch (err) { console.error(err); say('Не удалось открыть HD-модель: ' + err.message); }
